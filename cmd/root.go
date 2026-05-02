@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -40,6 +41,9 @@ type Env struct {
 	Stderr     io.Writer
 	IsTerminal func(fd uintptr) bool
 	RunTUI     func(env Env, opts TUIOptions) (TUIResult, error)
+	// LookPath resolves a binary name like exec.LookPath. Tests stub it to
+	// force the search fallback path even when the host has ripgrep installed.
+	LookPath func(name string) (string, error)
 }
 
 // DefaultEnv binds the process streams, the platform TTY check, and the real
@@ -51,6 +55,7 @@ func DefaultEnv() Env {
 		Stderr:     os.Stderr,
 		IsTerminal: termcheck.IsTerminal,
 		RunTUI:     defaultRunTUI,
+		LookPath:   exec.LookPath,
 	}
 }
 

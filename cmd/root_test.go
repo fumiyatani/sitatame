@@ -171,7 +171,7 @@ func TestRunRoot_BaseAutoFails(t *testing.T) {
 func TestDispatchHelp(t *testing.T) {
 	// dispatch lives in main, not cmd; this test just checks RunSearch wiring.
 	env := ttyEnv(os.Stdin, true)
-	if got := RunSearch(env, []string{"foo"}); got != 2 {
-		t.Errorf("RunSearch exit = %d, want 2", got)
+	if got := RunSearch(env, nil); got != 2 {
+		t.Errorf("RunSearch exit = %d, want 2 on missing pattern", got)
 	}
 }
