@@ -23,6 +23,7 @@ type Model struct {
 	showHelp  bool
 	quitting  bool
 	selection *Selection
+	modal     *modal
 }
 
 func New(files []diffmodel.File, r review.Review) Model {
@@ -40,6 +41,10 @@ func New(files []diffmodel.File, r review.Review) Model {
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.modal != nil {
+		cmd := m.updateModal(msg)
+		return m, cmd
+	}
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -79,6 +84,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case KeySelectKey:
 			m.startSelection()
 			return m, nil
+		case "c":
+			m.openCommentModal()
+			return m, nil
+		case "R":
+			m.openReviewModal()
+			return m, nil
 		}
 	}
 	return m, nil
@@ -102,6 +113,9 @@ func (m Model) View() string {
 	}
 	if m.showHelp {
 		return helpView()
+	}
+	if m.modal != nil {
+		return modalView(m)
 	}
 	return mainView(m)
 }
