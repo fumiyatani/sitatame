@@ -7,6 +7,24 @@ import (
 	"github.com/tanifumiya/sitatame/internal/review"
 )
 
+// QuitReason carries why the TUI exited so the caller can decide what to do
+// with the in-memory review. The runner exposes the final reason via the
+// Model's QuitReason() accessor after tea.Quit.
+type QuitReason int
+
+const (
+	// QuitNone is the initial value before the user has chosen to leave. The
+	// runner treats it like QuitDraft: any uncommitted in-memory review should
+	// still be persisted as a draft so work isn't lost on unexpected exits.
+	QuitNone QuitReason = iota
+	// QuitDraft is set by `q`; the caller saves the review to drafts/ and
+	// returns a non-zero exit code.
+	QuitDraft
+	// QuitPromote is set by `s`; the caller saves a draft, atomically promotes
+	// it to reviews/, and prints `SITATAME_REVIEW=<abs>` on stdout.
+	QuitPromote
+)
+
 // Model is the bubbletea model for the diff review TUI.
 //
 // T11 covers the skeleton: window-size handling, q to quit, ? to toggle help.
@@ -15,16 +33,17 @@ type Model struct {
 	Files  []diffmodel.File
 	Review review.Review
 
-	rows      []row
-	overlay   map[int][]int
-	cursor    int
-	top       int
-	width     int
-	height    int
-	showHelp  bool
-	quitting  bool
-	selection *Selection
-	modal     *modal
+	rows       []row
+	overlay    map[int][]int
+	cursor     int
+	top        int
+	width      int
+	height     int
+	showHelp   bool
+	quitting   bool
+	quitReason QuitReason
+	selection  *Selection
+	modal      *modal
 }
 
 func New(files []diffmodel.File, r review.Review) Model {
@@ -61,6 +80,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case KeyQuit, KeyQuitCtrl:
 			m.quitting = true
+			m.quitReason = QuitDraft
+			return m, tea.Quit
+		case KeySave:
+			m.quitting = true
+			m.quitReason = QuitPromote
 			return m, tea.Quit
 		case KeyHelp:
 			m.showHelp = !m.showHelp
@@ -128,6 +152,10 @@ func (m Model) View() string {
 
 // Quitting reports whether the model has signaled tea.Quit. Exposed for tests.
 func (m Model) Quitting() bool { return m.quitting }
+
+// QuitReason returns why the model asked to quit. Defaults to QuitNone before
+// any quit key is pressed.
+func (m Model) QuitReason() QuitReason { return m.quitReason }
 
 // ShowingHelp reports whether the help modal is currently visible. Exposed for tests.
 func (m Model) ShowingHelp() bool { return m.showHelp }

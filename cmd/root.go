@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -23,6 +24,14 @@ type TUIOptions struct {
 	Review review.Review
 }
 
+// TUIResult is what the runner hands back to RunRoot after the TUI exits
+// normally. Review carries any in-memory edits the user made; Reason tells
+// RunRoot which save path to take.
+type TUIResult struct {
+	Review review.Review
+	Reason tui.QuitReason
+}
+
 // Env carries the I/O streams, TTY check, and the TUI runner for a single
 // invocation. Tests inject substitutes; production uses DefaultEnv.
 type Env struct {
@@ -30,7 +39,7 @@ type Env struct {
 	Stdout     io.Writer
 	Stderr     io.Writer
 	IsTerminal func(fd uintptr) bool
-	RunTUI     func(env Env, opts TUIOptions) error
+	RunTUI     func(env Env, opts TUIOptions) (TUIResult, error)
 }
 
 // DefaultEnv binds the process streams, the platform TTY check, and the real
@@ -45,15 +54,22 @@ func DefaultEnv() Env {
 	}
 }
 
-func defaultRunTUI(env Env, opts TUIOptions) error {
+func defaultRunTUI(env Env, opts TUIOptions) (TUIResult, error) {
 	model := tui.New(opts.Files, opts.Review)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
 		tea.WithInput(env.Stdin),
 		tea.WithOutput(env.Stdout),
 	)
-	_, err := p.Run()
-	return err
+	final, err := p.Run()
+	if err != nil {
+		return TUIResult{Review: opts.Review, Reason: tui.QuitDraft}, err
+	}
+	fm, ok := final.(tui.Model)
+	if !ok {
+		return TUIResult{Review: opts.Review, Reason: tui.QuitDraft}, nil
+	}
+	return TUIResult{Review: fm.Review, Reason: fm.QuitReason()}, nil
 }
 
 // RunRoot implements `sitatame [base]`: validate the entry conditions
@@ -101,13 +117,67 @@ func RunRoot(env Env, args []string) int {
 		Head:   review.Ref{Ref: "HEAD", SHA: headSHA},
 	}
 
+	store := review.NewStore(review.NewPaths(repo.Workdir, branch))
 	runner := env.RunTUI
 	if runner == nil {
 		runner = defaultRunTUI
 	}
-	if err := runner(env, TUIOptions{Repo: repo, Base: base, Files: files, Review: r}); err != nil {
+	opts := TUIOptions{Repo: repo, Base: base, Files: files, Review: r}
+	result, err := runTUIWithShutdown(runner, env, opts, store)
+	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: tui: %v\n", err)
 		return 1
 	}
+
+	switch result.Reason {
+	case tui.QuitPromote:
+		draftPath, err := store.SaveDraft(&result.Review)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
+			return 1
+		}
+		finalPath, err := store.Promote(draftPath)
+		if err != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: promote: %v\n", err)
+			return 1
+		}
+		abs, _ := filepath.Abs(finalPath)
+		fmt.Fprintf(env.Stdout, "SITATAME_REVIEW=%s\n", abs)
+		return 0
+	case tui.QuitDraft:
+		if _, err := store.SaveDraft(&result.Review); err != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
+			return 1
+		}
+		return 1
+	}
+	// QuitNone or any other value: runner returned without a save signal — exit
+	// cleanly without touching the filesystem. In production this only happens
+	// if the TUI is short-circuited (e.g. test stubs).
 	return 0
+}
+
+// runTUIWithShutdown wraps the runner with a defer-based safety net: if the
+// runner panics, we still write the in-memory review to drafts/ on a
+// best-effort basis (recovering any panic from SaveDraft itself), then re-raise
+// the original panic so the caller / test sees it. The terminal restore is
+// owned by bubbletea's own panic handler.
+func runTUIWithShutdown(runner func(Env, TUIOptions) (TUIResult, error), env Env, opts TUIOptions, store *review.Store) (result TUIResult, runErr error) {
+	result = TUIResult{Review: opts.Review, Reason: tui.QuitDraft}
+	var panicVal any
+	func() {
+		defer func() {
+			panicVal = recover()
+		}()
+		result, runErr = runner(env, opts)
+	}()
+	if panicVal != nil {
+		// Best-effort draft save with the last known good state.
+		func() {
+			defer func() { _ = recover() }()
+			_, _ = store.SaveDraft(&result.Review)
+		}()
+		panic(panicVal)
+	}
+	return result, runErr
 }

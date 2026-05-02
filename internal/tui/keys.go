@@ -13,4 +13,5 @@ const (
 	KeyNextFile  = "n"
 	KeyPrevFile  = "p"
 	KeySelectKey = "V"
+	KeySave      = "s"
 )

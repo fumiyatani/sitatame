@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/tanifumiya/sitatame/internal/tui"
 )
 
 func newRepo(t *testing.T) (dir, mainSHA string) {
@@ -76,7 +78,9 @@ func ttyEnv(stdin *os.File, term bool) Env {
 		Stdout:     &stdout,
 		Stderr:     &stderr,
 		IsTerminal: func(uintptr) bool { return term },
-		RunTUI:     func(Env, TUIOptions) error { return nil },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
 	}
 }
 
@@ -90,9 +94,9 @@ func captureTUIEnv(stdin *os.File, term bool, captured *TUIOptions) (Env, *bytes
 		Stdout:     stdout,
 		Stderr:     stderr,
 		IsTerminal: func(uintptr) bool { return term },
-		RunTUI: func(_ Env, opts TUIOptions) error {
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
 			*captured = opts
-			return nil
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
 		},
 	}, stdout, stderr
 }
@@ -106,7 +110,9 @@ func TestRunRoot_RejectsNonTTY(t *testing.T) {
 		Stdout:     &stdout,
 		Stderr:     &stderr,
 		IsTerminal: func(uintptr) bool { return false },
-		RunTUI:     func(Env, TUIOptions) error { return nil },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
 	}
 	code := RunRoot(env, nil)
 	if code != 2 {
