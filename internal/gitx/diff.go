@@ -307,3 +307,76 @@ func numstatPathKey(e numstatEntry) string {
 	}
 	return "\x00" + e.PostPath
 }
+
+// Diff returns the file-level diff between base..HEAD by fusing three git
+// streams: `--raw -z` (file metadata + statuses), `--numstat -z` (binary
+// markers), and `--patch --no-color` (hunks).
+func (r *Repo) Diff(base string) ([]diffmodel.File, error) {
+	rng := base + "..HEAD"
+	rawOut, err := r.run("diff", "--raw", "-z", "--find-renames", "--find-copies", rng)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --raw: %w", err)
+	}
+	numOut, err := r.run("diff", "--numstat", "-z", "--find-renames", "--find-copies", rng)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --numstat: %w", err)
+	}
+	patchOut, err := r.run("diff", "--patch", "--no-color", "--find-renames", "--find-copies", rng)
+	if err != nil {
+		return nil, fmt.Errorf("git diff --patch: %w", err)
+	}
+
+	rawEntries, err := parseRawZ(rawOut)
+	if err != nil {
+		return nil, err
+	}
+	numEntries, err := parseNumstatZ(numOut)
+	if err != nil {
+		return nil, err
+	}
+	patchEntries, err := parsePatch(patchOut)
+	if err != nil {
+		return nil, err
+	}
+
+	files := joinRawAndNumstat(rawEntries, numEntries)
+
+	// Patch entries are addressed by post-image path for non-deletes and by
+	// pre-image path for deletes. Index both so the lookup works for either.
+	patchByB := make(map[string]patchEntry, len(patchEntries))
+	patchByA := make(map[string]patchEntry, len(patchEntries))
+	for _, pe := range patchEntries {
+		if pe.BPath != "" {
+			patchByB[pe.BPath] = pe
+		}
+		if pe.APath != "" {
+			patchByA[pe.APath] = pe
+		}
+	}
+
+	for i := range files {
+		f := &files[i]
+		var pe patchEntry
+		var ok bool
+		switch f.Status {
+		case diffmodel.StatusDeleted:
+			pe, ok = patchByA[f.PrePath]
+		default:
+			pe, ok = patchByB[f.PostPath]
+			if !ok && f.PrePath != "" {
+				pe, ok = patchByA[f.PrePath]
+			}
+		}
+		if !ok {
+			continue
+		}
+		if pe.Binary {
+			f.Binary = true
+		}
+		if !f.Binary {
+			f.Hunks = pe.Hunks
+		}
+	}
+
+	return files, nil
+}
