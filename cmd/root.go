@@ -118,6 +118,9 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	store := review.NewStore(review.NewPaths(repo.Workdir, branch))
+	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
+		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
+	}
 	runner := env.RunTUI
 	if runner == nil {
 		runner = defaultRunTUI
