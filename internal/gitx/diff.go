@@ -375,6 +375,9 @@ func (r *Repo) Diff(base string) ([]diffmodel.File, error) {
 		}
 		if !f.Binary {
 			f.Hunks = pe.Hunks
+			for j := range f.Hunks {
+				diffmodel.AssignLineNumbers(&f.Hunks[j])
+			}
 		}
 	}
 
