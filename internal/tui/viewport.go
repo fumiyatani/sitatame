@@ -97,6 +97,22 @@ func (m *Model) moveCursorBy(d int) {
 	m.scrollToCursor()
 }
 
+// renderRow turns a flat-stream row into a sanitized, width-clipped display
+// string. File / hunk headers and the binary placeholder are emitted with a
+// space prefix so they align with content lines (which carry +/-/space
+// inside their text).
+func renderRow(r row, maxWidth int) string {
+	switch r.kind {
+	case rowLine:
+		if len(r.text) == 0 {
+			return renderLine(' ', "", maxWidth)
+		}
+		return renderLine(r.text[0], r.text[1:], maxWidth)
+	default:
+		return renderLine(' ', r.text, maxWidth)
+	}
+}
+
 // jumpFile moves the cursor to the next (dir>0) or previous (dir<0) file
 // header. Files include rowFileHeader; we skip past the current file's header
 // when searching forward so `n` always advances.
