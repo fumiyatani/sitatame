@@ -1,4 +1,4 @@
-.PHONY: build test vet fmt install build-all clean
+.PHONY: build test bench update-golden vet fmt install build-all clean
 
 BIN := sitatame
 PKG := ./...
@@ -8,6 +8,12 @@ build:
 
 test:
 	go test $(PKG)
+
+bench:
+	go test -run=^$$ -bench=. -benchmem ./internal/tui/...
+
+update-golden:
+	go test ./internal/tui/ -update-golden
 
 vet:
 	go vet $(PKG)
