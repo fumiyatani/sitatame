@@ -31,9 +31,12 @@ func mainView(m Model) string {
 		// Width budget for the row body excludes the 2-col cursor gutter.
 		bodyMax := m.width - len(cursorMarker)
 		for i := m.top; i < end; i++ {
-			if i == m.cursor {
+			switch {
+			case i == m.cursor:
 				b.WriteString(cursorMarker)
-			} else {
+			case m.selection != nil && m.selection.Contains(i):
+				b.WriteString("| ")
+			default:
 				b.WriteString(cursorPad)
 			}
 			b.WriteString(renderRow(m.rows[i], bodyMax))

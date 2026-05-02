@@ -8,8 +8,9 @@ const (
 	KeyQuitCtrl = "ctrl+c"
 	KeyHelp     = "?"
 	KeyEsc      = "esc"
-	KeyDown     = "j"
-	KeyUp       = "k"
-	KeyNextFile = "n"
-	KeyPrevFile = "p"
+	KeyDown      = "j"
+	KeyUp        = "k"
+	KeyNextFile  = "n"
+	KeyPrevFile  = "p"
+	KeySelectKey = "V"
 )

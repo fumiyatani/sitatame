@@ -15,13 +15,14 @@ type Model struct {
 	Files  []diffmodel.File
 	Review review.Review
 
-	rows     []row
-	cursor   int
-	top      int
-	width    int
-	height   int
-	showHelp bool
-	quitting bool
+	rows      []row
+	cursor    int
+	top       int
+	width     int
+	height    int
+	showHelp  bool
+	quitting  bool
+	selection *Selection
 }
 
 func New(files []diffmodel.File, r review.Review) Model {
@@ -57,18 +58,26 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.showHelp {
 				m.showHelp = false
 			}
+			m.clearSelection()
 			return m, nil
 		case KeyDown:
 			m.moveCursorBy(1)
+			m.extendSelection()
 			return m, nil
 		case KeyUp:
 			m.moveCursorBy(-1)
+			m.extendSelection()
 			return m, nil
 		case KeyNextFile:
 			m.jumpFile(1)
+			m.clearSelection()
 			return m, nil
 		case KeyPrevFile:
 			m.jumpFile(-1)
+			m.clearSelection()
+			return m, nil
+		case KeySelectKey:
+			m.startSelection()
 			return m, nil
 		}
 	}
@@ -83,6 +92,9 @@ func (m Model) Top() int { return m.top }
 
 // Rows returns the number of flat rows (test-only accessor).
 func (m Model) Rows() int { return len(m.rows) }
+
+// SelectionState returns the current selection or nil.
+func (m Model) SelectionState() *Selection { return m.selection }
 
 func (m Model) View() string {
 	if m.quitting {
