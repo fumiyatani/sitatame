@@ -69,8 +69,8 @@ func TestMainView_ShowsFiles(t *testing.T) {
 	}
 	m := New(files, review.Review{})
 	v := m.View()
-	if !strings.Contains(v, "2 files changed") {
-		t.Errorf("file count missing: %q", v)
+	if !strings.Contains(v, "[1/2 files]") {
+		t.Errorf("status bar missing file count: %q", v)
 	}
 	if !strings.Contains(v, "a.go") || !strings.Contains(v, "b.go") {
 		t.Errorf("file names missing: %q", v)

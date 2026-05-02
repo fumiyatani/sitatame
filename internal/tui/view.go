@@ -5,19 +5,68 @@ import (
 	"strings"
 )
 
-// mainView renders the placeholder diff body for T11. Full diff rendering with
-// virtual scroll, ANSI sanitization, and CJK width handling lands in T12-T13.
+const cursorMarker = "> "
+const cursorPad = "  " // same width as cursorMarker so non-cursor lines align
+
+// mainView renders the visible viewport: status bar + diff window + hint.
+// Only rows in [top, top+height) are emitted, so a 10k-line diff still costs
+// O(visible-rows) per frame.
 func mainView(m Model) string {
 	var b strings.Builder
-	if len(m.Files) == 0 {
+	b.WriteString(statusLine(m))
+	b.WriteByte('\n')
+
+	height := m.viewportHeight()
+	if len(m.rows) == 0 {
 		b.WriteString("(no diff)\n")
+		// Pad to keep the hint pinned to the bottom-ish for stable rendering.
+		for i := 1; i < height; i++ {
+			b.WriteByte('\n')
+		}
 	} else {
-		fmt.Fprintf(&b, "%d files changed\n", len(m.Files))
-		for _, f := range m.Files {
-			fmt.Fprintf(&b, "  %s %s\n", f.Status, f.DisplayPath())
+		end := m.top + height
+		if end > len(m.rows) {
+			end = len(m.rows)
+		}
+		for i := m.top; i < end; i++ {
+			if i == m.cursor {
+				b.WriteString(cursorMarker)
+			} else {
+				b.WriteString(cursorPad)
+			}
+			b.WriteString(m.rows[i].text)
+			b.WriteByte('\n')
+		}
+		for i := end - m.top; i < height; i++ {
+			b.WriteByte('\n')
 		}
 	}
-	b.WriteString("\n")
-	b.WriteString("? help · q quit")
+	b.WriteString(hintLine())
 	return b.String()
+}
+
+func statusLine(m Model) string {
+	var path string
+	if len(m.rows) > 0 && m.cursor < len(m.rows) {
+		fi := m.rows[m.cursor].fileIdx
+		if fi >= 0 && fi < len(m.Files) {
+			path = m.Files[fi].DisplayPath()
+		}
+	}
+	if path == "" {
+		path = "(none)"
+	}
+	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d",
+		path, fileIndexAtCursor(m)+1, len(m.Files), m.cursor+1, len(m.rows))
+}
+
+func fileIndexAtCursor(m Model) int {
+	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
+		return 0
+	}
+	return m.rows[m.cursor].fileIdx
+}
+
+func hintLine() string {
+	return "j/k move · n/p file · ? help · q quit"
 }
