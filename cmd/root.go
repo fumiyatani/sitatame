@@ -9,11 +9,11 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
-	"github.com/tanifumiya/sitatame/internal/gitx"
-	"github.com/tanifumiya/sitatame/internal/review"
-	"github.com/tanifumiya/sitatame/internal/termcheck"
-	"github.com/tanifumiya/sitatame/internal/tui"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/gitx"
+	"github.com/fumiyatani/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/termcheck"
+	"github.com/fumiyatani/sitatame/internal/tui"
 )
 
 // TUIOptions is the bag of values handed to the TUI runner. Tests can swap

@@ -3,8 +3,8 @@ package tui
 import (
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
-	"github.com/tanifumiya/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/review"
 )
 
 // QuitReason carries why the TUI exited so the caller can decide what to do

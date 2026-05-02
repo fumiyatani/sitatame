@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
-	"github.com/tanifumiya/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/review"
 )
 
 func TestStatusBar_BinaryHint(t *testing.T) {

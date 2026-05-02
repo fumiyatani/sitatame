@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/tanifumiya/sitatame/cmd"
+	"github.com/fumiyatani/sitatame/cmd"
 )
 
 const usage = `sitatame - TUI git diff review tool

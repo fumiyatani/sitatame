@@ -1,8 +1,8 @@
 package tui
 
 import (
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
-	"github.com/tanifumiya/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/review"
 )
 
 // buildOverlay maps row indices to the indices of review.Comments that anchor

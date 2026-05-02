@@ -7,8 +7,8 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/google/uuid"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
-	"github.com/tanifumiya/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/review"
 )
 
 // modal holds the state for the comment input dialog.

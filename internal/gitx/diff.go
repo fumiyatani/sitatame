@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 // rawEntry mirrors a single line of `git diff --raw -z --find-renames --find-copies`.

@@ -3,7 +3,7 @@ package tui
 import (
 	"fmt"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 // rowKind classifies a flattened diff row so navigation and rendering can tell

@@ -39,7 +39,7 @@ PR を出す前に、自分の git diff を端末上でレビューするため�
 `sitatame` は Go 1.26 以降と `git` コマンドが必要です。
 
 ```sh
-git clone https://github.com/tanifumiya/sitatame
+git clone https://github.com/fumiyatani/sitatame
 cd sitatame
 make build      # ./sitatame を生成
 make install    # go install ./... — $GOBIN に配置
@@ -52,7 +52,7 @@ make build-all  # dist/sitatame-{darwin,linux}-{amd64,arm64} を生成
 ```
 
 > Phase 2 では GitHub Releases によるバイナリ配布、
-> `go install github.com/tanifumiya/sitatame@<version>` 形式での導入を予定。
+> `go install github.com/fumiyatani/sitatame@<version>` 形式での導入を予定。
 
 ## 使い方
 

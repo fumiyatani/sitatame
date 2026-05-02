@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 func TestParseHunkHeader_WithCounts(t *testing.T) {

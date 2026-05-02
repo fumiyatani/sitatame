@@ -1,4 +1,4 @@
-module github.com/tanifumiya/sitatame
+module github.com/fumiyatani/sitatame
 
 go 1.26.2
 

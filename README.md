@@ -40,7 +40,7 @@ downstream agents can ingest.
 `sitatame` requires Go 1.26 or later and `git` on `$PATH`.
 
 ```sh
-git clone https://github.com/tanifumiya/sitatame
+git clone https://github.com/fumiyatani/sitatame
 cd sitatame
 make build      # produces ./sitatame
 make install    # go install ./... — places sitatame on $GOBIN
@@ -53,7 +53,7 @@ make build-all  # writes dist/sitatame-{darwin,linux}-{amd64,arm64}
 ```
 
 > Phase 2 will publish prebuilt artifacts via GitHub Releases and enable
-> `go install github.com/tanifumiya/sitatame@<version>` for one-shot setup.
+> `go install github.com/fumiyatani/sitatame@<version>` for one-shot setup.
 
 ## Usage
 

@@ -8,7 +8,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tanifumiya/sitatame/internal/tui"
+	"github.com/fumiyatani/sitatame/internal/tui"
 )
 
 func newRepo(t *testing.T) (dir, mainSHA string) {

@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 // --- Pure parser unit tests using hand-crafted NUL streams ---

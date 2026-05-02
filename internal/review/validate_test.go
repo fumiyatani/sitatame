@@ -3,7 +3,7 @@ package review
 import (
 	"testing"
 
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 func makeReview(comments ...Comment) Review {

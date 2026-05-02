@@ -9,8 +9,8 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
-	"github.com/tanifumiya/sitatame/internal/review"
-	"github.com/tanifumiya/sitatame/internal/tui"
+	"github.com/fumiyatani/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/tui"
 )
 
 func teaKeyRunes(s string) tea.KeyMsg {

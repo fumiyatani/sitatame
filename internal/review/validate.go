@@ -1,7 +1,7 @@
 package review
 
 import (
-	"github.com/tanifumiya/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
 // Validate updates each Comment's state by comparing its anchor to the current

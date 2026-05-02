@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tanifumiya/sitatame/internal/review"
-	"github.com/tanifumiya/sitatame/internal/tui"
+	"github.com/fumiyatani/sitatame/internal/review"
+	"github.com/fumiyatani/sitatame/internal/tui"
 )
 
 // TestE2E_AgentConsumablePromotedReview demonstrates the PRD success condition

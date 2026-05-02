@@ -10,8 +10,8 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/tanifumiya/sitatame/internal/gitx"
-	"github.com/tanifumiya/sitatame/internal/search"
+	"github.com/fumiyatani/sitatame/internal/gitx"
+	"github.com/fumiyatani/sitatame/internal/search"
 )
 
 // RunSearch implements `sitatame search <pattern>`. The pattern is treated as
