@@ -8,6 +8,33 @@ attach 4 grains of comments (review-level, file, line, range), and saves the
 result as a Markdown + YAML front-matter file under `.sitatame/reviews/` that
 downstream agents can ingest.
 
+## Tech stack
+
+- **Language / runtime**: Go 1.26 (`go 1.26.2` in `go.mod`)
+- **Required external tool**: `git` on `$PATH`
+- **Optional external tool**: `ripgrep` (`rg`) — used by `sitatame search` when
+  available; a regexp-based Go fallback in `internal/search/` ships either way
+- **TUI runtime**:
+  [`charmbracelet/bubbletea`](https://github.com/charmbracelet/bubbletea) v1
+  for the model / update / view loop,
+  [`bubbles/textarea`](https://github.com/charmbracelet/bubbles) for the
+  comment editor, plus `lipgloss` (indirect via bubbletea) for styling
+- **Terminal width math**: [`mattn/go-runewidth`](https://github.com/mattn/go-runewidth)
+  with `EastAsianWidth=false` so column math stays deterministic across locales
+- **Persistence**: [`gopkg.in/yaml.v3`](https://gopkg.in/yaml.v3) with
+  `yaml.Node` for unknown-key preservation across decode → encode round trips
+- **Identifiers**: [`google/uuid`](https://github.com/google/uuid) for anchor
+  IDs in saved reviews
+- **Standard library leveraged**: `os/exec` (git plumbing & ripgrep handoff),
+  `regexp`, `bufio`, `path/filepath`, `syscall` (TTY ioctl behind a build tag
+  in `internal/termcheck/`), `time`, `flag`
+- **Tooling**:
+  - `go test ./...` for unit + integration tests
+  - golden snapshots under `internal/tui/testdata/` (ANSI stripped before compare)
+  - `BenchmarkUpdate_LargeDiff` for TUI hot path
+  - `make build` / `make build-all` (darwin & linux × amd64 & arm64) /
+    `make install` / `make bench` / `make update-golden` / `make vet`
+
 ## Build / install
 
 `sitatame` requires Go 1.26 or later and `git` on `$PATH`.

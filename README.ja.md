@@ -6,6 +6,34 @@ PR を出す前に、自分の git diff を端末上でレビューするため�
 保存結果は `.sitatame/reviews/` 配下に YAML front matter + Markdown 形式で
 書き出され、後段のエージェントがそのまま読み取れます。
 
+## 技術スタック
+
+- **言語 / ランタイム**: Go 1.26（`go.mod` は `go 1.26.2`）
+- **必須外部ツール**: `$PATH` 上の `git`
+- **任意外部ツール**: `ripgrep`（`rg`）— あれば `sitatame search` で利用。
+  無くても `internal/search/` の Go regexp フォールバックで動作
+- **TUI ランタイム**:
+  [`charmbracelet/bubbletea`](https://github.com/charmbracelet/bubbletea) v1
+  を Model / Update / View ループの基盤として、
+  [`bubbles/textarea`](https://github.com/charmbracelet/bubbles) をコメント
+  入力欄に、（間接依存の）`lipgloss` をスタイル付けに使用
+- **端末幅計算**: [`mattn/go-runewidth`](https://github.com/mattn/go-runewidth)
+  を `EastAsianWidth=false` で運用し、locale 依存の幅ブレを排除
+- **永続化**: [`gopkg.in/yaml.v3`](https://gopkg.in/yaml.v3) を `yaml.Node`
+  と併用し、未知キーを decode → encode round trip で温存
+- **ID 生成**: [`google/uuid`](https://github.com/google/uuid) でコメント
+  アンカー ID を採番
+- **標準ライブラリ**: `os/exec`（git / ripgrep プラグイン経由）、`regexp`、
+  `bufio`、`path/filepath`、`syscall`（`internal/termcheck/` で build tag
+  経由 TTY 判定）、`time`、`flag`
+- **テスト / ツール**:
+  - `go test ./...`（ユニット + 統合）
+  - `internal/tui/testdata/` 配下の golden 比較（ANSI を除去してから diff）
+  - TUI ホットパス向けの `BenchmarkUpdate_LargeDiff`
+  - Makefile target: `make build` / `make build-all`（darwin & linux × amd64
+    & arm64）/ `make install` / `make bench` / `make update-golden` /
+    `make vet`
+
 ## ビルド / インストール
 
 `sitatame` は Go 1.26 以降と `git` コマンドが必要です。
