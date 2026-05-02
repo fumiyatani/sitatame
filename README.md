@@ -1,5 +1,7 @@
 # sitatame
 
+[日本語版 README](README.ja.md)
+
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
 attach 4 grains of comments (review-level, file, line, range), and saves the
@@ -78,9 +80,34 @@ can consume the human reviewer's notes without screen scraping:
    agent can extend the schema without losing data on the next save.
 5. `sitatame search <pattern>` is the read path for past reviews.
 
+A minimal handoff in shell looks like:
+
+```sh
+REVIEW_PATH=$(sitatame HEAD~1 | awk -F= '/^SITATAME_REVIEW=/{print $2}')
+test -n "$REVIEW_PATH" || { echo "no review captured" >&2; exit 1; }
+cat "$REVIEW_PATH" | your-agent --consume-review
+```
+
+A runnable version of the same flow lives at
+[`examples/agent-handoff.sh`](examples/agent-handoff.sh).
+
 `q` on the other hand exits 1 and leaves a draft under
 `.sitatame/drafts/<slug>/<id>.md` — pick it up next session, or feed it to an
 agent that knows to look at drafts before starting work.
+
+### Reviewing uncommitted changes
+
+`sitatame` diffs `<base>..HEAD`, so staged / unstaged changes don't appear in
+the TUI yet. The workaround is a temporary commit:
+
+```sh
+git add -A
+git commit -m "wip:review"
+sitatame HEAD~1
+git reset --soft HEAD~1   # undo the commit, keep changes in index / working tree
+```
+
+Native `--staged` / `--working` flags are deferred to Phase 2.
 
 ## Development
 
