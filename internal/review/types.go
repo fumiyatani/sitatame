@@ -1,6 +1,10 @@
 package review
 
-import "time"
+import (
+	"time"
+
+	"gopkg.in/yaml.v3"
+)
 
 type State string
 
@@ -59,6 +63,11 @@ type FileMeta struct {
 	RenameFrom string `yaml:"rename_from,omitempty"`
 	RenameTo   string `yaml:"rename_to,omitempty"`
 	Similarity int    `yaml:"similarity,omitempty"`
+
+	// Extras holds keys not modeled by struct fields so they survive a
+	// decode/encode round-trip. It is populated by codec.Decode and consumed by
+	// codec.Encode; callers usually leave it nil.
+	Extras map[string]*yaml.Node `yaml:"-"`
 }
 
 type Anchor struct {
@@ -79,6 +88,10 @@ type Comment struct {
 	Anchor `yaml:",inline"`
 	State  State  `yaml:"state"`
 	Body   string `yaml:"body"`
+
+	// Extras holds keys not modeled by struct fields (including unknown anchor
+	// fields, since Anchor is inlined here). See FileMeta.Extras.
+	Extras map[string]*yaml.Node `yaml:"-"`
 }
 
 type Review struct {
@@ -91,4 +104,11 @@ type Review struct {
 	Files         []FileMeta `yaml:"files,omitempty"`
 	ReviewComment string     `yaml:"review_comment,omitempty"`
 	Comments      []Comment  `yaml:"comments,omitempty"`
+
+	// Extras holds top-level keys not modeled here. See FileMeta.Extras.
+	Extras map[string]*yaml.Node `yaml:"-"`
+
+	// Body is the Markdown body that follows the front matter. The codec keeps
+	// it verbatim for round-trip; renderers may regenerate it from comments.
+	Body string `yaml:"-"`
 }
