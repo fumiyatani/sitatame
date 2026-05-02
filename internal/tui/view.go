@@ -28,8 +28,9 @@ func mainView(m Model) string {
 		if end > len(m.rows) {
 			end = len(m.rows)
 		}
-		// Width budget for the row body excludes the 2-col cursor gutter.
-		bodyMax := m.width - len(cursorMarker)
+		// Width budget for the row body excludes the 2-col cursor gutter and
+		// the 1-col overlay marker gutter.
+		bodyMax := m.width - len(cursorMarker) - 1
 		for i := m.top; i < end; i++ {
 			switch {
 			case i == m.cursor:
@@ -39,6 +40,7 @@ func mainView(m Model) string {
 			default:
 				b.WriteString(cursorPad)
 			}
+			b.WriteString(overlayMarker(m.overlay[i], m.Review.Comments))
 			b.WriteString(renderRow(m.rows[i], bodyMax))
 			b.WriteByte('\n')
 		}

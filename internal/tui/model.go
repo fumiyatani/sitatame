@@ -16,6 +16,7 @@ type Model struct {
 	Review review.Review
 
 	rows      []row
+	overlay   map[int][]int
 	cursor    int
 	top       int
 	width     int
@@ -27,16 +28,21 @@ type Model struct {
 }
 
 func New(files []diffmodel.File, r review.Review) Model {
+	rows := buildRows(files)
 	return Model{
-		Files:  files,
-		Review: r,
-		rows:   buildRows(files),
+		Files:   files,
+		Review:  r,
+		rows:    rows,
+		overlay: buildOverlay(rows, files, r.Comments),
 		// Reasonable default until the first WindowSizeMsg arrives so View()
 		// before the first resize still produces a non-empty body.
 		height: 24,
 		width:  80,
 	}
 }
+
+// Overlay returns the row-to-comment-index map. Test-only accessor.
+func (m Model) Overlay() map[int][]int { return m.overlay }
 
 func (m Model) Init() tea.Cmd { return nil }
 
