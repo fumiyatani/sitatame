@@ -28,6 +28,8 @@ func TestSlugifyReviewComment(t *testing.T) {
 		{"日本語のみ", "review"}, // all unsafe -> all underscores -> trimmed -> empty -> "review"
 		{"first line\nsecond line", "first_line"},
 		{"this-is-a-very-long-review-comment-that-exceeds-thirty-two-chars", "this-is-a-very-long-review-comme"},
+		{"..", "review"},
+		{"...path-trav", "path-trav"},
 	}
 	for _, c := range cases {
 		if got := slugifyReviewComment(c.in); got != c.want {

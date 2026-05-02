@@ -199,6 +199,10 @@ func slugifyReviewComment(s string) string {
 		out = out[:32]
 	}
 	out = strings.Trim(out, "_")
+	// Reject leading '.' so the resulting id can never start with a dot
+	// (avoids dotfile-shaped paths and "..", "..." style ids that downstream
+	// agents might mishandle).
+	out = strings.TrimLeft(out, ".")
 	if out == "" {
 		return "review"
 	}

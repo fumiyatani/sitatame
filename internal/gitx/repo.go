@@ -52,7 +52,9 @@ func (r *Repo) CurrentBranch() (string, error) {
 // RevParse resolves a ref to a full SHA. Returns an error if the ref doesn't
 // exist or git fails.
 func (r *Repo) RevParse(ref string) (string, error) {
-	out, err := r.run("rev-parse", "--verify", "--quiet", ref+"^{commit}")
+	// `--end-of-options` (git 2.24+) makes ref parsing immune to flag-shaped
+	// refs like "--upload-pack=...".
+	out, err := r.run("rev-parse", "--verify", "--quiet", "--end-of-options", ref+"^{commit}")
 	if err != nil {
 		return "", fmt.Errorf("rev-parse %q: %w", ref, err)
 	}

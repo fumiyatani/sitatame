@@ -116,6 +116,9 @@ cat "$REVIEW_PATH" | your-agent --consume-review
 
 実行可能なサンプルは
 [`examples/agent-handoff.sh`](examples/agent-handoff.sh) にあります。
+このスクリプトは promote 済み Markdown を `sh -c` 経由で `$SITATAME_AGENT`
+に流すため、`SITATAME_AGENT` には**自分が完全に信頼できるコマンドのみ**を
+設定してください。外部由来の値を流し込まないでください。
 
 未コミット / 未ステージの変更を見たい場合は、現状は一時コミットを挟むのが
 ワークアラウンドです:

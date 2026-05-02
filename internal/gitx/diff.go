@@ -313,15 +313,16 @@ func numstatPathKey(e numstatEntry) string {
 // markers), and `--patch --no-color` (hunks).
 func (r *Repo) Diff(base string) ([]diffmodel.File, error) {
 	rng := base + "..HEAD"
-	rawOut, err := r.run("diff", "--raw", "-z", "--find-renames", "--find-copies", rng)
+	// `--end-of-options` (git 2.24+) prevents `rng` from being parsed as a flag.
+	rawOut, err := r.run("diff", "--raw", "-z", "--find-renames", "--find-copies", "--end-of-options", rng)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --raw: %w", err)
 	}
-	numOut, err := r.run("diff", "--numstat", "-z", "--find-renames", "--find-copies", rng)
+	numOut, err := r.run("diff", "--numstat", "-z", "--find-renames", "--find-copies", "--end-of-options", rng)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --numstat: %w", err)
 	}
-	patchOut, err := r.run("diff", "--patch", "--no-color", "--find-renames", "--find-copies", rng)
+	patchOut, err := r.run("diff", "--patch", "--no-color", "--find-renames", "--find-copies", "--end-of-options", rng)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --patch: %w", err)
 	}

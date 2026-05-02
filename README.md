@@ -116,7 +116,10 @@ cat "$REVIEW_PATH" | your-agent --consume-review
 ```
 
 A runnable version of the same flow lives at
-[`examples/agent-handoff.sh`](examples/agent-handoff.sh).
+[`examples/agent-handoff.sh`](examples/agent-handoff.sh). The script feeds
+the promoted Markdown into `$SITATAME_AGENT` via `sh -c`, so set that
+variable only to commands you fully trust — never to values pulled from
+untrusted sources.
 
 `q` on the other hand exits 1 and leaves a draft under
 `.sitatame/drafts/<slug>/<id>.md` — pick it up next session, or feed it to an
