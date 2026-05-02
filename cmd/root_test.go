@@ -76,7 +76,25 @@ func ttyEnv(stdin *os.File, term bool) Env {
 		Stdout:     &stdout,
 		Stderr:     &stderr,
 		IsTerminal: func(uintptr) bool { return term },
+		RunTUI:     func(Env, TUIOptions) error { return nil },
 	}
+}
+
+// captureTUIEnv is like ttyEnv but records the TUIOptions passed to RunTUI so
+// tests can assert on the resolved base / files.
+func captureTUIEnv(stdin *os.File, term bool, captured *TUIOptions) (Env, *bytes.Buffer, *bytes.Buffer) {
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	return Env{
+		Stdin:      stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		IsTerminal: func(uintptr) bool { return term },
+		RunTUI: func(_ Env, opts TUIOptions) error {
+			*captured = opts
+			return nil
+		},
+	}, stdout, stderr
 }
 
 func TestRunRoot_RejectsNonTTY(t *testing.T) {
@@ -88,6 +106,7 @@ func TestRunRoot_RejectsNonTTY(t *testing.T) {
 		Stdout:     &stdout,
 		Stderr:     &stderr,
 		IsTerminal: func(uintptr) bool { return false },
+		RunTUI:     func(Env, TUIOptions) error { return nil },
 	}
 	code := RunRoot(env, nil)
 	if code != 2 {
@@ -101,17 +120,19 @@ func TestRunRoot_RejectsNonTTY(t *testing.T) {
 func TestRunRoot_ResolvesAutoBase(t *testing.T) {
 	dir, mainSHA := newRepo(t)
 	chdir(t, dir)
-	var stdout, stderr bytes.Buffer
-	env := Env{
-		Stdin:      os.Stdin,
-		Stdout:     &stdout,
-		Stderr:     &stderr,
-		IsTerminal: func(uintptr) bool { return true },
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
 	}
-	_ = RunRoot(env, nil) // exits 2 (TUI unimplemented)
-	got := stderr.String()
-	if !strings.Contains(got, "base=main") || !strings.Contains(got, "sha="+mainSHA) {
-		t.Errorf("stderr missing resolved base/sha: %q", got)
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+	if captured.Review.Branch != "feature" {
+		t.Errorf("branch = %q, want feature", captured.Review.Branch)
 	}
 }
 
@@ -120,16 +141,13 @@ func TestRunRoot_ExplicitBaseWins(t *testing.T) {
 	// rename main so auto would fail; explicit must still work.
 	mustGit(t, dir, "branch", "-m", "main", "trunk")
 	chdir(t, dir)
-	var stdout, stderr bytes.Buffer
-	env := Env{
-		Stdin:      os.Stdin,
-		Stdout:     &stdout,
-		Stderr:     &stderr,
-		IsTerminal: func(uintptr) bool { return true },
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"trunk"}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
 	}
-	_ = RunRoot(env, []string{"trunk"})
-	if !strings.Contains(stderr.String(), "base=trunk") {
-		t.Errorf("stderr missing explicit base: %q", stderr.String())
+	if captured.Base.Ref != "trunk" {
+		t.Errorf("base.Ref = %q, want trunk", captured.Base.Ref)
 	}
 }
 
