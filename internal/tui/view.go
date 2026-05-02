@@ -49,17 +49,23 @@ func mainView(m Model) string {
 
 func statusLine(m Model) string {
 	var path string
+	binary := false
 	if len(m.rows) > 0 && m.cursor < len(m.rows) {
 		fi := m.rows[m.cursor].fileIdx
 		if fi >= 0 && fi < len(m.Files) {
 			path = m.Files[fi].DisplayPath()
+			binary = m.Files[fi].Binary
 		}
 	}
 	if path == "" {
 		path = "(none)"
 	}
-	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d",
-		path, fileIndexAtCursor(m)+1, len(m.Files), m.cursor+1, len(m.rows))
+	tag := ""
+	if binary {
+		tag = "  [binary] file-comment only"
+	}
+	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d%s",
+		path, fileIndexAtCursor(m)+1, len(m.Files), m.cursor+1, len(m.rows), tag)
 }
 
 func fileIndexAtCursor(m Model) int {
