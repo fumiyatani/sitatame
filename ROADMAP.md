@@ -48,6 +48,30 @@
 
 - [ ]
 
+## リファクタリング
+
+- [ ] A. `cmd/save.go` を切り出す
+    - 現状 `cmd/save_test.go` (138 行) は既にあるのに `save.go` が無く、テスト対象の `QuitReason` 分岐 / `SaveDraft` / `Promote` / `SITATAME_REVIEW=` 出力は `cmd/root.go:194-219` に埋もれている。命名上の不整合。
+    - `RunRoot` の末尾 save 分岐をそのまま `cmd/save.go` に move し、`finalize(env, store, result) int` 程度のシグネチャに揃える。
+    - 結果として `RunRoot` も 30 行ほど短くなり、ファイル単位で責務が読める。元案 #1 はこの形でやれば十分。
+- [ ] B. TUI `Update` の modal / main を二相分離する
+    - `internal/tui/model.go:74-78` で `if m.modal != nil { return updateModal }` と早期分岐しており、modal アクティブ時は textarea が入力を全部食う＝main mode の `switch` と入力規約がそもそも違う。
+    - `updateMain(msg) (Model, tea.Cmd)` と `updateModal(msg) (Model, tea.Cmd)` をサブ FSM として分け、`Update` 自体はモード判定だけにする。
+    - 将来コメント以外のダイアログ（保存確認、レビュー一覧など）を増やす時、modal 側のディスパッチに閉じて足せるようになる。
+- [ ] C. `gitx` を runner / parser / orchestrator に三層化する
+    - 現状 `internal/gitx/` に `Repo.run`（exec 層）/ パーサ群（pure）/ `Diff()`（fuse）が同居。テストの依存軸が混ざる。
+    - `internal/gitx/internal/parser/` に `parseRawZ` / `parseNumstatZ` / `parsePatch` / `joinRawAndNumstat` を退避し、`Repo.run` は `gitRunner` インターフェース経由に。`Diff()` は runner と parser を組み合わせる薄い層に寄せる。
+    - パーサは既に pure なので git 不要でテスト可能。`Diff()` 自体も runner stub で git を呼ばずに検証できる。元案 #3 を精緻化したもの。
+
+## あとでやるかも（再検討候補）
+
+- [ ] D. `cmd.RunRoot` のステージ関数分解
+    - A の save 抽出後に `RunRoot` がまだ重いと感じたら prepare / run / finalize に分ける。A 単体で十分かもしれないので、A の後で再評価する。
+- [ ] E. TUI キーディスパッチのテーブル駆動化
+    - B の二相分離だけで読みやすさは大きく改善する見込み。「リポジトリごとの設定ファイル」でキーバインド上書きが正式に決まった段階で再着手する（先取りすると YAGNI）。
+- [ ] F. `internal/tui/` の subpackage 化
+    - 約 2000 行・9 ファイルあるが、`Model` の private フィールドに各ファイル（`updateModal` / `extendSelection` / `renderRow` / `overlayMarker` 等）が密にアクセスしており、分割は export 強制とゲッター量産を招く。Go 慣習でもこの規模は単一パッケージで普通。やる場合は `Model` 周辺の API 設計から再検討が要る。
+
 ## ドキュメント
 
 - [ ] コマンド入力を sita など短い形式に変更する
