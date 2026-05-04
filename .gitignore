@@ -2,5 +2,5 @@ tmp/
 .sitatame/
 sitatame
 dist/
-.claude/settings.local.json
-.claude/scheduled_tasks.lock
+.claude/*
+!.claude/settings.json
