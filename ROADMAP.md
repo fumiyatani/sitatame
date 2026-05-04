@@ -17,9 +17,6 @@
 
 ## TUI 描画 / 操作
 
-- [ ] range モードに入ったことを、画面右下などで表示したい
-    - イメージとしては、Vim などの Normal / Visual / Insert モード
-    - 今は shift + v しても、どういう状態なのかわかりずらい。
 - [ ] side-by-side レイアウト（GitHub の diff view 風）
     - 左右に base / head を並べて表示するモード。
     - 既存の縦並び表示と切り替えられるように。

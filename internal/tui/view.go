@@ -75,7 +75,7 @@ func mainView(m Model) string {
 			b.WriteByte('\n')
 		}
 	}
-	b.WriteString(hintLine())
+	b.WriteString(hintLine(m))
 	return b.String()
 }
 
@@ -107,6 +107,20 @@ func fileIndexAtCursor(m Model) int {
 	return m.rows[m.cursor].fileIdx
 }
 
-func hintLine() string {
-	return "j/k move · n/p file · ? help · q quit"
+// modeTagRange mirrors Vim's `-- VISUAL --` so range mode is visible at a
+// glance. Only emitted while a selection is active; otherwise the hint stays
+// flush-left untouched.
+const modeTagRange = "-- RANGE --"
+
+func hintLine(m Model) string {
+	left := "j/k move · n/p file · ? help · q quit"
+	if m.selection == nil {
+		return left
+	}
+	leftW := ColWidth(left)
+	rightW := ColWidth(modeTagRange)
+	if m.width <= 0 || leftW+1+rightW > m.width {
+		return left + " " + modeTagRange
+	}
+	return left + strings.Repeat(" ", m.width-leftW-rightW) + modeTagRange
 }
