@@ -61,6 +61,8 @@ git ワーキングツリー内で実行します:
 ```sh
 sitatame                # base を自動検出（origin/HEAD, @{upstream}, main, …）
 sitatame origin/main    # base を明示指定
+sitatame --staged       # ステージ済みの変更をレビュー（index vs HEAD）
+sitatame --working      # 未コミットの全変更をレビュー（worktree vs HEAD）
 sitatame search TODO    # .sitatame/reviews/ を grep
 ```
 
@@ -120,17 +122,21 @@ cat "$REVIEW_PATH" | your-agent --consume-review
 に流すため、`SITATAME_AGENT` には**自分が完全に信頼できるコマンドのみ**を
 設定してください。外部由来の値を流し込まないでください。
 
-未コミット / 未ステージの変更を見たい場合は、現状は一時コミットを挟むのが
-ワークアラウンドです:
+未コミット / 未ステージの変更をレビューする場合:
 
 ```sh
-git add -A
-git commit -m "wip:review"
-sitatame HEAD~1
-git reset --soft HEAD~1   # コミットだけ取り消し、変更は index/working に戻る
+sitatame --staged    # ステージ済みの変更を HEAD と比較（git diff --cached）
+sitatame --working   # worktree を HEAD と比較（staged + unstaged の両方）
 ```
 
-`--staged` / `--working` フラグでこれを直接サポートするのは Phase 2 の予定です。
+いずれも base 自動検出はスキップし、レビューには `base.ref: HEAD` と
+`head.ref: INDEX`（`--staged`）または `head.ref: WORKTREE`（`--working`）が
+記録されます。対象の変更がない場合は TUI を起動せずに stderr へメッセージを
+出して exit 0 で終了します。
+
+`--staged` / `--working` は相互排他で、明示的な base 引数とも併用できません。
+未追跡ファイルは含まれないので、必要なら事前に `git add -N <path>` を実行して
+ください。
 
 `q` で抜けた場合は exit 1 となり、draft が
 `.sitatame/drafts/<slug>/<id>.md` に残ります。次回セッションで拾い直すか、

@@ -313,3 +313,115 @@ func TestDiff_BinaryDetection(t *testing.T) {
 		t.Errorf("img.bin not in diff: %+v", files)
 	}
 }
+
+func TestDiff_Staged(t *testing.T) {
+	dir := makeRepo(t)
+	writeAndCommit(t, dir, "keep.go", []byte("a\nb\nc\n"), "init")
+
+	// staged: modify keep.go and add new.go to index
+	if err := os.WriteFile(filepath.Join(dir, "keep.go"), []byte("a\nB\nc\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "new.go"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "keep.go", "new.go")
+	// unstaged: write something in worktree that should NOT appear under --staged
+	if err := os.WriteFile(filepath.Join(dir, "keep.go"), []byte("a\nB\nc\nUNSTAGED\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &Repo{Workdir: dir}
+	files, err := repo.Diff(DiffSpec{Source: SourceStaged})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byPath := map[string]diffmodel.File{}
+	for _, f := range files {
+		byPath[f.DisplayPath()] = f
+	}
+	keep, ok := byPath["keep.go"]
+	if !ok {
+		t.Fatalf("keep.go missing from staged diff: %+v", files)
+	}
+	if keep.Status != diffmodel.StatusModified {
+		t.Errorf("keep.go status = %q, want M", keep.Status)
+	}
+	// Confirm staged-only: the patch should have "B" but not "UNSTAGED"
+	var body string
+	for _, h := range keep.Hunks {
+		for _, ln := range h.Lines {
+			body += ln.Text + "\n"
+		}
+	}
+	if !strings.Contains(body, "B") {
+		t.Errorf("staged diff missing 'B': %q", body)
+	}
+	if strings.Contains(body, "UNSTAGED") {
+		t.Errorf("staged diff leaked UNSTAGED line: %q", body)
+	}
+	if got, ok := byPath["new.go"]; !ok || got.Status != diffmodel.StatusAdded {
+		t.Errorf("new.go staged: %+v", got)
+	}
+}
+
+func TestDiff_Working(t *testing.T) {
+	dir := makeRepo(t)
+	writeAndCommit(t, dir, "keep.go", []byte("a\nb\nc\n"), "init")
+
+	// staged change
+	if err := os.WriteFile(filepath.Join(dir, "staged.go"), []byte("S\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "staged.go")
+	// unstaged change to a tracked file
+	if err := os.WriteFile(filepath.Join(dir, "keep.go"), []byte("a\nb\nc\nW\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	// untracked file (must NOT appear — matches `git diff HEAD` semantics)
+	if err := os.WriteFile(filepath.Join(dir, "untracked.go"), []byte("U\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := &Repo{Workdir: dir}
+	files, err := repo.Diff(DiffSpec{Source: SourceWorking})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	byPath := map[string]diffmodel.File{}
+	for _, f := range files {
+		byPath[f.DisplayPath()] = f
+	}
+	if got, ok := byPath["staged.go"]; !ok || got.Status != diffmodel.StatusAdded {
+		t.Errorf("staged.go in working diff: %+v", got)
+	}
+	if got, ok := byPath["keep.go"]; !ok || got.Status != diffmodel.StatusModified {
+		t.Errorf("keep.go in working diff: %+v", got)
+	}
+	if _, ok := byPath["untracked.go"]; ok {
+		t.Errorf("untracked.go should not appear in working diff: %+v", files)
+	}
+}
+
+func TestDiff_StagedEmpty(t *testing.T) {
+	dir := makeRepo(t)
+	writeAndCommit(t, dir, "a.txt", []byte("a\n"), "init")
+	repo := &Repo{Workdir: dir}
+	files, err := repo.Diff(DiffSpec{Source: SourceStaged})
+	if err != nil {
+		t.Fatalf("staged with clean index should not error: %v", err)
+	}
+	if len(files) != 0 {
+		t.Errorf("staged clean = %d files, want 0", len(files))
+	}
+}
+
+func TestDiff_RangeRequiresBase(t *testing.T) {
+	repo := &Repo{Workdir: "."}
+	_, err := repo.Diff(DiffSpec{Source: SourceRange})
+	if err == nil {
+		t.Errorf("expected error when SourceRange is used without Base")
+	}
+}
