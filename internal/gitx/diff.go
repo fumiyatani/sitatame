@@ -308,21 +308,43 @@ func numstatPathKey(e numstatEntry) string {
 	return "\x00" + e.PostPath
 }
 
-// Diff returns the file-level diff between base..HEAD by fusing three git
+// DiffSource selects which set of changes Diff should fuse.
+type DiffSource int
+
+const (
+	// SourceRange compares Base..HEAD (the historical default).
+	SourceRange DiffSource = iota
+	// SourceStaged compares the index against HEAD (`git diff --cached`).
+	SourceStaged
+	// SourceWorking compares the working tree against HEAD (`git diff HEAD`).
+	// This includes both staged and unstaged edits to tracked files; untracked
+	// files are not part of the diff (matching git's own behavior).
+	SourceWorking
+)
+
+// DiffSpec parameterizes Diff. Base is consulted only when Source == SourceRange.
+type DiffSpec struct {
+	Source DiffSource
+	Base   string
+}
+
+// Diff returns the file-level diff for the given spec by fusing three git
 // streams: `--raw -z` (file metadata + statuses), `--numstat -z` (binary
 // markers), and `--patch --no-color` (hunks).
-func (r *Repo) Diff(base string) ([]diffmodel.File, error) {
-	rng := base + "..HEAD"
-	// `--end-of-options` (git 2.24+) prevents `rng` from being parsed as a flag.
-	rawOut, err := r.run("diff", "--raw", "-z", "--find-renames", "--find-copies", "--end-of-options", rng)
+func (r *Repo) Diff(spec DiffSpec) ([]diffmodel.File, error) {
+	srcArgs, err := diffSourceArgs(spec)
+	if err != nil {
+		return nil, err
+	}
+	rawOut, err := r.run(diffArgs(srcArgs, "--raw", "-z")...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --raw: %w", err)
 	}
-	numOut, err := r.run("diff", "--numstat", "-z", "--find-renames", "--find-copies", "--end-of-options", rng)
+	numOut, err := r.run(diffArgs(srcArgs, "--numstat", "-z")...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --numstat: %w", err)
 	}
-	patchOut, err := r.run("diff", "--patch", "--no-color", "--find-renames", "--find-copies", "--end-of-options", rng)
+	patchOut, err := r.run(diffArgs(srcArgs, "--patch", "--no-color")...)
 	if err != nil {
 		return nil, fmt.Errorf("git diff --patch: %w", err)
 	}
@@ -383,4 +405,35 @@ func (r *Repo) Diff(base string) ([]diffmodel.File, error) {
 	}
 
 	return files, nil
+}
+
+// diffSourceArgs returns the source-selecting args (range / --cached / HEAD)
+// that come AFTER the format flags. Order matters: format flags first, then
+// `--find-renames --find-copies`, then these source args last.
+func diffSourceArgs(spec DiffSpec) ([]string, error) {
+	switch spec.Source {
+	case SourceRange:
+		if spec.Base == "" {
+			return nil, fmt.Errorf("DiffSpec: SourceRange requires Base")
+		}
+		// `--end-of-options` (git 2.24+) prevents the range from being parsed as a flag.
+		return []string{"--end-of-options", spec.Base + "..HEAD"}, nil
+	case SourceStaged:
+		return []string{"--cached"}, nil
+	case SourceWorking:
+		return []string{"--end-of-options", "HEAD"}, nil
+	default:
+		return nil, fmt.Errorf("DiffSpec: unknown Source %d", spec.Source)
+	}
+}
+
+// diffArgs builds the full git diff arg list: subcommand + format flags +
+// rename/copy detection + source selectors.
+func diffArgs(src []string, formatFlags ...string) []string {
+	out := make([]string, 0, 1+len(formatFlags)+2+len(src))
+	out = append(out, "diff")
+	out = append(out, formatFlags...)
+	out = append(out, "--find-renames", "--find-copies")
+	out = append(out, src...)
+	return out
 }

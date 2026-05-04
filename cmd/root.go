@@ -77,10 +77,53 @@ func defaultRunTUI(env Env, opts TUIOptions) (TUIResult, error) {
 	return TUIResult{Review: fm.Review, Reason: fm.QuitReason()}, nil
 }
 
+// rootOpts is the parsed form of the positional + flag arguments to
+// `sitatame [base]` / `sitatame --staged` / `sitatame --working`.
+type rootOpts struct {
+	Staged  bool
+	Working bool
+	BaseArg string
+}
+
+// parseRootArgs splits args into the rootOpts shape, enforcing the rule that
+// --staged and --working are mutually exclusive and cannot be combined with a
+// positional base argument.
+func parseRootArgs(args []string) (rootOpts, error) {
+	var opts rootOpts
+	for _, a := range args {
+		switch {
+		case a == "--staged":
+			opts.Staged = true
+		case a == "--working":
+			opts.Working = true
+		case len(a) > 0 && a[0] == '-':
+			return rootOpts{}, fmt.Errorf("unknown flag: %s", a)
+		default:
+			if opts.BaseArg != "" {
+				return rootOpts{}, fmt.Errorf("unexpected extra argument: %s", a)
+			}
+			opts.BaseArg = a
+		}
+	}
+	if opts.Staged && opts.Working {
+		return rootOpts{}, fmt.Errorf("--staged and --working are mutually exclusive")
+	}
+	if (opts.Staged || opts.Working) && opts.BaseArg != "" {
+		return rootOpts{}, fmt.Errorf("--staged/--working cannot be combined with an explicit base")
+	}
+	return opts, nil
+}
+
 // RunRoot implements `sitatame [base]`: validate the entry conditions
 // (TTY + repo + base resolution), build the diff model, and hand off to the
 // TUI runner.
 func RunRoot(env Env, args []string) int {
+	opts, err := parseRootArgs(args)
+	if err != nil {
+		fmt.Fprintf(env.Stderr, "sitatame: %v\n", err)
+		return 2
+	}
+
 	if !env.IsTerminal(env.Stdin.Fd()) {
 		fmt.Fprintln(env.Stderr, "sitatame: stdin is not a TTY; sitatame requires an interactive terminal")
 		return 2
@@ -97,29 +140,40 @@ func RunRoot(env Env, args []string) int {
 		return 1
 	}
 
-	var explicit string
-	if len(args) > 0 {
-		explicit = args[0]
-	}
-	base, err := gitx.ResolveBase(repo, explicit)
+	spec, base, err := resolveDiffSpec(repo, opts)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: %v\n", err)
 		return 1
 	}
 
-	files, err := repo.Diff(base.Ref)
+	files, err := repo.Diff(spec)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: diff: %v\n", err)
 		return 1
 	}
 
+	if (opts.Staged || opts.Working) && len(files) == 0 {
+		fmt.Fprintf(env.Stderr, "sitatame: %s\n", emptyDiffMessage(spec))
+		return 0
+	}
+
 	branch, _ := repo.CurrentBranch()
 	headSHA, _ := repo.HeadSHA()
+	headRef := "HEAD"
+	headRefSHA := headSHA
+	switch spec.Source {
+	case gitx.SourceStaged:
+		headRef = "INDEX"
+		headRefSHA = ""
+	case gitx.SourceWorking:
+		headRef = "WORKTREE"
+		headRefSHA = ""
+	}
 	r := review.Review{
 		Schema: 1,
 		Branch: branch,
 		Base:   review.Ref{Ref: base.Ref, SHA: base.SHA},
-		Head:   review.Ref{Ref: "HEAD", SHA: headSHA},
+		Head:   review.Ref{Ref: headRef, SHA: headRefSHA},
 	}
 
 	store := review.NewStore(review.NewPaths(repo.Workdir, branch))
@@ -130,8 +184,8 @@ func RunRoot(env Env, args []string) int {
 	if runner == nil {
 		runner = defaultRunTUI
 	}
-	opts := TUIOptions{Repo: repo, Base: base, Files: files, Review: r}
-	result, err := runTUIWithShutdown(runner, env, opts, store)
+	tuiOpts := TUIOptions{Repo: repo, Base: base, Files: files, Review: r}
+	result, err := runTUIWithShutdown(runner, env, tuiOpts, store)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: tui: %v\n", err)
 		return 1
@@ -163,6 +217,43 @@ func RunRoot(env Env, args []string) int {
 	// cleanly without touching the filesystem. In production this only happens
 	// if the TUI is short-circuited (e.g. test stubs).
 	return 0
+}
+
+// resolveDiffSpec turns the parsed CLI options into a DiffSpec plus the
+// review.Ref-shaped Base record that goes into the review YAML. For
+// --staged/--working the "base" is HEAD itself; for the default mode the base
+// goes through the auto-detect / explicit chain.
+func resolveDiffSpec(repo *gitx.Repo, opts rootOpts) (gitx.DiffSpec, gitx.Base, error) {
+	switch {
+	case opts.Staged:
+		sha, err := repo.HeadSHA()
+		if err != nil {
+			return gitx.DiffSpec{}, gitx.Base{}, err
+		}
+		return gitx.DiffSpec{Source: gitx.SourceStaged}, gitx.Base{Ref: "HEAD", SHA: sha}, nil
+	case opts.Working:
+		sha, err := repo.HeadSHA()
+		if err != nil {
+			return gitx.DiffSpec{}, gitx.Base{}, err
+		}
+		return gitx.DiffSpec{Source: gitx.SourceWorking}, gitx.Base{Ref: "HEAD", SHA: sha}, nil
+	default:
+		base, err := gitx.ResolveBase(repo, opts.BaseArg)
+		if err != nil {
+			return gitx.DiffSpec{}, gitx.Base{}, err
+		}
+		return gitx.DiffSpec{Source: gitx.SourceRange, Base: base.Ref}, base, nil
+	}
+}
+
+func emptyDiffMessage(spec gitx.DiffSpec) string {
+	switch spec.Source {
+	case gitx.SourceStaged:
+		return "no staged changes"
+	case gitx.SourceWorking:
+		return "no working-tree changes"
+	}
+	panic(fmt.Sprintf("emptyDiffMessage: unexpected Source %d", spec.Source))
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the
