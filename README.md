@@ -62,6 +62,8 @@ Run inside a git working tree:
 ```sh
 sitatame                # auto-detect base (origin/HEAD, @{upstream}, main, …)
 sitatame origin/main    # explicit base
+sitatame --staged       # review staged changes (index vs HEAD)
+sitatame --working      # review all uncommitted changes (worktree vs HEAD)
 sitatame search TODO    # grep saved reviews under .sitatame/reviews/
 ```
 
@@ -127,17 +129,19 @@ agent that knows to look at drafts before starting work.
 
 ### Reviewing uncommitted changes
 
-`sitatame` diffs `<base>..HEAD`, so staged / unstaged changes don't appear in
-the TUI yet. The workaround is a temporary commit:
-
 ```sh
-git add -A
-git commit -m "wip:review"
-sitatame HEAD~1
-git reset --soft HEAD~1   # undo the commit, keep changes in index / working tree
+sitatame --staged    # review the index against HEAD (`git diff --cached`)
+sitatame --working   # review the working tree against HEAD (staged + unstaged)
 ```
 
-Native `--staged` / `--working` flags are deferred to Phase 2.
+Both modes skip base auto-detection and record the review with
+`base.ref: HEAD` plus `head.ref: INDEX` (for `--staged`) or
+`head.ref: WORKTREE` (for `--working`). When there are no changes to review,
+`sitatame` prints a friendly message and exits 0 without launching the TUI.
+
+`--staged` and `--working` are mutually exclusive and cannot be combined with
+an explicit base argument. Untracked files are not included; run
+`git add -N <path>` first if you want them in the diff.
 
 ## Development
 

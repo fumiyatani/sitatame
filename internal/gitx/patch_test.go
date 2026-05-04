@@ -219,7 +219,7 @@ func TestRepoDiff_Integration(t *testing.T) {
 	mustGit(t, dir, "commit", "-q", "-m", "feature changes")
 
 	repo := &Repo{Workdir: dir}
-	files, err := repo.Diff("main")
+	files, err := repo.Diff(DiffSpec{Source: SourceRange, Base: "main"})
 	if err != nil {
 		t.Fatal(err)
 	}
