@@ -8,6 +8,30 @@ import (
 const cursorMarker = "> "
 const cursorPad = "  " // same width as cursorMarker so non-cursor lines align
 
+// ANSI SGR sequences for diff line tinting. Stripped by goldenSnapshot before
+// snapshot compare, so this stays decorative — never load-bearing for tests.
+const (
+	ansiGreen = "\x1b[32m"
+	ansiRed   = "\x1b[31m"
+	ansiReset = "\x1b[0m"
+)
+
+// colorizeRow tints rendered content lines: green for additions, red for
+// deletions. Headers, context, and binary placeholders pass through untouched.
+func colorizeRow(r row, rendered string) string {
+	if r.kind != rowLine || len(rendered) == 0 {
+		return rendered
+	}
+	switch rendered[0] {
+	case '+':
+		return ansiGreen + rendered + ansiReset
+	case '-':
+		return ansiRed + rendered + ansiReset
+	default:
+		return rendered
+	}
+}
+
 // mainView renders the visible viewport: status bar + diff window + hint.
 // Only rows in [top, top+height) are emitted, so a 10k-line diff still costs
 // O(visible-rows) per frame.
@@ -28,9 +52,11 @@ func mainView(m Model) string {
 		if end > len(m.rows) {
 			end = len(m.rows)
 		}
-		// Width budget for the row body excludes the 2-col cursor gutter and
-		// the 1-col overlay marker gutter.
-		bodyMax := m.width - len(cursorMarker) - 1
+		// Width budget for the row body excludes the 2-col cursor gutter, the
+		// 1-col overlay marker gutter, and the line-number gutter (which is 0
+		// when no side has any line numbers).
+		gw := gutterWidth(m.lnBaseW, m.lnHeadW)
+		bodyMax := m.width - len(cursorMarker) - 1 - gw
 		for i := m.top; i < end; i++ {
 			switch {
 			case i == m.cursor:
@@ -41,7 +67,8 @@ func mainView(m Model) string {
 				b.WriteString(cursorPad)
 			}
 			b.WriteString(overlayMarker(m.overlay[i], m.Review.Comments))
-			b.WriteString(renderRow(m.rows[i], bodyMax))
+			b.WriteString(lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW))
+			b.WriteString(colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax)))
 			b.WriteByte('\n')
 		}
 		for i := end - m.top; i < height; i++ {

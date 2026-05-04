@@ -15,6 +15,7 @@ func makeFile(path string, prefixes []byte) diffmodel.File {
 	for i, p := range prefixes {
 		hunk.Lines = append(hunk.Lines, diffmodel.Line{Prefix: p, Text: string('a' + byte(i))})
 	}
+	diffmodel.AssignLineNumbers(&hunk)
 	return diffmodel.File{
 		Status:   diffmodel.StatusModified,
 		PrePath:  path, PostPath: path,

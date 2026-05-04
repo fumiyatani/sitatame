@@ -35,6 +35,8 @@ type Model struct {
 
 	rows       []row
 	overlay    map[int][]int
+	lnBaseW    int
+	lnHeadW    int
 	cursor     int
 	top        int
 	width      int
@@ -48,11 +50,14 @@ type Model struct {
 
 func New(files []diffmodel.File, r review.Review) Model {
 	rows := buildRows(files)
+	bw, hw := lineNumberWidths(files)
 	return Model{
 		Files:   files,
 		Review:  r,
 		rows:    rows,
 		overlay: buildOverlay(rows, files, r.Comments),
+		lnBaseW: bw,
+		lnHeadW: hw,
 		// Reasonable default until the first WindowSizeMsg arrives so View()
 		// before the first resize still produces a non-empty body.
 		height: 24,

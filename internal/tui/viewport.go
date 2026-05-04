@@ -113,6 +113,124 @@ func renderRow(r row, maxWidth int) string {
 	}
 }
 
+// lineNumberWidths returns the digit count of the largest BaseLine / HeadLine
+// across files. 0 on a side means no line on that side carries a number, so
+// the gutter for that side collapses entirely.
+func lineNumberWidths(files []diffmodel.File) (base, head int) {
+	for _, f := range files {
+		for _, h := range f.Hunks {
+			for _, l := range h.Lines {
+				if w := digits(l.BaseLine); w > base {
+					base = w
+				}
+				if w := digits(l.HeadLine); w > head {
+					head = w
+				}
+			}
+		}
+	}
+	return
+}
+
+func digits(n int) int {
+	if n <= 0 {
+		return 0
+	}
+	d := 0
+	for n > 0 {
+		d++
+		n /= 10
+	}
+	return d
+}
+
+// gutterWidth is the total column count of the line-number gutter, including
+// the trailing space separator. 0 when neither side has any line numbers
+// (e.g. binary-only file lists).
+func gutterWidth(baseW, headW int) int {
+	if baseW == 0 && headW == 0 {
+		return 0
+	}
+	w := baseW + headW
+	if baseW > 0 && headW > 0 {
+		w++ // single-space separator between base and head columns
+	}
+	w++ // trailing separator before content
+	return w
+}
+
+// lineNumberGutter renders the per-row base/head number gutter. Non-line rows
+// get blanks of the same width so headers and content stay vertically aligned.
+func lineNumberGutter(r row, files []diffmodel.File, baseW, headW int) string {
+	w := gutterWidth(baseW, headW)
+	if w == 0 {
+		return ""
+	}
+	if r.kind != rowLine || r.fileIdx < 0 || r.fileIdx >= len(files) {
+		return blanks(w)
+	}
+	f := files[r.fileIdx]
+	if r.hunkIdx < 0 || r.hunkIdx >= len(f.Hunks) {
+		return blanks(w)
+	}
+	h := f.Hunks[r.hunkIdx]
+	if r.lineIdx < 0 || r.lineIdx >= len(h.Lines) {
+		return blanks(w)
+	}
+	l := h.Lines[r.lineIdx]
+	var out []byte
+	if baseW > 0 {
+		out = appendNumOrBlank(out, l.BaseLine, baseW)
+	}
+	if baseW > 0 && headW > 0 {
+		out = append(out, ' ')
+	}
+	if headW > 0 {
+		out = appendNumOrBlank(out, l.HeadLine, headW)
+	}
+	out = append(out, ' ')
+	return string(out)
+}
+
+func appendNumOrBlank(dst []byte, n, width int) []byte {
+	if n <= 0 {
+		for i := 0; i < width; i++ {
+			dst = append(dst, ' ')
+		}
+		return dst
+	}
+	s := itoa(n)
+	for i := len(s); i < width; i++ {
+		dst = append(dst, ' ')
+	}
+	return append(dst, s...)
+}
+
+func itoa(n int) string {
+	if n == 0 {
+		return "0"
+	}
+	var buf [20]byte
+	i := len(buf)
+	for n > 0 {
+		i--
+		buf[i] = byte('0' + n%10)
+		n /= 10
+	}
+	return string(buf[i:])
+}
+
+func blanks(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	b := make([]byte, n)
+	for i := range b {
+		b[i] = ' '
+	}
+	return string(b)
+}
+
 // jumpFile moves the cursor to the next (dir>0) or previous (dir<0) file
 // header. Files include rowFileHeader; we skip past the current file's header
 // when searching forward so `n` always advances.
