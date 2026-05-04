@@ -168,6 +168,151 @@ func TestRunRoot_BaseAutoFails(t *testing.T) {
 	}
 }
 
+func TestRunRoot_Staged_ResolvesAndDiffs(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "staged.txt")
+
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--staged"}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if len(captured.Files) == 0 {
+		t.Fatalf("no files captured")
+	}
+	if captured.Review.Head.Ref != "INDEX" {
+		t.Errorf("Head.Ref = %q, want INDEX", captured.Review.Head.Ref)
+	}
+	if captured.Review.Head.SHA != "" {
+		t.Errorf("Head.SHA = %q, want empty", captured.Review.Head.SHA)
+	}
+	if captured.Review.Base.Ref != "HEAD" {
+		t.Errorf("Base.Ref = %q, want HEAD", captured.Review.Base.Ref)
+	}
+}
+
+func TestRunRoot_Working_ResolvesAndDiffs(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	// Modify a tracked file (committed in newRepo) — this should appear under
+	// --working without needing `git add`.
+	if err := os.WriteFile(filepath.Join(dir, "b"), []byte("b\nworking\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--working"}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if len(captured.Files) == 0 {
+		t.Fatalf("no files captured")
+	}
+	if captured.Review.Head.Ref != "WORKTREE" {
+		t.Errorf("Head.Ref = %q, want WORKTREE", captured.Review.Head.Ref)
+	}
+	if captured.Review.Head.SHA != "" {
+		t.Errorf("Head.SHA = %q, want empty", captured.Review.Head.SHA)
+	}
+}
+
+func TestRunRoot_FlagConflict_StagedAndWorking(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			t.Fatalf("RunTUI must not be called")
+			return TUIResult{}, nil
+		},
+	}
+	if code := RunRoot(env, []string{"--staged", "--working"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "mutually exclusive") {
+		t.Errorf("stderr = %q, want contains 'mutually exclusive'", stderr.String())
+	}
+}
+
+func TestRunRoot_FlagConflict_StagedAndBase(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			t.Fatalf("RunTUI must not be called")
+			return TUIResult{}, nil
+		},
+	}
+	if code := RunRoot(env, []string{"--staged", "main"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "explicit base") {
+		t.Errorf("stderr = %q, want contains 'explicit base'", stderr.String())
+	}
+}
+
+func TestRunRoot_UnknownFlag(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			t.Fatalf("RunTUI must not be called")
+			return TUIResult{}, nil
+		},
+	}
+	if code := RunRoot(env, []string{"--bogus"}); code != 2 {
+		t.Errorf("exit = %d, want 2", code)
+	}
+	if !strings.Contains(stderr.String(), "unknown flag") {
+		t.Errorf("stderr = %q, want contains 'unknown flag'", stderr.String())
+	}
+}
+
+func TestRunRoot_Staged_NoChanges(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	// Clean index — no staged files.
+	var stdout, stderr bytes.Buffer
+	tuiCalled := false
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			tuiCalled = true
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
+	}
+	if code := RunRoot(env, []string{"--staged"}); code != 0 {
+		t.Errorf("exit = %d, want 0", code)
+	}
+	if tuiCalled {
+		t.Errorf("RunTUI must not be called when staged diff is empty")
+	}
+	if !strings.Contains(stderr.String(), "no staged changes") {
+		t.Errorf("stderr = %q, want contains 'no staged changes'", stderr.String())
+	}
+}
+
 func TestDispatchHelp(t *testing.T) {
 	// dispatch lives in main, not cmd; this test just checks RunSearch wiring.
 	env := ttyEnv(os.Stdin, true)
