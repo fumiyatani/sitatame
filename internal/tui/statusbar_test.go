@@ -32,6 +32,31 @@ func TestStatusBar_BinaryHint(t *testing.T) {
 	}
 }
 
+func TestHintLine_RangeModeIndicator(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{twoLineHunkFile()}
+	m := setSize(New(files, review.Review{}), 60, 12)
+
+	if strings.Contains(m.View(), "-- RANGE --") {
+		t.Errorf("RANGE tag should be absent before V is pressed")
+	}
+
+	// Move into a content row, enter range mode.
+	m, _ = applyKey(m, "j") // hunk header
+	m, _ = applyKey(m, "j") // first content line
+	m, _ = applyKey(m, "V")
+
+	if !strings.Contains(m.View(), "-- RANGE --") {
+		t.Errorf("RANGE tag missing after V: %q", m.View())
+	}
+
+	// Esc clears selection — tag should disappear.
+	m, _ = applyKey(m, "esc")
+	if strings.Contains(m.View(), "-- RANGE --") {
+		t.Errorf("RANGE tag should clear with Esc: %q", m.View())
+	}
+}
+
 func TestStatusBar_FileCount(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{
