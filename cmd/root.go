@@ -252,9 +252,8 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 		return "no staged changes"
 	case gitx.SourceWorking:
 		return "no working-tree changes"
-	default:
-		return "no changes"
 	}
+	panic(fmt.Sprintf("emptyDiffMessage: unexpected Source %d", spec.Source))
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the
