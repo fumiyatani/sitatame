@@ -7,12 +7,17 @@ import "strings"
 var helpLines = []string{
 	"sitatame — keys",
 	"",
-	"  ?         show this help",
-	"  q         quit",
-	"  esc       close modal / cancel",
+	"  j / k     cursor down / up",
+	"  n / p     next / previous file",
+	"  V         start range selection (j/k extend, Esc clear)",
+	"  c         comment at the cursor",
+	"  R         review-level comment",
+	"  s         save & promote, print SITATAME_REVIEW=<path>",
+	"  q         save as draft and exit 1",
+	"  ?         toggle this help",
+	"  Esc       close modal / cancel selection",
 	"",
-	"(more keys land in upcoming tasks: j/k navigate,",
-	" V select range, c comment, R review, s save)",
+	"  Ctrl+S    confirm comment (inside modal)",
 }
 
 func helpView() string {

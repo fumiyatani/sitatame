@@ -59,7 +59,7 @@ func (m *Model) openCommentModal() bool {
 	switch {
 	case m.selection != nil && r.fileIdx == m.selection.FileIdx:
 		kind = review.KindRange
-		startLine, endLine := selectionLines(m.rows, *m.selection)
+		startLine, endLine := selectionLines(m.rows, *m.selection, f, anchor.Side)
 		anchor.Kind = review.KindRange
 		anchor.LineStart = startLine
 		anchor.LineEnd = endLine
@@ -178,10 +178,10 @@ func (m *Model) updateModal(msg tea.Msg) tea.Cmd {
 	return cmd
 }
 
-func selectionLines(rows []row, sel Selection) (int, int) {
+func selectionLines(rows []row, sel Selection, f diffmodel.File, side review.Side) (int, int) {
 	lo, hi := sel.Range()
-	startLine := indexLineNumber(rows, lo)
-	endLine := indexLineNumber(rows, hi)
+	startLine := rowLineNumber(rows, lo, f, side)
+	endLine := rowLineNumber(rows, hi, f, side)
 	if startLine == 0 || endLine == 0 {
 		return startLine, endLine
 	}
@@ -191,9 +191,10 @@ func selectionLines(rows []row, sel Selection) (int, int) {
 	return startLine, endLine
 }
 
-// indexLineNumber returns the head-side line number of a row, falling back to
-// base-side when the row is a deletion. 0 when no number is available.
-func indexLineNumber(rows []row, idx int) int {
+// rowLineNumber resolves a row index to a real diff line number on the given
+// side. Returns 0 for non-line rows or when the side has no number (e.g. a
+// head-side query on a deleted-only row).
+func rowLineNumber(rows []row, idx int, f diffmodel.File, side review.Side) int {
 	if idx < 0 || idx >= len(rows) {
 		return 0
 	}
@@ -201,10 +202,7 @@ func indexLineNumber(rows []row, idx int) int {
 	if r.kind != rowLine {
 		return 0
 	}
-	// Without access to the original Line, we can't read BaseLine/HeadLine.
-	// Returning 0 here is fine — confirmation tests only assert that range
-	// kind is selected and start/end ordering holds.
-	return idx + 1
+	return lineNumberAt(f, r.hunkIdx, r.lineIdx, side)
 }
 
 func lineNumberAt(f diffmodel.File, hunkIdx, lineIdx int, side review.Side) int {

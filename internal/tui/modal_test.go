@@ -113,6 +113,39 @@ func TestModal_RangeKindAfterSelection(t *testing.T) {
 	}
 }
 
+// TestModal_RangePersistsRealDiffLineNumbers locks in that range anchors carry
+// the head-side diff line numbers (not row indices). Regression guard for the
+// earlier bug where LineStart/LineEnd were row offsets and would drift once
+// hunk headers / multiple files shifted the row stream.
+func TestModal_RangePersistsRealDiffLineNumbers(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{twoLineHunkFile()}
+	m := New(files, review.Review{})
+	// rows: 0 file header, 1 hunk header, 2 ` x` (head=1), 3 `+y` (head=2).
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	m = typeBody(m, "rng")
+	m = modalSendCtrlS(m)
+
+	if got := len(m.Review.Comments); got != 1 {
+		t.Fatalf("expected 1 comment, got %d", got)
+	}
+	c := m.Review.Comments[0]
+	if c.Kind != review.KindRange {
+		t.Fatalf("kind=%q, want range", c.Kind)
+	}
+	if c.LineStart != 1 || c.LineEnd != 2 {
+		t.Errorf("range lines = (%d,%d), want (1,2) — head-side diff numbers",
+			c.LineStart, c.LineEnd)
+	}
+	if c.Side != review.SideHead {
+		t.Errorf("side=%q, want head", c.Side)
+	}
+}
+
 func TestModal_BinaryFileForcesFileKind(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{

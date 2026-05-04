@@ -10,7 +10,7 @@ import (
 )
 
 func twoLineHunkFile() diffmodel.File {
-	return diffmodel.File{
+	f := diffmodel.File{
 		Status:   diffmodel.StatusModified,
 		PrePath:  "a.go", PostPath: "a.go",
 		Hunks: []diffmodel.Hunk{{
@@ -22,6 +22,8 @@ func twoLineHunkFile() diffmodel.File {
 			},
 		}},
 	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
 }
 
 func TestSelection_StartOnLineRowOnly(t *testing.T) {
