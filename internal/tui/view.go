@@ -66,9 +66,24 @@ func mainView(m Model) string {
 			default:
 				b.WriteString(cursorPad)
 			}
-			b.WriteString(overlayMarker(m.overlay[i], m.Review.Comments))
-			b.WriteString(lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW))
-			b.WriteString(colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax)))
+			marker := overlayMarker(m.overlay[i], m.Review.Comments)
+			gutter := lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW)
+			body := colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax))
+			if hasComment(m.overlay[i]) {
+				// 案 A: 行番号ガターの文字色を変える。ただし lineNumberGutter は
+				// rowLine 以外（file-header 等）やガター幅 0 で空白を返すため、
+				// 空白に文字色を付けても見えない。そのケースのみ marker / body 側に
+				// 着色を回すフォールバックを入れる。
+				if m.rows[i].kind == rowLine && gw > 0 {
+					gutter = applyCommentHighlight(gutter)
+				} else {
+					marker = applyCommentHighlight(marker)
+					body = applyCommentHighlight(body)
+				}
+			}
+			b.WriteString(marker)
+			b.WriteString(gutter)
+			b.WriteString(body)
 			b.WriteByte('\n')
 		}
 		for i := end - m.top; i < height; i++ {
