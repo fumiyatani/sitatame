@@ -71,7 +71,7 @@ sitatame search TODO    # .sitatame/reviews/ を grep
 ```
 j / k       カーソル下 / 上
 n / p       次 / 前のファイル
-V           範囲選択開始（j/k で拡張、Esc で解除）
+r           範囲選択開始（j/k で拡張、Esc で解除）
 c           カーソル位置にコメント（kind は選択 / 行種別から自動決定）
 R           review 全体コメント（front matter の review_comment を編集）
 s           保存して promote — .sitatame/reviews/<slug>/<id>.md に書き出し、
@@ -79,6 +79,23 @@ s           保存して promote — .sitatame/reviews/<slug>/<id>.md に書き�
 q           draft として保存し exit 1（drafts/<slug>/<id>.md）
 ?           ヘルプ表示の切り替え
 Esc         モーダルを閉じる / 選択解除
+
+コメントモーダル内:
+Ctrl+S      コメントを確定して追加
+Esc         保存せずキャンセル
+```
+
+操作例:
+
+```
+# 行コメント
+sitatame → j/k で対象行へ → c → 本文を入力 → Ctrl+S → s
+
+# 範囲コメント
+sitatame → j/k で起点へ → r → j/k で範囲を拡張 → c → 本文を入力 → Ctrl+S → s
+
+# review 全体コメント（front matter）
+sitatame → R → 本文を入力 → Ctrl+S → s
 ```
 
 ガッタの状態マーカー:
