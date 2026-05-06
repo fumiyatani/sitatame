@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -188,6 +189,55 @@ func TestModal_ReviewKindOnR(t *testing.T) {
 	}
 	if len(m.Review.Comments) != 0 {
 		t.Errorf("review-kind must not append to Comments: %+v", m.Review.Comments)
+	}
+}
+
+func TestModal_LineExcerptShowsAnchoredRow(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{twoLineHunkFile()}
+	m := New(files, review.Review{})
+	m, _ = applyKey(m, "j") // hunk header
+	m, _ = applyKey(m, "j") // first content line (head=1, " x")
+	m, _ = applyKey(m, "c")
+	if m.Modal() == nil {
+		t.Fatal("modal precondition failed")
+	}
+	v := stripANSI(m.View())
+	if !strings.Contains(v, "1   x") {
+		t.Errorf("line excerpt missing the anchored row in modal view:\n%s", v)
+	}
+}
+
+func TestModal_RangeExcerptCoversSelection(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{twoLineHunkFile()}
+	m := New(files, review.Review{})
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "j") // extend over head=1..2
+	m, _ = applyKey(m, "c")
+	if m.Modal() == nil {
+		t.Fatal("modal precondition failed")
+	}
+	v := stripANSI(m.View())
+	if !strings.Contains(v, "1   x") {
+		t.Errorf("range excerpt missing line 1 in modal view:\n%s", v)
+	}
+	if !strings.Contains(v, "2 + y") {
+		t.Errorf("range excerpt missing line 2 in modal view:\n%s", v)
+	}
+}
+
+func TestModal_FileKindHasNoExcerpt(t *testing.T) {
+	t.Parallel()
+	f := twoLineHunkFile()
+	a := review.Anchor{Kind: review.KindFile, Path: f.DisplayPath(), Side: review.SideHead}
+	if got := commentExcerpt(f, a); got != nil {
+		t.Errorf("file-kind anchor should have no excerpt, got %+v", got)
+	}
+	if got := commentExcerpt(f, review.Anchor{Kind: review.KindReview}); got != nil {
+		t.Errorf("review-kind anchor should have no excerpt, got %+v", got)
 	}
 }
 
