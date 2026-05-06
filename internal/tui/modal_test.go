@@ -12,7 +12,7 @@ import (
 
 // modalSendSave confirms an open modal via the same key path Update uses.
 func modalSendSave(m Model) Model {
-	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'s'}})
+	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	return updated.(Model)
 }
 
@@ -65,16 +65,16 @@ func TestModal_LineKindOnContentLine(t *testing.T) {
 		t.Errorf("kind=%q, want line", mo.Kind())
 	}
 
-	m = typeBody(m, "looked ok")
+	m = typeBody(m, "looks ok")
 	m = modalSendSave(m)
 	if m.Modal() != nil {
-		t.Errorf("s should close modal")
+		t.Errorf("Ctrl+S should close modal")
 	}
 	if got := len(m.Review.Comments); got != 1 {
 		t.Fatalf("expected 1 comment appended, got %d", got)
 	}
 	c := m.Review.Comments[0]
-	if c.Kind != review.KindLine || c.Body != "looked ok" || c.State != review.StateOpen {
+	if c.Kind != review.KindLine || c.Body != "looks ok" || c.State != review.StateOpen {
 		t.Errorf("saved comment wrong: %+v", c)
 	}
 }
@@ -251,7 +251,7 @@ func TestModal_EscCancelsWithoutAppend(t *testing.T) {
 	if m.Modal() == nil {
 		t.Fatal("modal precondition failed")
 	}
-	m = typeBody(m, "drop me")
+	m = typeBody(m, "discarded")
 	m = modalSendEsc(m)
 	if m.Modal() != nil {
 		t.Errorf("Esc should close modal")

@@ -17,7 +17,7 @@ var helpLines = []string{
 	"  ?         toggle this help",
 	"  Esc       close modal / cancel selection",
 	"",
-	"  s         confirm comment (inside modal)",
+	"  Ctrl+S    confirm comment (inside modal)",
 }
 
 func helpView() string {
