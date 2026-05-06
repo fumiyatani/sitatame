@@ -16,9 +16,8 @@ import (
 // modal holds the state for the comment input dialog.
 //
 // kind is decided at open time from the cursor / selection / explicit
-// Shift+R trigger; it doesn't change while the modal is open. anchor carries
-// enough
-// context to materialize a review.Comment on confirm.
+// Shift+R trigger; it doesn't change while the modal is open. anchor
+// carries enough context to materialize a review.Comment on confirm.
 type modal struct {
 	kind   review.Kind
 	anchor review.Anchor
