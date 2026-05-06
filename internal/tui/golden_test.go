@@ -67,7 +67,7 @@ func TestGolden_RangeSelection(t *testing.T) {
 	m := setSize(New(files, review.Review{}), 60, 12)
 	m, _ = applyKey(m, "j") // hunk header
 	m, _ = applyKey(m, "j") // first line
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	m, _ = applyKey(m, "j") // extend
 	runGolden(t, "range_selection", m)
 }

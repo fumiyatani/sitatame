@@ -1,7 +1,7 @@
 package tui
 
 // Selection records an active range selection inside a single hunk. Both
-// endpoints are row indices into Model.rows; Anchor is the row where `V` was
+// endpoints are row indices into Model.rows; Anchor is the row where `r` was
 // first pressed and Extent follows the cursor. Either may be smaller.
 //
 // MVP rule: selection is constrained to one hunk. Cursor moves that would
