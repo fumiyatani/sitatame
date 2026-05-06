@@ -166,7 +166,7 @@ func modalView(m Model) string {
 	b.WriteByte('\n')
 	if ex := commentExcerpt(m.modal.file, m.modal.anchor); len(ex) > 0 {
 		b.WriteString(renderExcerpt(ex))
-		b.WriteByte('\n')
+		b.WriteString("\n\n")
 	}
 	b.WriteString(m.modal.ta.View())
 	b.WriteString("\nCtrl+S save · Esc cancel")
