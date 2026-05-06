@@ -1,0 +1,40 @@
+name: 機能追加 / 改善
+description: 新機能や既存機能の改善を提案する
+labels: ["enhancement"]
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: 対象領域
+      description: 該当するラベルを選択してください（複数該当する場合は最も近いもの）
+      options:
+        - tui
+        - distribution
+        - agent-integration
+        - persistence
+        - config
+        - refactoring
+        - documentation
+    validations:
+      required: true
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何を・なぜやりたいかを簡潔に
+    validations:
+      required: true
+  - type: textarea
+    id: tasks
+    attributes:
+      label: やること
+      description: 具体的な作業項目があれば箇条書きで
+    validations:
+      required: false
+  - type: textarea
+    id: notes
+    attributes:
+      label: 備考
+      description: 関連 Issue、依存関係、検討事項など
+    validations:
+      required: false
