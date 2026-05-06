@@ -15,8 +15,9 @@ import (
 
 // modal holds the state for the comment input dialog.
 //
-// kind is decided at open time from the cursor / selection / explicit `R`
-// trigger; it doesn't change while the modal is open. anchor carries enough
+// kind is decided at open time from the cursor / selection / explicit
+// Shift+R trigger; it doesn't change while the modal is open. anchor carries
+// enough
 // context to materialize a review.Comment on confirm.
 type modal struct {
 	kind   review.Kind
@@ -94,7 +95,7 @@ func (m *Model) openCommentModal() bool {
 	return true
 }
 
-// openReviewModal opens the `R` review-level comment editor and pre-loads the
+// openReviewModal opens the Shift+R review-level comment editor and pre-loads the
 // existing top-level comment so the user can edit in place.
 func (m *Model) openReviewModal() {
 	mm := newModal(review.KindReview, review.Anchor{Kind: review.KindReview}, diffmodel.File{}, m.Review.ReviewComment)
@@ -252,8 +253,8 @@ func renderExcerpt(lines []excerptLine) string {
 }
 
 // updateModal forwards key events to the embedded textarea while the modal is
-// open. Ctrl-S confirms; Esc cancels. Both always resolve to a state change
-// that closes the modal so we don't propagate the textarea's internal Cmd.
+// open. Ctrl+S confirms; Esc cancels. Confirm stays modifier-bound so the
+// textarea can accept any printable rune in the comment body.
 func (m *Model) updateModal(msg tea.Msg) tea.Cmd {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {

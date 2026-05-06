@@ -10,8 +10,8 @@ import (
 	"github.com/fumiyatani/sitatame/internal/review"
 )
 
-// modalSendCtrlS confirms an open modal via the same key path Update uses.
-func modalSendCtrlS(m Model) Model {
+// modalSendSave confirms an open modal via the same key path Update uses.
+func modalSendSave(m Model) Model {
 	updated, _ := m.Update(tea.KeyMsg{Type: tea.KeyCtrlS})
 	return updated.(Model)
 }
@@ -66,7 +66,7 @@ func TestModal_LineKindOnContentLine(t *testing.T) {
 	}
 
 	m = typeBody(m, "looks ok")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 	if m.Modal() != nil {
 		t.Errorf("Ctrl+S should close modal")
 	}
@@ -86,7 +86,7 @@ func TestModal_RangeKindAfterSelection(t *testing.T) {
 	// Move into the first content line.
 	m, _ = applyKey(m, "j")
 	m, _ = applyKey(m, "j")
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	m, _ = applyKey(m, "j")
 	if m.SelectionState() == nil {
 		t.Fatalf("selection precondition failed")
@@ -105,7 +105,7 @@ func TestModal_RangeKindAfterSelection(t *testing.T) {
 	}
 
 	m = typeBody(m, "rng")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 	if m.SelectionState() != nil {
 		t.Errorf("range confirm should clear selection")
 	}
@@ -125,11 +125,11 @@ func TestModal_RangePersistsRealDiffLineNumbers(t *testing.T) {
 	// rows: 0 file header, 1 hunk header, 2 ` x` (head=1), 3 `+y` (head=2).
 	m, _ = applyKey(m, "j")
 	m, _ = applyKey(m, "j")
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	m, _ = applyKey(m, "j")
 	m, _ = applyKey(m, "c")
 	m = typeBody(m, "rng")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 
 	if got := len(m.Review.Comments); got != 1 {
 		t.Fatalf("expected 1 comment, got %d", got)
@@ -183,7 +183,7 @@ func TestModal_ReviewKindOnR(t *testing.T) {
 	}
 
 	m = typeBody(m, " edited")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 	if got := m.Review.ReviewComment; got != "draft body edited" {
 		t.Errorf("ReviewComment=%q, want %q", got, "draft body edited")
 	}
@@ -214,7 +214,7 @@ func TestModal_RangeExcerptCoversSelection(t *testing.T) {
 	m := New(files, review.Review{})
 	m, _ = applyKey(m, "j")
 	m, _ = applyKey(m, "j")
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	m, _ = applyKey(m, "j") // extend over head=1..2
 	m, _ = applyKey(m, "c")
 	if m.Modal() == nil {

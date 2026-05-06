@@ -12,6 +12,6 @@ const (
 	KeyUp        = "k"
 	KeyNextFile  = "n"
 	KeyPrevFile  = "p"
-	KeySelectKey = "V"
+	KeySelectKey = "r"
 	KeySave      = "s"
 )

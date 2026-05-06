@@ -156,7 +156,7 @@ func TestConfirmModal_RebuildsOverlayForLiveHighlight(t *testing.T) {
 		t.Fatalf("c on content line should open the line-comment modal")
 	}
 	m = typeBody(m, "live note")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 
 	if !strings.Contains(m.View(), commentColorFG) {
 		t.Fatalf("expected highlight to appear right after confirmModal, got:\n%s", m.View())
