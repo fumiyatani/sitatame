@@ -106,6 +106,35 @@ func TestMainView_HighlightDoesNotColorCursorMarker(t *testing.T) {
 	t.Fatalf("no row started with bare cursorMarker %q (cursor gutter may have been colored), got:\n%s", cursorMarker, out)
 }
 
+// Regression: confirmModal must rebuild m.overlay so a comment added during
+// the live TUI session immediately renders its marker / highlight color.
+// Previously buildOverlay only ran in New(), and adding a comment in-session
+// left overlay stale until restart.
+func TestConfirmModal_RebuildsOverlayForLiveHighlight(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{twoLineHunkFile()}
+	m := setSize(New(files, review.Review{}), 60, 12)
+
+	// Pre-condition: no highlight before any comment exists.
+	if strings.Contains(m.View(), commentColorFG) {
+		t.Fatalf("unexpected highlight before any comment was added")
+	}
+
+	// Move to first content line and open the line-comment modal.
+	m, _ = applyKey(m, "j") // hunk header
+	m, _ = applyKey(m, "j") // first content line
+	m, _ = applyKey(m, "c")
+	if m.Modal() == nil {
+		t.Fatalf("c on content line should open the line-comment modal")
+	}
+	m = typeBody(m, "live note")
+	m = modalSendCtrlS(m)
+
+	if !strings.Contains(m.View(), commentColorFG) {
+		t.Fatalf("expected highlight to appear right after confirmModal, got:\n%s", m.View())
+	}
+}
+
 func TestMainView_HighlightSameColor_OpenAndStaleMix(t *testing.T) {
 	t.Parallel()
 	// Two comments on the same line, one open + one stale. The row coloring
