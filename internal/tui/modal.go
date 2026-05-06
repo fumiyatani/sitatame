@@ -1,6 +1,8 @@
 package tui
 
 import (
+	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -159,7 +161,94 @@ func modalView(m Model) string {
 	default:
 		header = "comment"
 	}
-	return header + "\n" + m.modal.ta.View() + "\nCtrl+S save · Esc cancel"
+	var b strings.Builder
+	b.WriteString(header)
+	b.WriteByte('\n')
+	if ex := commentExcerpt(m.modal.file, m.modal.anchor); len(ex) > 0 {
+		b.WriteString(renderExcerpt(ex))
+		b.WriteByte('\n')
+	}
+	b.WriteString(m.modal.ta.View())
+	b.WriteString("\nCtrl+S save · Esc cancel")
+	return b.String()
+}
+
+// excerptLine carries one row of the modal's "what you commented on" preview.
+type excerptLine struct {
+	number int
+	prefix byte
+	text   string
+}
+
+// commentExcerpt gathers the diff lines covered by the modal's anchor so the
+// user can see what they're commenting on without leaving the input. Returns
+// nil for review/file kinds since those don't pin to specific rows.
+func commentExcerpt(f diffmodel.File, a review.Anchor) []excerptLine {
+	var lo, hi int
+	switch a.Kind {
+	case review.KindLine:
+		lo, hi = a.Line, a.Line
+	case review.KindRange:
+		lo, hi = a.LineStart, a.LineEnd
+	default:
+		return nil
+	}
+	if lo == 0 || hi == 0 {
+		return nil
+	}
+	if lo > hi {
+		lo, hi = hi, lo
+	}
+	if out := collectExcerpt(f, a.Side, lo, hi); len(out) > 0 {
+		return out
+	}
+	// Fall back to the opposite side: a line comment on a deleted-only row
+	// stores anchor.Side=head with anchor.Line=base_line because lineNumberAt
+	// borrows the available number. Without this, the excerpt would be empty
+	// even though the user pointed at a real row.
+	other := review.SideBase
+	if a.Side == review.SideBase {
+		other = review.SideHead
+	}
+	return collectExcerpt(f, other, lo, hi)
+}
+
+func collectExcerpt(f diffmodel.File, side review.Side, lo, hi int) []excerptLine {
+	var out []excerptLine
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			ln := l.HeadLine
+			if side == review.SideBase {
+				ln = l.BaseLine
+			}
+			if ln == 0 || ln < lo || ln > hi {
+				continue
+			}
+			prefix := l.Prefix
+			if prefix == 0 {
+				prefix = ' '
+			}
+			out = append(out, excerptLine{number: ln, prefix: prefix, text: l.Text})
+		}
+	}
+	return out
+}
+
+func renderExcerpt(lines []excerptLine) string {
+	width := 1
+	for _, l := range lines {
+		if n := len(strconv.Itoa(l.number)); n > width {
+			width = n
+		}
+	}
+	var b strings.Builder
+	for i, l := range lines {
+		if i > 0 {
+			b.WriteByte('\n')
+		}
+		fmt.Fprintf(&b, "%*d %c %s", width, l.number, l.prefix, l.text)
+	}
+	return b.String()
 }
 
 // updateModal forwards key events to the embedded textarea while the modal is
