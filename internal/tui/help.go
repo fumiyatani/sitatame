@@ -11,7 +11,7 @@ var helpLines = []string{
 	"  n / p     next / previous file",
 	"  r         start range selection (j/k extend, Esc clear)",
 	"  c         comment at the cursor",
-	"  R         review-level comment",
+	"  Shift+R   review-level comment",
 	"  s         save & promote, print SITATAME_REVIEW=<path>",
 	"  q         save as draft and exit 1",
 	"  ?         toggle this help",

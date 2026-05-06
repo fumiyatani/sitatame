@@ -73,7 +73,7 @@ j / k       カーソル下 / 上
 n / p       次 / 前のファイル
 r           範囲選択開始（j/k で拡張、Esc で解除）
 c           カーソル位置にコメント（kind は選択 / 行種別から自動決定）
-R           review 全体コメント（front matter の review_comment を編集）
+Shift+R     review 全体コメント（front matter の review_comment を編集）
 s           保存して promote — .sitatame/reviews/<slug>/<id>.md に書き出し、
             stdout に SITATAME_REVIEW=<絶対パス> を 1 行出力
 q           draft として保存し exit 1（drafts/<slug>/<id>.md）
@@ -95,7 +95,7 @@ sitatame → j/k で対象行へ → c → 本文を入力 → Ctrl+S → s
 sitatame → j/k で起点へ → r → j/k で範囲を拡張 → c → 本文を入力 → Ctrl+S → s
 
 # review 全体コメント（front matter）
-sitatame → R → 本文を入力 → Ctrl+S → s
+sitatame → Shift+R → 本文を入力 → Ctrl+S → s
 ```
 
 ガッタの状態マーカー:
