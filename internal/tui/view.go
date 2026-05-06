@@ -66,9 +66,22 @@ func mainView(m Model) string {
 			default:
 				b.WriteString(cursorPad)
 			}
-			b.WriteString(overlayMarker(m.overlay[i], m.Review.Comments))
-			b.WriteString(lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW))
-			b.WriteString(colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax)))
+			marker := overlayMarker(m.overlay[i], m.Review.Comments)
+			gutter := lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW)
+			body := colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax))
+			if hasComment(m.overlay[i]) {
+				// lineNumberGutter は rowLine 以外やガター幅 0 で空白を返すため、
+				// 文字色だけだと不可視になる。そのケースは marker/body 側に逃がす。
+				if m.rows[i].kind == rowLine && gw > 0 {
+					gutter = applyCommentHighlight(gutter)
+				} else {
+					marker = applyCommentHighlight(marker)
+					body = applyCommentHighlight(body)
+				}
+			}
+			b.WriteString(marker)
+			b.WriteString(gutter)
+			b.WriteString(body)
 			b.WriteByte('\n')
 		}
 		for i := end - m.top; i < height; i++ {

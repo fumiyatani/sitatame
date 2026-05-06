@@ -119,6 +119,9 @@ func (m *Model) confirmModal() *review.Comment {
 	}
 	c.Kind = m.modal.kind
 	m.Review.Comments = append(m.Review.Comments, c)
+	// overlay を再構築しないと、追加したコメントのマーカー / 着色が
+	// 次の View() に反映されない。
+	m.overlay = buildOverlay(m.rows, m.Files, m.Review.Comments)
 	m.modal = nil
 	// Range selections finish on confirm.
 	m.selection = nil
