@@ -74,7 +74,7 @@ j / k       cursor down / up
 n / p       next / previous file
 r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
-R           review-level comment (edits review_comment in front matter)
+Shift+R     review-level comment (edits review_comment in front matter)
 s           save & promote — writes .sitatame/reviews/<slug>/<id>.md
             and prints SITATAME_REVIEW=<abs path> on stdout
 q           save as draft and exit 1 (drafts/<slug>/<id>.md)
@@ -96,7 +96,7 @@ sitatame → j/k to a content line → c → type body → Ctrl+S → s
 sitatame → j/k to the first line → r → j/k to extend → c → type body → Ctrl+S → s
 
 # review-level comment (front matter)
-sitatame → R → type body → Ctrl+S → s
+sitatame → Shift+R → type body → Ctrl+S → s
 ```
 
 Comment markers in the gutter:
