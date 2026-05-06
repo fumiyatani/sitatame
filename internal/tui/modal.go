@@ -27,7 +27,7 @@ type modal struct {
 
 func newModal(kind review.Kind, anchor review.Anchor, file diffmodel.File, initial string) modal {
 	ta := textarea.New()
-	ta.Placeholder = "comment body — s to save, Esc to cancel"
+	ta.Placeholder = "comment body — Ctrl+S to save, Esc to cancel"
 	ta.SetValue(initial)
 	ta.Focus()
 	ta.CharLimit = 0
@@ -169,7 +169,7 @@ func modalView(m Model) string {
 		b.WriteString("\n\n")
 	}
 	b.WriteString(m.modal.ta.View())
-	b.WriteString("\ns save · Esc cancel")
+	b.WriteString("\nCtrl+S save · Esc cancel")
 	return b.String()
 }
 
@@ -252,13 +252,12 @@ func renderExcerpt(lines []excerptLine) string {
 }
 
 // updateModal forwards key events to the embedded textarea while the modal is
-// open. `s` confirms; Esc cancels. `s` is intentionally a single-key save so
-// the basic flow stays `r`/`c` -> `s` -> `s`; the trade-off is that `s` cannot
-// be typed into the comment body.
+// open. Ctrl+S confirms; Esc cancels. Confirm stays modifier-bound so the
+// textarea can accept any printable rune in the comment body.
 func (m *Model) updateModal(msg tea.Msg) tea.Cmd {
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
-		case KeySave:
+		case "ctrl+s":
 			m.confirmModal()
 			return nil
 		case "esc":
