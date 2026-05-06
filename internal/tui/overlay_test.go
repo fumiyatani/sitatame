@@ -129,7 +129,7 @@ func TestOverlay_RenameEdit_StaleAndNoEdit(t *testing.T) {
 	m, _ = applyKey(m, "j") // first content line
 	m, _ = applyKey(m, "c")
 	m = typeBody(m, "new note")
-	m = modalSendCtrlS(m)
+	m = modalSendSave(m)
 
 	if len(m.Review.Comments) != 2 {
 		t.Fatalf("expected original + new comment, got %d", len(m.Review.Comments))
