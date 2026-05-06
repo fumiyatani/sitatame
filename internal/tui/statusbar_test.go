@@ -38,16 +38,16 @@ func TestHintLine_RangeModeIndicator(t *testing.T) {
 	m := setSize(New(files, review.Review{}), 60, 12)
 
 	if strings.Contains(m.View(), "-- RANGE --") {
-		t.Errorf("RANGE tag should be absent before V is pressed")
+		t.Errorf("RANGE tag should be absent before r is pressed")
 	}
 
 	// Move into a content row, enter range mode.
 	m, _ = applyKey(m, "j") // hunk header
 	m, _ = applyKey(m, "j") // first content line
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 
 	if !strings.Contains(m.View(), "-- RANGE --") {
-		t.Errorf("RANGE tag missing after V: %q", m.View())
+		t.Errorf("RANGE tag missing after r: %q", m.View())
 	}
 
 	// Esc clears selection — tag should disappear.

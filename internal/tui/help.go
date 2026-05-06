@@ -9,7 +9,7 @@ var helpLines = []string{
 	"",
 	"  j / k     cursor down / up",
 	"  n / p     next / previous file",
-	"  V         start range selection (j/k extend, Esc clear)",
+	"  r         start range selection (j/k extend, Esc clear)",
 	"  c         comment at the cursor",
 	"  R         review-level comment",
 	"  s         save & promote, print SITATAME_REVIEW=<path>",
@@ -17,7 +17,7 @@ var helpLines = []string{
 	"  ?         toggle this help",
 	"  Esc       close modal / cancel selection",
 	"",
-	"  Ctrl+S    confirm comment (inside modal)",
+	"  s         confirm comment (inside modal)",
 }
 
 func helpView() string {

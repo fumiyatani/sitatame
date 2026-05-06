@@ -30,19 +30,19 @@ func TestSelection_StartOnLineRowOnly(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{twoLineHunkFile()}
 	m := New(files, review.Review{})
-	// cursor starts at row 0 (file header) — V should be a no-op.
-	m, _ = applyKey(m, "V")
+	// cursor starts at row 0 (file header) — r should be a no-op.
+	m, _ = applyKey(m, "r")
 	if m.SelectionState() != nil {
-		t.Errorf("V on file header should not start selection: %+v", m.SelectionState())
+		t.Errorf("r on file header should not start selection: %+v", m.SelectionState())
 	}
 
 	// move into the hunk (row 1 = hunk header, row 2 = first line)
 	m, _ = applyKey(m, "j")
 	m, _ = applyKey(m, "j")
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	sel := m.SelectionState()
 	if sel == nil {
-		t.Fatalf("V on content line should start selection")
+		t.Fatalf("r on content line should start selection")
 	}
 	if sel.Anchor != 2 || sel.Extent != 2 {
 		t.Errorf("seed selection wrong: %+v", sel)
@@ -74,9 +74,9 @@ func TestSelection_BinarySuppressed(t *testing.T) {
 	m := New(files, review.Review{})
 	// cursor row 0 = file header, row 1 = binary placeholder.
 	m, _ = applyKey(m, "j")
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	if m.SelectionState() != nil {
-		t.Errorf("V on binary placeholder must not start selection: %+v", m.SelectionState())
+		t.Errorf("r on binary placeholder must not start selection: %+v", m.SelectionState())
 	}
 }
 
@@ -102,7 +102,7 @@ func TestSelection_StaysWithinHunk(t *testing.T) {
 		m, _ = applyKey(m, "j")
 	}
 	// cursor=2 (line a)
-	m, _ = applyKey(m, "V")
+	m, _ = applyKey(m, "r")
 	for i := 0; i < 5; i++ {
 		m, _ = applyKey(m, "j")
 	}
