@@ -28,6 +28,34 @@ func TestMainView_HighlightOn_KindLineComment(t *testing.T) {
 	}
 }
 
+func TestMainView_HighlightOn_KindRangeAllAnchoredRows(t *testing.T) {
+	t.Parallel()
+	// KindRange should color every row inside [LineStart, LineEnd]. A single
+	// strings.Contains check would pass even if only the first row picked up
+	// the SGR — count the colored row lines instead so a partial-coverage
+	// regression breaks the test.
+	f := numberedFile("a.go", "a.go", "b1", "b2", 5)
+	r := review.Review{Comments: []review.Comment{{
+		Anchor: review.Anchor{
+			Kind: review.KindRange, Path: "a.go", Side: review.SideHead,
+			LineStart: 2, LineEnd: 4,
+		},
+		State: review.StateOpen,
+		Body:  "spans 3 lines",
+	}}}
+	m := setSize(New([]diffmodel.File{f}, r), 60, 16)
+
+	colored := 0
+	for _, ln := range strings.Split(m.View(), "\n") {
+		if strings.Contains(ln, commentColorFG) {
+			colored++
+		}
+	}
+	if colored != 3 {
+		t.Fatalf("KindRange [2..4] should color exactly 3 rows, got %d, view:\n%s", colored, m.View())
+	}
+}
+
 func TestMainView_HighlightOff_NoComments(t *testing.T) {
 	t.Parallel()
 	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
