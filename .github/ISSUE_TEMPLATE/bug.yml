@@ -1,0 +1,30 @@
+name: バグ報告
+description: バグや不具合を報告する
+labels: ["bug"]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きているかを簡潔に
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: 再現手順
+      description: バグを再現するための手順
+    validations:
+      required: false
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待する動作
+    validations:
+      required: false
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の動作
+    validations:
+      required: false
