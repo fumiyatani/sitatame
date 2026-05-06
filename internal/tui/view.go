@@ -70,10 +70,8 @@ func mainView(m Model) string {
 			gutter := lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW)
 			body := colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax))
 			if hasComment(m.overlay[i]) {
-				// 案 A: 行番号ガターの文字色を変える。ただし lineNumberGutter は
-				// rowLine 以外（file-header 等）やガター幅 0 で空白を返すため、
-				// 空白に文字色を付けても見えない。そのケースのみ marker / body 側に
-				// 着色を回すフォールバックを入れる。
+				// lineNumberGutter は rowLine 以外やガター幅 0 で空白を返すため、
+				// 文字色だけだと不可視になる。そのケースは marker/body 側に逃がす。
 				if m.rows[i].kind == rowLine && gw > 0 {
 					gutter = applyCommentHighlight(gutter)
 				} else {
