@@ -53,7 +53,15 @@ type Model struct {
 	splitCursor        int
 	splitTop           int
 	splitPreferredSide review.Side
+
+	// statusMsg is a transient message shown at the trailing edge of the
+	// status bar (currently used to surface "split is preview-only" when
+	// the user tries to comment / select in split mode). Cleared on the
+	// next key press.
+	statusMsg string
 }
+
+const previewOnlyMsg = "split is preview-only — press Tab to return"
 
 func New(files []diffmodel.File, r review.Review) Model {
 	rows := buildRows(files)
@@ -92,6 +100,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.KeyMsg:
+		// Any key clears the previous transient message; guards below re-set
+		// it for the keys we intercept in split mode.
+		m.statusMsg = ""
 		switch msg.String() {
 		case KeyQuit, KeyQuitCtrl:
 			m.quitting = true
@@ -146,12 +157,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case KeySelectKey:
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.startSelection()
 			return m, nil
 		case "c":
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.openCommentModal()
 			return m, nil
 		case "R":
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.openReviewModal()
 			return m, nil
 		}
