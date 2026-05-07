@@ -46,6 +46,12 @@ type Model struct {
 	quitReason QuitReason
 	selection  *Selection
 	modal      *modal
+
+	layout             LayoutMode
+	splitRows          []splitRow
+	splitCursor        int
+	splitTop           int
+	splitPreferredSide review.Side
 }
 
 func New(files []diffmodel.File, r review.Review) Model {
@@ -80,6 +86,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.scrollToCursor()
+		if m.layout == LayoutSplit {
+			m.scrollSplitToCursor()
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -100,21 +109,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.clearSelection()
 			return m, nil
+		case KeyToggleLayout:
+			m.toggleLayout()
+			return m, nil
 		case KeyDown:
-			m.moveCursorBy(1)
-			m.extendSelection()
+			if m.layout == LayoutSplit {
+				m.moveSplitCursorBy(1)
+			} else {
+				m.moveCursorBy(1)
+				m.extendSelection()
+			}
 			return m, nil
 		case KeyUp:
-			m.moveCursorBy(-1)
-			m.extendSelection()
+			if m.layout == LayoutSplit {
+				m.moveSplitCursorBy(-1)
+			} else {
+				m.moveCursorBy(-1)
+				m.extendSelection()
+			}
 			return m, nil
 		case KeyNextFile:
-			m.jumpFile(1)
-			m.clearSelection()
+			if m.layout == LayoutSplit {
+				m.jumpSplitFile(1)
+			} else {
+				m.jumpFile(1)
+				m.clearSelection()
+			}
 			return m, nil
 		case KeyPrevFile:
-			m.jumpFile(-1)
-			m.clearSelection()
+			if m.layout == LayoutSplit {
+				m.jumpSplitFile(-1)
+			} else {
+				m.jumpFile(-1)
+				m.clearSelection()
+			}
 			return m, nil
 		case KeySelectKey:
 			m.startSelection()
