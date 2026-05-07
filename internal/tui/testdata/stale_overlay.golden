@@ -1,4 +1,4 @@
-sitatame a.go  [1/1 files]  row 1/5
+sitatame a.go  [1/1 files]  row 1/5  [unified]
 >       M a.go
         @@ -1,3 +1,3 @@
    1 1  x
@@ -9,4 +9,4 @@ sitatame a.go  [1/1 files]  row 1/5
 
 
 
-j/k move · n/p file · ? help · q quit
+j/k move · n/p file · Tab layout · ? help · q quit
