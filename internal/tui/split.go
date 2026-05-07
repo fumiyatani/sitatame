@@ -146,6 +146,9 @@ func (m *Model) toggleLayout() {
 		if m.splitRows == nil {
 			m.splitRows = buildSplitRows(m.rows)
 		}
+		// Comments may have been added/edited while in unified mode, so the
+		// overlay rebuild is required for every entry to keep markers fresh.
+		m.splitOverlay = buildSplitOverlay(m.splitRows, m.Review.Comments, m.overlay)
 		idx, side := unifiedToSplitCursor(m.splitRows, m.cursor)
 		m.splitCursor = idx
 		m.splitPreferredSide = side
