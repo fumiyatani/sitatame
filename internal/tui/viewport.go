@@ -242,7 +242,7 @@ func (m *Model) jumpFile(dir int) {
 		for i := m.cursor + 1; i < len(m.rows); i++ {
 			if m.rows[i].kind == rowFileHeader {
 				m.cursor = i
-				m.scrollToCursor()
+				m.top = i
 				return
 			}
 		}
@@ -256,7 +256,7 @@ func (m *Model) jumpFile(dir int) {
 	for i := start; i >= 0; i-- {
 		if m.rows[i].kind == rowFileHeader {
 			m.cursor = i
-			m.scrollToCursor()
+			m.top = i
 			return
 		}
 	}
