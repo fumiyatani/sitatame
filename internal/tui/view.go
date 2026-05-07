@@ -95,12 +95,17 @@ func mainView(m Model) string {
 func statusLine(m Model) string {
 	var path string
 	binary := false
-	if len(m.rows) > 0 && m.cursor < len(m.rows) {
-		fi := m.rows[m.cursor].fileIdx
-		if fi >= 0 && fi < len(m.Files) {
-			path = m.Files[fi].DisplayPath()
-			binary = m.Files[fi].Binary
+	cursorRow, totalRows := m.cursor, len(m.rows)
+	fileIdx := fileIndexAtCursor(m)
+	if m.layout == LayoutSplit {
+		cursorRow, totalRows = m.splitCursor, len(m.splitRows)
+		if totalRows > 0 && m.splitCursor < totalRows {
+			fileIdx = m.splitRows[m.splitCursor].fileIdx
 		}
+	}
+	if fileIdx >= 0 && fileIdx < len(m.Files) {
+		path = m.Files[fileIdx].DisplayPath()
+		binary = m.Files[fileIdx].Binary
 	}
 	if path == "" {
 		path = "(none)"
@@ -109,8 +114,16 @@ func statusLine(m Model) string {
 	if binary {
 		tag = "  [binary] file-comment only"
 	}
-	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d%s",
-		path, fileIndexAtCursor(m)+1, len(m.Files), m.cursor+1, len(m.rows), tag)
+	mode := "[unified]"
+	if m.layout == LayoutSplit {
+		mode = "[split: preview]"
+	}
+	trailing := mode
+	if m.statusMsg != "" {
+		trailing = m.statusMsg
+	}
+	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d%s  %s",
+		path, fileIdx+1, len(m.Files), cursorRow+1, totalRows, tag, trailing)
 }
 
 func fileIndexAtCursor(m Model) int {
@@ -126,8 +139,8 @@ func fileIndexAtCursor(m Model) int {
 const modeTagRange = "-- RANGE --"
 
 func hintLine(m Model) string {
-	left := "j/k move · n/p file · ? help · q quit"
-	if m.selection == nil {
+	left := "j/k move · n/p file · Tab layout · ? help · q quit"
+	if m.selection == nil || m.layout == LayoutSplit {
 		return left
 	}
 	leftW := ColWidth(left)

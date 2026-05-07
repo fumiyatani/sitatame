@@ -46,7 +46,22 @@ type Model struct {
 	quitReason QuitReason
 	selection  *Selection
 	modal      *modal
+
+	layout             LayoutMode
+	splitRows          []splitRow
+	splitOverlay       map[int]splitOverlayEntry
+	splitCursor        int
+	splitTop           int
+	splitPreferredSide review.Side
+
+	// statusMsg is a transient message shown at the trailing edge of the
+	// status bar (currently used to surface "split is preview-only" when
+	// the user tries to comment / select in split mode). Cleared on the
+	// next key press.
+	statusMsg string
 }
+
+const previewOnlyMsg = "split is preview-only — press Tab to return"
 
 func New(files []diffmodel.File, r review.Review) Model {
 	rows := buildRows(files)
@@ -80,8 +95,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		m.scrollToCursor()
+		if m.layout == LayoutSplit {
+			m.scrollSplitToCursor()
+		}
 		return m, nil
 	case tea.KeyMsg:
+		// Any key clears the previous transient message; guards below re-set
+		// it for the keys we intercept in split mode.
+		m.statusMsg = ""
 		switch msg.String() {
 		case KeyQuit, KeyQuitCtrl:
 			m.quitting = true
@@ -100,29 +121,60 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.clearSelection()
 			return m, nil
+		case KeyToggleLayout:
+			m.toggleLayout()
+			return m, nil
 		case KeyDown:
-			m.moveCursorBy(1)
-			m.extendSelection()
+			if m.layout == LayoutSplit {
+				m.moveSplitCursorBy(1)
+			} else {
+				m.moveCursorBy(1)
+				m.extendSelection()
+			}
 			return m, nil
 		case KeyUp:
-			m.moveCursorBy(-1)
-			m.extendSelection()
+			if m.layout == LayoutSplit {
+				m.moveSplitCursorBy(-1)
+			} else {
+				m.moveCursorBy(-1)
+				m.extendSelection()
+			}
 			return m, nil
 		case KeyNextFile:
-			m.jumpFile(1)
-			m.clearSelection()
+			if m.layout == LayoutSplit {
+				m.jumpSplitFile(1)
+			} else {
+				m.jumpFile(1)
+				m.clearSelection()
+			}
 			return m, nil
 		case KeyPrevFile:
-			m.jumpFile(-1)
-			m.clearSelection()
+			if m.layout == LayoutSplit {
+				m.jumpSplitFile(-1)
+			} else {
+				m.jumpFile(-1)
+				m.clearSelection()
+			}
 			return m, nil
 		case KeySelectKey:
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.startSelection()
 			return m, nil
 		case "c":
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.openCommentModal()
 			return m, nil
 		case "R":
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
 			m.openReviewModal()
 			return m, nil
 		}
@@ -151,6 +203,9 @@ func (m Model) View() string {
 	}
 	if m.modal != nil {
 		return modalView(m)
+	}
+	if m.layout == LayoutSplit {
+		return mainViewSplit(m)
 	}
 	return mainView(m)
 }
