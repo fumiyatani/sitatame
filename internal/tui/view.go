@@ -118,8 +118,12 @@ func statusLine(m Model) string {
 	if m.layout == LayoutSplit {
 		mode = "[split: preview]"
 	}
+	trailing := mode
+	if m.statusMsg != "" {
+		trailing = m.statusMsg
+	}
 	return fmt.Sprintf("sitatame %s  [%d/%d files]  row %d/%d%s  %s",
-		path, fileIdx+1, len(m.Files), cursorRow+1, totalRows, tag, mode)
+		path, fileIdx+1, len(m.Files), cursorRow+1, totalRows, tag, trailing)
 }
 
 func fileIndexAtCursor(m Model) int {

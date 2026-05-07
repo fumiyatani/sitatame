@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -177,6 +178,135 @@ func TestCursorRoundTrip_SingleSideIgnoresPreferred(t *testing.T) {
 	if got := splitToUnifiedCursor(srs, splitIdx, review.SideHead); got != minusIdx {
 		t.Errorf("base-only round-trip ignoring SideHead = %d, want %d", got, minusIdx)
 	}
+}
+
+func enterSplit(t *testing.T, m Model) Model {
+	t.Helper()
+	m = sendNamedKey(m, tea.KeyTab)
+	if m.layout != LayoutSplit {
+		t.Fatalf("expected LayoutSplit after Tab, got %v", m.layout)
+	}
+	return m
+}
+
+func TestSplitMode_CommentKeyShowsHintAndSkipsModal(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{hunkFile("a", []byte{' ', '+', '-'})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	m, _ = applyKey(m, "c")
+	if m.Modal() != nil {
+		t.Errorf("comment modal should not open in split: %+v", m.Modal())
+	}
+	if len(m.Review.Comments) != 0 {
+		t.Errorf("split mode should not append comments: %d", len(m.Review.Comments))
+	}
+	if m.statusMsg != previewOnlyMsg {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, previewOnlyMsg)
+	}
+	if !strings.Contains(m.View(), previewOnlyMsg) {
+		t.Errorf("status bar missing preview-only hint: %q", m.View())
+	}
+}
+
+func TestSplitMode_RangeKeyDoesNotStartSelection(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{hunkFile("a", []byte{' ', '+', '-'})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	// Move into a content row before pressing r so the unified-state
+	// handler would otherwise have a valid anchor.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "r")
+	if m.SelectionState() != nil {
+		t.Errorf("split mode `r` should not start selection: %+v", m.SelectionState())
+	}
+	if m.statusMsg != previewOnlyMsg {
+		t.Errorf("statusMsg missing after split `r`: %q", m.statusMsg)
+	}
+}
+
+func TestSplitMode_ReviewKeyShowsHint(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{hunkFile("a", []byte{' '})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	m, _ = applyKey(m, "R")
+	if m.Modal() != nil {
+		t.Errorf("review modal should not open in split: %+v", m.Modal())
+	}
+	if m.statusMsg != previewOnlyMsg {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, previewOnlyMsg)
+	}
+}
+
+func TestSplitMode_StatusMsgClearsOnNextKey(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{hunkFile("a", []byte{' ', '+', '-'})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	m, _ = applyKey(m, "c")
+	if m.statusMsg == "" {
+		t.Fatal("expected statusMsg to be set after `c`")
+	}
+	m, _ = applyKey(m, "j")
+	if m.statusMsg != "" {
+		t.Errorf("statusMsg should clear on next key, got %q", m.statusMsg)
+	}
+}
+
+func TestSplitMode_SelectionPreservedAcrossTab(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{hunkFile("a", []byte{' ', ' ', ' '})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	// Build a selection in unified mode: file header (0) → hunk header (1)
+	// → first content line (2), then `r` and `j` to extend.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "r")
+	m, _ = applyKey(m, "j")
+	want := m.SelectionState()
+	if want == nil {
+		t.Fatal("expected selection in unified mode")
+	}
+	wantCopy := *want
+
+	m = enterSplit(t, m)
+	if got := m.SelectionState(); got == nil {
+		t.Fatal("selection lost when entering split mode")
+	} else if *got != wantCopy {
+		t.Errorf("selection mutated in split: got %+v want %+v", *got, wantCopy)
+	}
+	// View() in split must not render the `| ` selection prefix.
+	if strings.Contains(m.View(), "| ") {
+		t.Errorf("split view should not render selection prefix: %q", m.View())
+	}
+
+	m = sendNamedKey(m, tea.KeyTab)
+	if m.layout != LayoutUnified {
+		t.Fatalf("expected unified after second Tab, got %v", m.layout)
+	}
+	if got := m.SelectionState(); got == nil || *got != wantCopy {
+		t.Errorf("selection not restored after round-trip: got %+v want %+v", got, wantCopy)
+	}
+}
+
+func TestGolden_SplitPreview(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFile("a.go", []byte{' ', '+', '-'})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	runGolden(t, "split_preview", m)
+}
+
+func TestGolden_SplitPreviewOnlyMsg(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFile("a.go", []byte{' ', '+', '-'})}
+	m := setSize(New(files, review.Review{}), 60, 12)
+	m = enterSplit(t, m)
+	m, _ = applyKey(m, "c")
+	runGolden(t, "split_preview_only_msg", m)
 }
 
 func TestToggleLayout_PairedMinusRoundTrip(t *testing.T) {
