@@ -49,6 +49,7 @@ type Model struct {
 
 	layout             LayoutMode
 	splitRows          []splitRow
+	splitOverlay       map[int]splitOverlayEntry
 	splitCursor        int
 	splitTop           int
 	splitPreferredSide review.Side
@@ -179,6 +180,9 @@ func (m Model) View() string {
 	}
 	if m.modal != nil {
 		return modalView(m)
+	}
+	if m.layout == LayoutSplit {
+		return mainViewSplit(m)
 	}
 	return mainView(m)
 }
