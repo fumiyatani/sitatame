@@ -140,7 +140,7 @@ const modeTagRange = "-- RANGE --"
 
 func hintLine(m Model) string {
 	left := "j/k move · n/p file · Tab layout · ? help · q quit"
-	if m.selection == nil {
+	if m.selection == nil || m.layout == LayoutSplit {
 		return left
 	}
 	leftW := ColWidth(left)

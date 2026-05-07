@@ -278,9 +278,14 @@ func TestSplitMode_SelectionPreservedAcrossTab(t *testing.T) {
 	} else if *got != wantCopy {
 		t.Errorf("selection mutated in split: got %+v want %+v", *got, wantCopy)
 	}
-	// View() in split must not render the `| ` selection prefix.
-	if strings.Contains(m.View(), "| ") {
-		t.Errorf("split view should not render selection prefix: %q", m.View())
+	// View() in split must not render the `| ` selection prefix nor the
+	// `-- RANGE --` hint, since the selection is frozen until Tab returns.
+	view := m.View()
+	if strings.Contains(view, "| ") {
+		t.Errorf("split view should not render selection prefix: %q", view)
+	}
+	if strings.Contains(view, modeTagRange) {
+		t.Errorf("split hint should not advertise RANGE mode: %q", view)
 	}
 
 	m = sendNamedKey(m, tea.KeyTab)
