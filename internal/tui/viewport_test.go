@@ -77,16 +77,25 @@ func TestModel_NavigationKeys(t *testing.T) {
 		t.Errorf("k: cursor = %d, want 0", m.Cursor())
 	}
 
-	// `n` jumps to the next file header (row index 4 for 2x2 setup).
+	// `n` jumps to the next file header (row index 4 for 2x2 setup) and the
+	// header lands at the top of the viewport so the file name is visible.
+	updated, _ := m.Update(tea.WindowSizeMsg{Width: 80, Height: 20})
+	m = updated.(Model)
 	m, _ = applyKey(m, "n")
 	if r := m.rows[m.Cursor()]; r.kind != rowFileHeader || r.fileIdx != 1 {
 		t.Errorf("n: landed on %+v", r)
 	}
+	if m.top != m.Cursor() {
+		t.Errorf("n: top = %d, cursor = %d, want top == cursor", m.top, m.Cursor())
+	}
 
-	// `p` returns to file A's header.
+	// `p` returns to file A's header, also top-aligned.
 	m, _ = applyKey(m, "p")
 	if r := m.rows[m.Cursor()]; r.kind != rowFileHeader || r.fileIdx != 0 {
 		t.Errorf("p: landed on %+v", r)
+	}
+	if m.top != m.Cursor() {
+		t.Errorf("p: top = %d, cursor = %d, want top == cursor", m.top, m.Cursor())
 	}
 }
 
