@@ -49,6 +49,8 @@ const (
 //   - starts a teatest.TestModel with the requested initial window size
 //   - replays each Step:
 //   - delivers the input message via tm.Send
+//   - tracks the current terminal dimensions (initial size, plus any
+//     SendResize updates) so view reconstruction uses the latest cols/rows
 //   - for each Step, runs at most one drain pass per step and asserts
 //     every view-level expectation (ViewContains / ViewNotContains /
 //     ViewGolden) against the same reconstructed screen — sharing the
@@ -94,13 +96,13 @@ func runScenario(t *testing.T, sc Scenario) {
 		t.Fatalf("scenario %q: neither Files nor BuildFiles produced fixtures", sc.Name)
 	}
 
-	w, h := sc.WindowSize[0], sc.WindowSize[1]
-	if w == 0 || h == 0 {
-		w, h = 80, 24
+	cols, rows := sc.WindowSize[0], sc.WindowSize[1]
+	if cols == 0 || rows == 0 {
+		cols, rows = 80, 24
 	}
 
 	m := New(files, sc.InitialReview)
-	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(w, h))
+	tm := teatest.NewTestModel(t, m, teatest.WithInitialTermSize(cols, rows))
 
 	// drained accumulates everything we have already pulled out of the
 	// teatest output reader so that ViewContains checks done in later
@@ -115,12 +117,24 @@ func runScenario(t *testing.T, sc Scenario) {
 			t.Fatalf("scenario %q %s: %v", sc.Name, stepLabel, err)
 		}
 
+		// SendResize must update the terminal dimensions used for
+		// subsequent view reconstruction; otherwise renderScreen would
+		// keep replaying the byte stream through a vt10x sized to the
+		// pre-resize window and miss any cells the model now writes past
+		// the old right margin / bottom row.
+		if step.SendResize != nil {
+			size := *step.SendResize
+			if size[0] > 0 && size[1] > 0 {
+				cols, rows = size[0], size[1]
+			}
+		}
+
 		// View assertions share a single drain pass per step so that a
 		// substring check and a golden check on the same Step reconstruct
 		// the screen from identical bytes. Without this sharing, the
 		// substring poll would consume the new frame and the subsequent
 		// golden poll would wait on bytes that already arrived.
-		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect)
+		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, cols, rows, step.Expect)
 	}
 
 	if err := tm.Quit(); err != nil {
