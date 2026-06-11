@@ -2,5 +2,12 @@ tmp/
 .sitatame/
 sitatame
 dist/
+.gocache/
+.gomodcache/
 .claude/*
 !.claude/settings.json
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/sitatame-review-apply/
+.claude/skills/sitatame-review-apply/*
+!.claude/skills/sitatame-review-apply/SKILL.md
