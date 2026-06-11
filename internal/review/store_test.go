@@ -10,8 +10,11 @@ import (
 
 func newTestStore(t *testing.T, fixedTime time.Time) *Store {
 	t.Helper()
-	root := t.TempDir()
-	s := NewStore(NewPaths(root, "feature/auth"))
+	// Each test gets its own output root + repo root. Using NewPathsWithRoot
+	// keeps these tests independent of $HOME / $SITATAME_HOME.
+	outputRoot := t.TempDir()
+	repoRoot := t.TempDir()
+	s := NewStore(NewPathsWithRoot(outputRoot, repoRoot, "feature/auth"))
 	s.Now = func() time.Time { return fixedTime }
 	return s
 }
