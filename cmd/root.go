@@ -270,14 +270,18 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 
 // warnLegacySitatameDir prints two one-line stderr notices when a pre-#38
 // <repo>/.sitatame/ directory is still present: one that says the directory is
-// ignored, and one with a copy-pasteable `mv` for the user's actual new
-// drafts root. We intentionally do not auto-migrate: users may have stale
-// drafts they want to review or commit before deleting, and a silent move
-// could clobber work. Empty legacyDir or a missing path is a no-op.
+// ignored, and one with a copy-pasteable migration command for the user's
+// actual new drafts root. We intentionally do not auto-migrate: users may
+// have stale drafts they want to review or commit before deleting, and a
+// silent move could clobber work. Empty legacyDir or a missing path is a
+// no-op.
 //
-// newDraftsRoot is `paths.DraftsRoot()` from the caller — i.e. the resolved
-// `<output-root>/<project-slug>/drafts` for this checkout — and is fed into
-// the message so users do not have to compute the project slug by hand.
+// The migration line bundles `mkdir -p <newDraftsRoot> && mv ...` because on
+// a first upgrade the new drafts root does not exist yet; a bare `mv` would
+// fail and leave the user guessing. newDraftsRoot is `paths.DraftsRoot()`
+// from the caller — i.e. the resolved `<output-root>/<project-slug>/drafts`
+// for this checkout — and is fed into the message so users do not have to
+// compute the project slug by hand.
 func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 	if legacyDir == "" {
 		return
@@ -295,8 +299,8 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 			abs = newDraftsRoot
 		}
 		fmt.Fprintf(env.Stderr,
-			"sitatame: To migrate drafts: mv %s/drafts/* %s/\n",
-			legacyDir, abs,
+			"sitatame: To migrate drafts: mkdir -p %s && mv %s/drafts/* %s/\n",
+			abs, legacyDir, abs,
 		)
 	}
 }

@@ -183,9 +183,11 @@ stderr で 1 行通知を出しますが、自動移行や参照は行いませ�
 
 ```sh
 # 旧ディレクトリが残っているリポジトリ内で一度だけ実行。stderr の 2 行目に
-#   sitatame: To migrate drafts: mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
-# が出ているので、その `mv` をそのまま流し、空になった旧ディレクトリを削除する。
-mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
+#   sitatame: To migrate drafts: mkdir -p /Users/you/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
+# が出ているので、その 1 行をそのまま流す（初回アップグレード時は新 drafts
+# root が未作成のため `mkdir -p` を同梱している）。空になった旧ディレクトリは
+# 別途削除する。
+mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
 rm -rf .sitatame
 ```
 
