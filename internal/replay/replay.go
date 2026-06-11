@@ -135,15 +135,46 @@ func (s *Session) pump() {
 	defer close(s.pumpDone)
 	br := bufio.NewReader(s.pty)
 	buf := make([]byte, 4096)
+	// leftover holds bytes that vt10x refused on the previous iteration because
+	// they were the prefix of an incomplete UTF-8 rune (vt10x.Write returns a
+	// short write of written-1 in that case — see vt_posix.go). Without
+	// carrying those bytes forward, the em-dashes and box drawing characters
+	// used by the help modal and split layout get truncated and screen
+	// comparisons go flaky. stdout always receives the raw bytes because the
+	// underlying strings.Builder never short-writes, so the two sinks stay in
+	// lockstep on a per-chunk basis.
+	var leftover []byte
 	for {
 		n, err := br.Read(buf)
 		if n > 0 {
 			chunk := buf[:n]
-			// vt10x.Terminal embeds io.Writer; Write parses sequences into screen state.
-			_, _ = s.Term.Write(chunk)
 			s.stdoutMu.Lock()
 			s.stdout.Write(chunk)
 			s.stdoutMu.Unlock()
+
+			// Prepend any rune-prefix bytes that vt10x rejected last round.
+			data := chunk
+			if len(leftover) > 0 {
+				data = append(leftover, chunk...)
+			}
+			// vt10x.Terminal embeds io.Writer; Write parses sequences into screen state.
+			nw, werr := s.Term.Write(data)
+			if werr != nil {
+				return
+			}
+			// Anything vt10x did not consume is a partial rune — keep it for
+			// the next iteration. `rest` may alias either buf (when leftover
+			// was empty) or leftover's own backing array (when we appended on
+			// top of it), so copy into a fresh slice to avoid the next read
+			// trampling those bytes.
+			if nw < len(data) {
+				rest := data[nw:]
+				next := make([]byte, len(rest))
+				copy(next, rest)
+				leftover = next
+			} else {
+				leftover = leftover[:0]
+			}
 		}
 		if err != nil {
 			return
@@ -198,6 +229,26 @@ func (s *Session) WaitFor(substring string, timeout time.Duration) error {
 		}
 		if time.Now().After(deadline) {
 			return errors.New("replay: timeout waiting for " + substring)
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+}
+
+// WaitForScreenChange polls until Screen() differs from prev, or until
+// timeout elapses. This is the right primitive for asserting on a re-render
+// triggered by a side effect (SIGWINCH, async paint) where WaitFor would
+// short-circuit on substrings that survived from the previous frame.
+//
+// Callers should snapshot prev with Screen() immediately before triggering the
+// change so the diff window is as narrow as possible.
+func (s *Session) WaitForScreenChange(prev string, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		if s.Screen() != prev {
+			return nil
+		}
+		if time.Now().After(deadline) {
+			return errors.New("replay: timeout waiting for screen change")
 		}
 		time.Sleep(20 * time.Millisecond)
 	}
