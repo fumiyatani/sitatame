@@ -223,10 +223,14 @@ locales.
 step) and an `Expectation` per step. The runner asserts view-level
 substrings as the program runs (`ViewContains`, `ViewNotContains`,
 `ViewGolden`) and asserts model-state fields (`Cursor`, `Top`, `Comments`,
-`Layout`, `QuitReason`) against the final model after `tea.Quit`. To add a
-new regression case, append a `Test_Scenario_<Name>` function that calls
-`runScenario(t, tui.Scenario{...})`; see the seed scenarios in
-`scenarios_test.go` for examples and `scenario.go` for the full DSL.
+`Layout`, `QuitReason`) against the final model after `tea.Quit`. View
+assertions evaluate against the *latest rendered frame*, not the cumulative
+output stream — so `ViewContains` only matches what's currently on screen
+and `ViewNotContains` keeps working even after the forbidden text appeared
+in an earlier step. To add a new regression case, append a
+`Test_Scenario_<Name>` function that calls `runScenario(t, tui.Scenario{...})`;
+see the seed scenarios in `scenarios_test.go` for examples and `scenario.go`
+for the full DSL.
 
 ## Phase 2 (not in this MVP)
 
