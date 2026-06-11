@@ -406,6 +406,18 @@ func evaluateViewExpectations(
 			teatest.WithDuration(scenarioWaitForDuration),
 			teatest.WithCheckInterval(scenarioWaitInterval),
 		)
+		// WaitFor returns the moment the substring predicate flips true,
+		// which can be mid-frame: bubbletea emits a single frame across
+		// multiple writes (control-sequence prelude, then content burst),
+		// and a required substring landing in the first write can satisfy
+		// WaitFor before the rest of the frame arrives. If hasGoldenCheck
+		// is also true, compareGolden would then run against a partial
+		// frame and either flake or false-fail. Idle-settle here so the
+		// captured buffer holds the full frame before we lock it in.
+		// This is a no-op for substring-only Steps (the extra bytes just
+		// land in `drained` for the next Step's reference) and load-
+		// bearing for combined Steps where the golden assertion follows.
+		idleFlush(tee, scenarioIdleFlushDuration, scenarioIdleSettleDuration, scenarioWaitInterval)
 	} else {
 		// Golden-only: idle-flush without failing on timeout. The golden
 		// snapshot for a no-op step is the previous frame, so an empty

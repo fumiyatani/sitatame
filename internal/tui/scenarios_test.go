@@ -415,6 +415,47 @@ func TestScenario_ViewContainsAndGoldenTogether(t *testing.T) {
 	})
 }
 
+// TestScenario_CombinedAssertionSettlesBeforeGolden pins the post-substring
+// idle-settle contract: when a Step lists both ViewContains and ViewGolden,
+// the substring match by itself can fire mid-frame (bubbletea writes a single
+// frame across multiple syscalls — control-sequence prelude first, then the
+// content burst). If the runner used the captured bytes at that instant for
+// the golden comparison too, the golden would be compared against a partial
+// frame and either flake under load or false-fail outright.
+//
+// The fix in evaluateViewExpectations is: after WaitFor returns on the
+// substring predicate, call idleFlush so any straggler bytes from the same
+// frame land in `captured` before it's promoted into `drained` and handed to
+// compareGolden. This test exercises the contract by targeting the substring
+// at the very top of the frame (the status header) while the golden snapshot
+// covers the whole screen, including the hint line at the bottom row — a
+// region bubbletea typically emits late within a single frame. Without the
+// settle, the golden would be missing the hint line whenever the scheduler
+// happens to split the frame across writes, which makes this case flaky on
+// loaded CI machines (round 7 cross-review's flag).
+func TestScenario_CombinedAssertionSettlesBeforeGolden(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	runScenario(t, Scenario{
+		Name:  "combined_assertion_settles_before_golden",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				SendKey: "j",
+				Expect: Expectation{
+					// Substring lives in the header — bubbletea emits this
+					// first within the post-event frame, so WaitFor can fire
+					// before the hint line is written. The golden below
+					// includes the hint line, so without the post-WaitFor
+					// idle-settle the comparison would race.
+					ViewContains: []string{"sitatame"},
+					ViewGolden:   "combined_assertion_settles_before_golden",
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_ResizeChangesRenderDimensions pins the SendResize handling in
 // runScenario: the cols/rows used by renderScreen must follow the latest
 // tea.WindowSizeMsg so the vt10x emulator allocates a wide-enough grid for
