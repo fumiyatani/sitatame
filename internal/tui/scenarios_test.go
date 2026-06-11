@@ -452,6 +452,60 @@ func TestScenario_ResizeChangesRenderDimensions(t *testing.T) {
 	})
 }
 
+// TestScenario_NoOpEventStillEvaluatesGolden pins the idle-flush contract:
+// when a Step delivers a valid-but-no-op input (mouse release in the unified
+// view, non-wheel mouse button, Esc with no modal open, ...), the model
+// returns unchanged and the renderer emits zero new bytes. A naive
+// "wait for bytes" idle-flush would time out and fail the test even though
+// the golden snapshot for that Step is — correctly — the unchanged previous
+// frame. The runner must drain whatever bytes are available, then evaluate
+// the golden against the existing accumulated screen.
+//
+// The scenario walks one row down (producing a real frame so the golden
+// snapshot has a stable, post-`j` baseline), then sends a no-op (a mouse
+// release event, which the unified-mode handler explicitly drops at
+// model.go's `msg.Action != tea.MouseActionPress` guard). The same golden
+// file used for the post-`j` frame is asserted again on the no-op Step — if
+// the idle-flush were still hard-waiting on new bytes, that second
+// assertion would time out and fail.
+//
+// Why a mouse release in particular: it survives every layer of the input
+// pipeline (mouseMsgFromSpec accepts "release", tea forwards it, the model
+// reads it as a MouseMsg) and is documented in scenario.go as a legitimate
+// DSL input. The same idle-flush guarantee applies to the other no-op
+// classes — non-wheel mouse buttons (`left`/`right`/`middle` press without
+// a click handler), and `esc` outside any modal — but pinning one is
+// enough to lock the contract.
+func TestScenario_NoOpEventStillEvaluatesGolden(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	runScenario(t, Scenario{
+		Name:  "noop_event_still_evaluates_golden",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// Establish the baseline frame we'll re-assert below.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewGolden: "noop_event_still_evaluates_golden",
+				},
+			},
+			{
+				// Mouse release: the unified-mode model drops it before
+				// touching cursor / top / selection state, so the next
+				// frame is byte-identical to the previous one. With the
+				// old "wait for bytes" idle-flush this Step's golden
+				// check would time out; with the new idle-flush it
+				// compares the unchanged screen and passes.
+				SendMouse: &MouseEvent{Button: "left", Action: "release"},
+				Expect: Expectation{
+					ViewGolden: "noop_event_still_evaluates_golden",
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_DeltaRepaintPreservesHeader is a regression case for the
 // "view assertions slice the byte stream at the latest cursor marker" bug.
 // bubbletea's standard renderer paints with delta updates: after the first
