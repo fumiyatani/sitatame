@@ -1,6 +1,6 @@
 ---
 name: sitatame-review-apply
-description: sitatame が ~/.sitatame/<project-slug>/reviews/ に書き出したレビューを読み、open のコメントごとにコードを修正して resolved にマークする
+description: sitatame が .sitatame/reviews/（または ~/.sitatame/<project-slug>/reviews/）に書き出したレビューを読み、open のコメントごとにコードを修正して resolved にマークする
 ---
 
 # sitatame review apply
@@ -9,18 +9,27 @@ sitatame は TUI でレビューを記録し、Markdown + YAML フロントマ�
 
 ## 1. 対象ファイルの探し方
 
-レビューファイルは 2 種類のレイアウトのどちらかに置かれている可能性がある。同一スキーマなのでどちらでも同じ手順で扱える。
+レビューファイルは `s`（保存 & promote）で確定したものと、`q`（途中離脱）で書き出される下書きの 2 系統がある。さらに置き場所は今後変わる予定があるため、複数パスを探索する。
 
-- 新レイアウト（推奨）: `~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md`
-- 旧レイアウト: `<repo-root>/.sitatame/reviews/<branch-slug>/<id>.md`
+**確定 (promoted) — 優先して処理する側:**
 
-両方が存在する場合は、ユーザーに「どちらを処理するか」を確認する。指定が無ければ更新時刻が新しい方を採用する。
+- 現状（issue #38 マージ前）: `<repo-root>/.sitatame/reviews/<branch-slug>/<id>.md` が標準
+- 将来（issue #38 マージ後）: `~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md` に切り替わる
+
+**下書き (draft) — 処理前にユーザー確認が必要:**
+
+- 現状: `<repo-root>/.sitatame/drafts/<branch-slug>/<id>.md`
+- 将来: `~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md`
+
+スキーマは promoted / drafts どちらも同じなので処理ロジックは変わらない。ただし drafts は「ユーザーがレビュー途中で離脱したもの」なので、見つけたら勝手に処理せず「下書きですが処理しますか？」と確認する。
 
 最新レビュー 1 件を選ぶ手順:
 
-1. 上記 2 つのパスを両方探索する（`ls` などで存在チェック）
-2. 候補ファイルの mtime を比較し、最新の 1 件を採用する
-3. ユーザーから具体的なファイル名 / `SITATAME_REVIEW=<abs>` の値が提示されている場合はそれを優先する
+1. promoted 側（`reviews/`）を両レイアウト分探索する（`ls` などで存在チェック）
+2. promoted が 1 件以上あれば、mtime 最新の 1 件を採用する
+3. promoted が 0 件のときに限り、drafts 側も探索する。候補が見つかったら「下書きですが処理しますか？」と確認したうえで採用する
+4. ユーザーから具体的なファイル名 / `SITATAME_REVIEW=<abs>` の値が提示されている場合はそれを最優先する
+5. promoted / drafts の両方が同時に存在する場合は promoted を優先（drafts はその promote 元かもしれないため）
 
 ## 2. ファイル構造
 
@@ -47,6 +56,7 @@ comments:
     kind: line          # review | file | line | range
     path: internal/foo/bar.go
     side: head          # head | base （省略時は head 扱い）
+    blob: 0123abcd      # head/base 側のファイル blob（任意）
     line: 42            # kind=line のとき
     line_start: 40      # kind=range のとき
     line_end: 45        # kind=range のとき
@@ -66,6 +76,7 @@ comments:
 - `review` は anchor を持たない全体コメント。コード修正の対象にはならない
 - `file` は `path` のみ、`line` は `path` + `line`、`range` は `path` + `line_start..line_end`
 - `side: base` の場合は「修正対象は HEAD 側ではなく BASE 側の行」という意味なので、現行コードを base 側の行番号で探してはいけない（後述）
+- 上記サンプルは sitatame 本体の Encode 出力順（anchor_id → kind → path → side → blob → line → line_start → line_end → rename_from → rename_to → similarity → state → body）に揃えている。保存し直すと未指定キーが落ちる点と、state が anchor 群の **後** に並ぶ点に注意（手書きの古いファイルでは state が anchor_id 直下にある可能性もあるが、書き戻すときは Encode 順を尊重するのが安全）
 
 ## 3. 適用の手順
 
@@ -103,7 +114,17 @@ resolve をスキップした場合は、ユーザーに「なぜスキップし
 - `comments` 全体を YAML 経由で再生成しない（`Extras` フィールドや未知のキーが落ちる可能性がある）。**該当行だけ書き換える**のが安全
 - 末尾の Markdown 本文には触らない
 
-具体的には、対象コメントブロックの中で `    state: open` を `    state: resolved` に置換する。インデントは 4 スペースが基本だが、ファイルに合わせて確認する。
+### state 置換アルゴリズム（anchor_id ペアリング）
+
+同一行に複数の `state: open` が並ぶ可能性があるため、sed 風の一括置換は禁止。次のアルゴリズムを必ず守る:
+
+1. 対象コメントの `anchor_id` をユニーク文字列として grep し、その行位置 L を得る（例: `grep -n '^  - anchor_id: a-001$' <file>`）
+2. L から下方向に最初に出てくる `state: open` の行 **だけ** を `state: resolved` に書き換える
+3. 走査範囲は、次のコメントブロック先頭（次の `- anchor_id:` 行）または front matter 終端 `---` を超えないこと。超える前に `state` が見つからない場合は書き換えを諦め、ユーザーに「該当 anchor の state 行が見つからない」と報告する
+4. `kind: review` のように line / range キーを持たないコメントでも、`state` キー自体は存在するので 2. のステップで拾える
+5. 書き換え後、`grep -c 'state: open' <file>` の差分を確認し、想定どおり 1 件だけ減っていることを検証する（複数減っていたら誤爆 → revert）
+
+インデントは 4 スペースが基本だが、ファイルに合わせて確認する。
 
 ## 6. ガードレール（再掲）
 
