@@ -223,6 +223,26 @@ func (m *Model) jumpSplitFile(dir int) {
 	}
 }
 
+// scrollSplitViewportBy moves the split layout's top by d rows without moving
+// splitCursor. Mirrors scrollViewportBy for wheel input in split mode.
+func (m *Model) scrollSplitViewportBy(d int) {
+	if len(m.splitRows) == 0 {
+		return
+	}
+	h := m.viewportHeight()
+	maxTop := len(m.splitRows) - h
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	m.splitTop += d
+	if m.splitTop < 0 {
+		m.splitTop = 0
+	}
+	if m.splitTop > maxTop {
+		m.splitTop = maxTop
+	}
+}
+
 func (m *Model) scrollSplitToCursor() {
 	h := m.viewportHeight()
 	if m.splitCursor < m.splitTop {

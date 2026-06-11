@@ -83,6 +83,27 @@ func (m *Model) scrollToCursor() {
 	}
 }
 
+// scrollViewportBy moves the unified viewport's top by d rows (positive scrolls
+// down, negative scrolls up) without touching the cursor. Used by mouse-wheel
+// input where decoupling top from cursor matches user expectation.
+func (m *Model) scrollViewportBy(d int) {
+	if len(m.rows) == 0 {
+		return
+	}
+	h := m.viewportHeight()
+	maxTop := len(m.rows) - h
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	m.top += d
+	if m.top < 0 {
+		m.top = 0
+	}
+	if m.top > maxTop {
+		m.top = maxTop
+	}
+}
+
 func (m *Model) moveCursorBy(d int) {
 	if len(m.rows) == 0 {
 		return
