@@ -120,6 +120,13 @@ func (m *Model) scrollViewportBy(d int) {
 	if m.cursor < 0 {
 		m.cursor = 0
 	}
+	// Range selection follows the cursor in unified mode (keyboard j/k already
+	// does this via extendSelection). Without this, `r` → wheel → `c` would
+	// save a comment against the pre-wheel Extent because the cursor moved
+	// out from under the selection without updating it.
+	if m.selection != nil {
+		m.extendSelection()
+	}
 }
 
 func (m *Model) moveCursorBy(d int) {

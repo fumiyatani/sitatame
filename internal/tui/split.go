@@ -260,6 +260,14 @@ func (m *Model) scrollSplitViewportBy(d int) {
 	// the cursor just landed on — paired vs single-side affects the unified
 	// round-trip when Tab is pressed.
 	m.refreshSplitPreferredSide()
+	// Mirror the unified wheel path: if a selection survived a Tab from unified
+	// (toggleLayout does not clear it), keep Extent consistent with m.cursor.
+	// In split mode m.cursor itself doesn't move here, so this is a defensive
+	// no-op today — but it prevents drift if the layout-toggle contract ever
+	// changes to move m.cursor in lockstep with splitCursor.
+	if m.selection != nil {
+		m.extendSelection()
+	}
 }
 
 func (m *Model) scrollSplitToCursor() {
