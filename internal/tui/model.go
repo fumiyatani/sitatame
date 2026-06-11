@@ -190,27 +190,46 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 // toggleResolvedAtCursor flips the state of the comment anchored at the
-// cursor row between open and resolved. When multiple comments share the row
-// (e.g. several line comments on the same line), the most recently appended
-// one is toggled — that matches the "most recent" mental model from the
-// reviewer's perspective. Comments in StateStale are left alone because
-// stale anchors mean the underlying code drifted; resolving them would
-// silently hide a follow-up.
+// cursor row between open and resolved. Target selection is biased toward
+// open comments so the visible "needs work" item is always the one acted on:
+//
+//  1. If any open comment exists on the row, the *last* open one is resolved.
+//  2. Otherwise, if only resolved comments remain, the last resolved one is
+//     reopened (undo path for accidental resolves).
+//  3. Stale comments are ignored entirely — the underlying code has drifted
+//     and silently resolving them would hide a follow-up.
+//
+// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
+// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
+// even when several comments share the row.
 func (m *Model) toggleResolvedAtCursor() {
 	idxs := m.overlay[m.cursor]
 	if len(idxs) == 0 {
 		return
 	}
-	// Pick the most recently added comment for this row.
-	target := idxs[len(idxs)-1]
-	if target < 0 || target >= len(m.Review.Comments) {
-		return
+
+	lastOpen := -1
+	lastResolved := -1
+	for _, idx := range idxs {
+		if idx < 0 || idx >= len(m.Review.Comments) {
+			continue
+		}
+		switch m.Review.Comments[idx].State {
+		case review.StateOpen:
+			lastOpen = idx
+		case review.StateResolved:
+			lastResolved = idx
+		}
+		// StateStale: ignored on purpose.
 	}
-	switch m.Review.Comments[target].State {
-	case review.StateOpen:
-		m.Review.Comments[target].State = review.StateResolved
-	case review.StateResolved:
-		m.Review.Comments[target].State = review.StateOpen
+
+	switch {
+	case lastOpen >= 0:
+		m.Review.Comments[lastOpen].State = review.StateResolved
+		m.statusMsg = "resolved: " + m.Review.Comments[lastOpen].AnchorID
+	case lastResolved >= 0:
+		m.Review.Comments[lastResolved].State = review.StateOpen
+		m.statusMsg = "reopened: " + m.Review.Comments[lastResolved].AnchorID
 	}
 }
 
