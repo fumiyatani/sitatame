@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
@@ -357,6 +358,35 @@ func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
 	})
 }
 
+// wideLineFile builds a single-file diff whose context line body is long
+// enough that the trailing marker only fits when the viewport is wider than
+// the default 80 columns. Used by TestScenario_ResizeChangesRenderDimensions
+// to prove that SendResize updates the dimensions used for screen
+// reconstruction; without that update the post-resize frame would still be
+// replayed through an 80-cell vt10x and the marker stayed clipped.
+func wideLineFile(path, marker string) diffmodel.File {
+	// 70 columns of filler followed by the marker puts the marker past the
+	// 80-column clip point (cursor gutter + marker gutter + line-number
+	// gutter eat ~7 cols before the body starts, so a 70-col filler crowds
+	// the marker well past column 80) while leaving plenty of room inside
+	// a 120-column viewport. Picking the filler length empirically rather
+	// than computing it keeps the fixture readable and decoupled from the
+	// renderer's exact gutter arithmetic.
+	body := strings.Repeat("x", 70) + marker
+	h := diffmodel.Hunk{
+		BaseStart: 1, BaseLines: 1,
+		HeadStart: 1, HeadLines: 1,
+		Lines: []diffmodel.Line{{Prefix: ' ', Text: body}},
+	}
+	diffmodel.AssignLineNumbers(&h)
+	return diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  path, PostPath: path,
+		BlobBase: "b1", BlobHead: "b2",
+		Hunks: []diffmodel.Hunk{h},
+	}
+}
+
 // TestScenario_ViewContainsAndGoldenTogether pins the shared-drain contract:
 // when a single Step lists both ViewContains and ViewGolden, the runner must
 // reconstruct the screen once and feed it to both assertions. Earlier the
@@ -379,6 +409,43 @@ func TestScenario_ViewContainsAndGoldenTogether(t *testing.T) {
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go"},
 					ViewGolden:   "contains_and_golden_together",
+				},
+			},
+		},
+	})
+}
+
+// TestScenario_ResizeChangesRenderDimensions pins the SendResize handling in
+// runScenario: the cols/rows used by renderScreen must follow the latest
+// tea.WindowSizeMsg so the vt10x emulator allocates a wide-enough grid for
+// the new frame. The fixture lays a marker 70 columns into the only diff
+// line; at 80 columns renderRow clips the body with `…` and the marker is
+// absent from the reconstructed screen, so we use ViewNotContains as the
+// pre-resize guard. After SendResize {120, 40} the same body fits, and
+// ViewContains finds the marker — but only if renderScreen now reconstructs
+// the bytes through a 120-cell grid. If we left cols/rows pinned to 80x24
+// the wider frame would still get clipped to 80 cells and ViewContains
+// would time out.
+func TestScenario_ResizeChangesRenderDimensions(t *testing.T) {
+	t.Parallel()
+	const marker = "UNIQUE_120_MARKER"
+	f := wideLineFile("a.go", marker)
+	runScenario(t, Scenario{
+		Name:  "resize_changes_render_dimensions",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// Walk onto the diff body so the cursor row is the one
+				// being clipped at 80 columns.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewNotContains: []string{marker},
+				},
+			},
+			{
+				SendResize: &[2]int{120, 40},
+				Expect: Expectation{
+					ViewContains: []string{marker},
 				},
 			},
 		},
