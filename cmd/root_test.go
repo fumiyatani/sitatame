@@ -319,6 +319,39 @@ func TestRunRoot_Staged_NoChanges(t *testing.T) {
 	}
 }
 
+// TestRunRoot_DetachedHEAD_UsesShaInBranchSlug guards the PR #42 P1 fix:
+// when the repo is in detached HEAD, RunRoot must synthesise a branch label
+// of "detached/<sha[:12]>" so the per-branch slug stays unique per detached
+// session instead of collapsing onto the empty-branch fallback
+// (BranchSlug("") = "branch__da39a3ee") and letting two unrelated detached
+// sessions share state.
+func TestRunRoot_DetachedHEAD_UsesShaInBranchSlug(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	// Detach HEAD at the main commit — base auto-detection will still resolve
+	// `main` as the base ref.
+	mustGit(t, dir, "checkout", "-q", "--detach", mainSHA)
+	// newRepo left us on `feature` (one commit ahead). Replace that commit so
+	// the detached HEAD points at a fresh, distinct SHA. We just write a new
+	// file and commit it.
+	if err := os.WriteFile(filepath.Join(dir, "detached-marker"), []byte("d\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "-A")
+	mustGit(t, dir, "commit", "-q", "-m", "detached")
+	detachedSHA := mustGit(t, dir, "rev-parse", "HEAD")
+
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	wantBranch := "detached/" + detachedSHA[:12]
+	if captured.Review.Branch != wantBranch {
+		t.Errorf("Review.Branch = %q, want %q", captured.Review.Branch, wantBranch)
+	}
+}
+
 func TestDispatchHelp(t *testing.T) {
 	// dispatch lives in main, not cmd; this test just checks RunSearch wiring.
 	env := ttyEnv(os.Stdin, true)

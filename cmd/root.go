@@ -159,6 +159,16 @@ func RunRoot(env Env, args []string) int {
 
 	branch, _ := repo.CurrentBranch()
 	headSHA, _ := repo.HeadSHA()
+	// In detached HEAD CurrentBranch returns "" and review.BranchSlug("")
+	// collapses every detached session in this repo onto the same
+	// "branch__da39a3ee" directory — two concurrent detached sessions would
+	// share state. Normalising into "detached/<sha[:12]>" gives each detached
+	// HEAD its own per-SHA slug; if HeadSHA also fails (pathological /
+	// unborn-HEAD case) we fall back to the empty-branch slug, matching the
+	// previous behaviour.
+	if branch == "" && len(headSHA) >= 12 {
+		branch = "detached/" + headSHA[:12]
+	}
 	headRef := "HEAD"
 	headRefSHA := headSHA
 	switch spec.Source {
