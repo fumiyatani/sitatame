@@ -15,4 +15,5 @@ const (
 	KeySelectKey   = "r"
 	KeySave        = "s"
 	KeyToggleLayout = "tab"
+	KeyResolveToggle = "x"
 )

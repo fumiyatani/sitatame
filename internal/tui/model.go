@@ -177,9 +177,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openReviewModal()
 			return m, nil
+		case KeyResolveToggle:
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
+			m.toggleResolvedAtCursor()
+			return m, nil
 		}
 	}
 	return m, nil
+}
+
+// toggleResolvedAtCursor flips the state of the comment anchored at the
+// cursor row between open and resolved. When multiple comments share the row
+// (e.g. several line comments on the same line), the most recently appended
+// one is toggled — that matches the "most recent" mental model from the
+// reviewer's perspective. Comments in StateStale are left alone because
+// stale anchors mean the underlying code drifted; resolving them would
+// silently hide a follow-up.
+func (m *Model) toggleResolvedAtCursor() {
+	idxs := m.overlay[m.cursor]
+	if len(idxs) == 0 {
+		return
+	}
+	// Pick the most recently added comment for this row.
+	target := idxs[len(idxs)-1]
+	if target < 0 || target >= len(m.Review.Comments) {
+		return
+	}
+	switch m.Review.Comments[target].State {
+	case review.StateOpen:
+		m.Review.Comments[target].State = review.StateResolved
+	case review.StateResolved:
+		m.Review.Comments[target].State = review.StateOpen
+	}
 }
 
 // Cursor returns the current row index (test-only accessor).
