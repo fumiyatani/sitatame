@@ -171,9 +171,11 @@ have to compute the `<project-slug>` by hand:
 ```sh
 # Run once, inside the repo with the legacy directory. The second stderr line
 # from `sitatame` looks like:
-#   sitatame: To migrate drafts: mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
-# Run that exact `mv` command, then remove the empty legacy directory.
-mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
+#   sitatame: To migrate drafts: mkdir -p /Users/you/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
+# Run that exact command (the `mkdir -p` is there so the first upgrade does
+# not fail when the new drafts root doesn't exist yet), then remove the empty
+# legacy directory.
+mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
 rm -rf .sitatame
 ```
 

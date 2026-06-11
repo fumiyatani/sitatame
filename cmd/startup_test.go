@@ -46,6 +46,40 @@ func TestRunRoot_DetectsExistingDraftOnStartup(t *testing.T) {
 	}
 }
 
+func TestRunRoot_LegacySitatameDir_HintIncludesMkdir(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	home := t.TempDir()
+	t.Setenv("SITATAME_HOME", home)
+
+	// Seed a legacy <repo>/.sitatame/ directory so warnLegacySitatameDir
+	// fires. We don't need drafts inside it — the warning is keyed on the
+	// directory existing at all.
+	legacy := filepath.Join(dir, ".sitatame")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	env, _, stderr := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	got := stderr.String()
+	if !strings.Contains(got, "To migrate drafts:") {
+		t.Fatalf("stderr should contain migration hint; got %q", got)
+	}
+	// The hint must bundle `mkdir -p` so the first upgrade does not fail on
+	// a `mv` into a not-yet-created drafts root.
+	if !strings.Contains(got, "mkdir -p ") {
+		t.Errorf("migration hint should include `mkdir -p ` to create the new drafts root; got %q", got)
+	}
+	if !strings.Contains(got, " && mv ") {
+		t.Errorf("migration hint should chain mkdir and mv with `&&`; got %q", got)
+	}
+}
+
 func TestRunRoot_BaseAutoFails_HintsExplicitArg(t *testing.T) {
 	dir, _ := newRepo(t)
 	// Rename main so no auto-base candidate resolves.
