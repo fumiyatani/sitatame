@@ -138,6 +138,11 @@ func unifiedToSplitCursor(splitRows []splitRow, unifiedIdx int) (int, review.Sid
 // toggleLayout flips between unified and split, translating the cursor and
 // remembering the side affinity so unified→split→unified lands on the same
 // row (e.g. a `-` row stays a `-` row even though split paired it with a `+`).
+//
+// A layout switch resets the sticky resolve anchor: x is a unified-mode
+// action and the user crossing layouts is a strong signal that the next x
+// should re-evaluate the open-biased default rather than re-undo whatever
+// was toggled before the trip into split.
 func (m *Model) toggleLayout() {
 	if len(m.rows) == 0 {
 		return
@@ -153,11 +158,13 @@ func (m *Model) toggleLayout() {
 		m.splitCursor = idx
 		m.splitPreferredSide = side
 		m.layout = LayoutSplit
+		m.invalidateLastToggle()
 		m.scrollSplitToCursor()
 		return
 	}
 	m.cursor = splitToUnifiedCursor(m.splitRows, m.splitCursor, m.splitPreferredSide)
 	m.layout = LayoutUnified
+	m.invalidateLastToggle()
 	m.scrollToCursor()
 }
 
@@ -165,12 +172,21 @@ func (m *Model) moveSplitCursorBy(d int) {
 	if len(m.splitRows) == 0 {
 		return
 	}
+	prev := m.splitCursor
 	m.splitCursor += d
 	if m.splitCursor < 0 {
 		m.splitCursor = 0
 	}
 	if m.splitCursor >= len(m.splitRows) {
 		m.splitCursor = len(m.splitRows) - 1
+	}
+	if m.splitCursor != prev {
+		// Same rationale as unified moveCursorBy: leaving the row makes the
+		// previous sticky anchor irrelevant. Without this, returning to
+		// unified would carry the anchor across split navigation and the
+		// next x would silently undo a range comment touched before the
+		// split round-trip.
+		m.invalidateLastToggle()
 	}
 	m.refreshSplitPreferredSide()
 	m.scrollSplitToCursor()
@@ -202,6 +218,7 @@ func (m *Model) jumpSplitFile(dir int) {
 		for i := m.splitCursor + 1; i < len(m.splitRows); i++ {
 			if m.splitRows[i].kind == rowFileHeader {
 				m.splitCursor = i
+				m.invalidateLastToggle()
 				m.refreshSplitPreferredSide()
 				m.scrollSplitToCursor()
 				return
@@ -216,6 +233,7 @@ func (m *Model) jumpSplitFile(dir int) {
 	for i := start; i >= 0; i-- {
 		if m.splitRows[i].kind == rowFileHeader {
 			m.splitCursor = i
+			m.invalidateLastToggle()
 			m.refreshSplitPreferredSide()
 			m.scrollSplitToCursor()
 			return

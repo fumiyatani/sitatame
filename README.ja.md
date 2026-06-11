@@ -74,6 +74,7 @@ n / p       次 / 前のファイル
 wheel       diff をスクロール（Option/Fn 押下でテキスト選択）
 r           範囲選択開始（j/k で拡張、Esc で解除）
 c           カーソル位置にコメント（kind は選択 / 行種別から自動決定）
+x           カーソル位置のコメントを resolved ↔ open でトグル（stale はスキップ）
 Shift+R     review 全体コメント（front matter の review_comment を編集）
 s           保存して promote — ~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md に書き出し、
             stdout に SITATAME_REVIEW=<絶対パス> を 1 行出力
