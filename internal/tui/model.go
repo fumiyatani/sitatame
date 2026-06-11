@@ -100,6 +100,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case tea.MouseMsg:
+		// Help is rendered as a full-screen overlay, so silently scrolling
+		// the diff behind it would be invisible until the user closes help —
+		// a stealth state change. Drop wheel events while help is up.
+		if m.showHelp {
+			return m, nil
+		}
 		// Only wheel-press events scroll; releases, drags, and other buttons
 		// are ignored so we don't fight the natural single-tick model.
 		if msg.Action != tea.MouseActionPress {
