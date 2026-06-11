@@ -12,6 +12,7 @@ var helpLines = []string{
 	"  Tab       toggle unified ↔ split (preview)",
 	"  r         start range selection (j/k extend, Esc clear) — unified only",
 	"  c         comment at the cursor — unified only",
+	"  x         toggle resolved on the comment under cursor — unified only",
 	"  Shift+R   review-level comment — unified only",
 	"  s         save & promote, print SITATAME_REVIEW=<path>",
 	"  q         save as draft and exit 1",
