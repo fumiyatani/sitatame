@@ -105,6 +105,30 @@ func TestPaths(t *testing.T) {
 	}
 }
 
+// TestNewPathsWithRoot_EmptyBranchUsesDetachedSlug guards against regressing
+// the detached-HEAD fix: when RunRoot encounters `branch, _ := CurrentBranch()`
+// returning "" (detached HEAD), the per-branch helpers must still resolve to a
+// branch-scoped directory so SaveDraft / DetectDraft / Promote don't share
+// state across unrelated sessions in the same repo. BranchSlug("") returns the
+// deterministic "branch__da39a3ee", which is what we expect to land in Slug.
+func TestNewPathsWithRoot_EmptyBranchUsesDetachedSlug(t *testing.T) {
+	t.Parallel()
+
+	p := NewPathsWithRoot("/out", "/repo", "")
+	const detachedSlug = "branch__da39a3ee"
+	if p.Slug != detachedSlug {
+		t.Errorf("Slug = %q, want %q (BranchSlug(\"\"))", p.Slug, detachedSlug)
+	}
+	wantDrafts := filepath.Join("/out", p.ProjectSlug, "drafts", detachedSlug)
+	if got := p.DraftsDir(); got != wantDrafts {
+		t.Errorf("DraftsDir() = %q, want %q", got, wantDrafts)
+	}
+	wantReviews := filepath.Join("/out", p.ProjectSlug, "reviews", detachedSlug)
+	if got := p.ReviewsDir(); got != wantReviews {
+		t.Errorf("ReviewsDir() = %q, want %q", got, wantReviews)
+	}
+}
+
 func TestProjectSlug_Deterministic(t *testing.T) {
 	t.Parallel()
 	a := ProjectSlug("/Users/me/code/sitatame")
