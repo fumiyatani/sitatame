@@ -42,6 +42,12 @@ type Session struct {
 	waitErr  error
 	exitCode int32
 
+	// pumpDone is closed by the pump goroutine once the pty reader has drained
+	// (typically when the child process exits and the master returns EOF).
+	// WaitForExit blocks on it so callers see a fully-flushed Stdout(); see the
+	// API contract on WaitForExit.
+	pumpDone chan struct{}
+
 	closeOnce sync.Once
 }
 
@@ -101,12 +107,13 @@ func Start(t *testing.T, binPath string, repoDir string, args ...string) *Sessio
 	term := vt10x.New(vt10x.WithSize(cols, rows))
 
 	s := &Session{
-		Cols: cols,
-		Rows: rows,
-		Term: term,
-		t:    t,
-		pty:  master,
-		cmd:  cmd,
+		Cols:     cols,
+		Rows:     rows,
+		Term:     term,
+		t:        t,
+		pty:      master,
+		cmd:      cmd,
+		pumpDone: make(chan struct{}),
 	}
 
 	// Pump pty output into the virtual terminal. We tee into stdout so tests
@@ -122,6 +129,10 @@ func Start(t *testing.T, binPath string, repoDir string, args ...string) *Sessio
 }
 
 func (s *Session) pump() {
+	// Signal WaitForExit (and any other sync points) that we have drained the
+	// pty reader. Closing on return covers both the EOF path (child exited and
+	// the master returned io.EOF) and any unexpected read error.
+	defer close(s.pumpDone)
 	br := bufio.NewReader(s.pty)
 	buf := make([]byte, 4096)
 	for {
@@ -192,9 +203,19 @@ func (s *Session) WaitFor(substring string, timeout time.Duration) error {
 	}
 }
 
-// WaitForExit blocks until the child exits or timeout elapses. Returns the
-// exit code; callers can also read Stdout afterwards.
+// WaitForExit blocks until the child exits AND the pty reader drains, or
+// until timeout elapses. Returns the exit code; callers can also read Stdout
+// afterwards.
+//
+// API contract: once WaitForExit returns nil, Stdout() reflects every byte the
+// child wrote into the pty, including bytes emitted just before exit (e.g. the
+// SITATAME_REVIEW=<path> line printed after the alt screen is torn down).
+// Without the drain step there is a race where cmd.Wait() returns before the
+// pump goroutine finishes copying the final chunk into the stdout buffer, which
+// makes assertions on such trailing lines flaky.
 func (s *Session) WaitForExit(timeout time.Duration) (int, error) {
+	deadline := time.Now().Add(timeout)
+
 	done := make(chan error, 1)
 	go func() {
 		s.waitOnce.Do(func() {
@@ -209,10 +230,19 @@ func (s *Session) WaitForExit(timeout time.Duration) (int, error) {
 	}()
 	select {
 	case <-done:
-		return int(atomic.LoadInt32(&s.exitCode)), nil
-	case <-time.After(timeout):
+	case <-time.After(time.Until(deadline)):
 		return -1, errors.New("replay: timeout waiting for child exit")
 	}
+
+	// Child has exited; the pty master should return EOF imminently, which will
+	// drive pump() to return and close pumpDone. We still bound the wait so a
+	// stuck reader does not hang the test indefinitely.
+	select {
+	case <-s.pumpDone:
+	case <-time.After(time.Until(deadline)):
+		return -1, errors.New("replay: timeout waiting for pty reader to drain")
+	}
+	return int(atomic.LoadInt32(&s.exitCode)), nil
 }
 
 // Screen renders the virtual terminal to a single newline-separated string.
@@ -254,6 +284,10 @@ func (s *Session) Resize(cols, rows int) error {
 // Stdout returns the entire byte stream the program emitted into the pty so
 // far. Useful for asserting on post-exit output such as the
 // SITATAME_REVIEW=<path> line printed after the alt screen is torn down.
+//
+// The return value is only guaranteed to contain every emitted byte after
+// WaitForExit (or Close) returns successfully; mid-run callers may observe a
+// prefix because the pump goroutine writes asynchronously.
 func (s *Session) Stdout() string {
 	s.stdoutMu.Lock()
 	defer s.stdoutMu.Unlock()
@@ -285,6 +319,13 @@ func (s *Session) Close() (int, error) {
 		case <-time.After(3 * time.Second):
 			_ = s.cmd.Process.Kill()
 			<-done
+		}
+		// Wait for the pump goroutine to finish so Stdout() reflects every byte
+		// the child wrote. pty.Close() above guarantees the master read returns
+		// promptly, so this is essentially instant in the happy path.
+		select {
+		case <-s.pumpDone:
+		case <-time.After(1 * time.Second):
 		}
 		code = int(atomic.LoadInt32(&s.exitCode))
 		if s.waitErr != nil {
