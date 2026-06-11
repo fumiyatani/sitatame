@@ -304,18 +304,26 @@ func renderScreen(out []byte, cols, rows int) string {
 // consumed by the first poll.
 //
 // Polling strategy:
-//   - If ViewContains / ViewNotContains is set, we use teatest.WaitFor with the
-//     substring condition. The poll terminates as soon as the reconstructed
-//     screen satisfies every required substring and contains no forbidden one.
-//     If the timeout expires the substring is treated as "never observed" and
-//     the test fails — that's the contract substring assertions need.
+//   - If ViewContains / ViewNotContains is set, we use teatest.WaitFor with a
+//     compound condition: bubbletea must have emitted at least one byte since
+//     the Step's input was sent AND the reconstructed screen must satisfy
+//     every required substring while containing no forbidden one. Requiring a
+//     post-event byte is the load-bearing part — without it, the WaitFor
+//     predicate would short-circuit on substrings already present in the
+//     cumulative `drained` buffer from earlier frames (the initial render
+//     alone contains the status header, hint line, file path, ...). A Step
+//     whose input was silently dropped would then "pass" against stale
+//     screen contents. The post-event byte requirement forces a positive
+//     observation that bubbletea reacted to the event before any substring
+//     verdict is recorded.
 //   - Otherwise (golden-only), we cannot use teatest.WaitFor because its
 //     semantics are "condition must become true or the test fails". No-op
 //     steps (mouse release, non-wheel mouse button, Esc with no modal open)
 //     are valid DSL inputs that legitimately produce zero bytes, and the
 //     golden snapshot for such a step is the *unchanged* previous frame. We
 //     run an idle-flush loop that drains whatever bytes arrive but never
-//     fails on timeout, so a no-op step still gets its golden compared.
+//     fails on timeout, so a no-op step still gets its golden compared. The
+//     post-event byte requirement explicitly does NOT apply here.
 //
 // drained accumulates *every* byte teatest has ever emitted; renderScreen
 // requires the full history because bubbletea's delta repaint leaves the
@@ -350,6 +358,18 @@ func evaluateViewExpectations(
 
 	if hasSubstringCheck {
 		teatest.WaitFor(t, tee, func(latest []byte) bool {
+			// `latest` is the cumulative byte slice WaitFor has read out
+			// of tee since this drain started — i.e. exactly the bytes
+			// bubbletea emitted after the Step's input was delivered.
+			// Require at least one such byte before evaluating the
+			// substring verdict; otherwise WaitFor would happily return
+			// true on the very first poll if `required` substrings were
+			// already present in `drained` (which is common — the
+			// initial render alone seeds the header, hint line, and
+			// file path that most Steps assert against).
+			if len(latest) == 0 {
+				return false
+			}
 			out := append([]byte(nil), drained.Bytes()...)
 			out = append(out, latest...)
 			frame := renderScreen(out, cols, rows)
@@ -371,7 +391,8 @@ func evaluateViewExpectations(
 	} else {
 		// Golden-only: idle-flush without failing on timeout. The golden
 		// snapshot for a no-op step is the previous frame, so an empty
-		// drain is legitimate.
+		// drain is legitimate — the post-event byte requirement that
+		// substring checks impose does not apply here.
 		idleFlush(tee, scenarioIdleFlushDuration, scenarioIdleSettleDuration, scenarioWaitInterval)
 	}
 

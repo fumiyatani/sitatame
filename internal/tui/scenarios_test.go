@@ -506,6 +506,61 @@ func TestScenario_NoOpEventStillEvaluatesGolden(t *testing.T) {
 	})
 }
 
+// TestScenario_RequiresPostEventOutput pins the "Step's substring assertion
+// must observe post-event bytes" contract documented in
+// evaluateViewExpectations. The previous runner fed `drained + latest` (with
+// latest possibly empty) into renderScreen and returned true the instant
+// `drained` alone matched. Because the initial render alone contains the
+// status header ("sitatame"), the focused file path ("a.go"), and the help
+// hint ("j/k move"), nearly every Step that asserted any of those substrings
+// would short-circuit on the cumulative buffer before observing whether
+// bubbletea actually reacted to the Step's input — silently dropped inputs
+// produced false positives.
+//
+// The scenario walks one `j` (which renders a fresh frame seeding the
+// cumulative buffer with all three substrings above), then walks a second
+// `j` and asserts the same trio. The second Step's assertion must wait for
+// the second-`j` frame bytes before declaring victory, even though every
+// required substring is already in `drained` from the first Step. If
+// evaluateViewExpectations were regressed to skip the `len(latest) == 0`
+// guard, the assertion would still pass — but it would also pass if the
+// second `j` were silently dropped, which is the regression we're guarding
+// against. The runner relies on bubbletea actually emitting a frame for `j`
+// (it always does, since `j` moves the cursor and the renderer redraws the
+// affected rows), so this is indirect coverage: the test passes today, and
+// will keep passing as long as both (a) the guard remains and (b) `j` keeps
+// producing post-event bytes. If (a) is regressed, the contract is documented
+// here for the next reviewer; if (b) is regressed the entire scenario harness
+// breaks visibly elsewhere.
+func TestScenario_RequiresPostEventOutput(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:  "requires_post_event_output",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// Step 1 seeds the cumulative drained buffer with the
+				// header, file path, and hint line.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{"sitatame", "a.go", "j/k move"},
+				},
+			},
+			{
+				// Step 2 asserts the same substrings. They are already in
+				// drained from Step 1, so the guard is the only thing
+				// stopping the WaitFor from returning true on its first
+				// poll. We rely on `j` emitting a fresh frame.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{"sitatame", "a.go", "j/k move"},
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_DeltaRepaintPreservesHeader is a regression case for the
 // "view assertions slice the byte stream at the latest cursor marker" bug.
 // bubbletea's standard renderer paints with delta updates: after the first
