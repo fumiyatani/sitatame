@@ -147,6 +147,24 @@ func runScenario(t *testing.T, sc Scenario) {
 		// substring poll would consume the new frame and the subsequent
 		// golden poll would wait on bytes that already arrived.
 		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, cols, rows, step.Expect)
+
+		// Always advance the drain boundary at the end of a Step, even
+		// when the Step has no view assertions. Without this, a no-view
+		// Step (SendKey: "j" with empty Expect, SendResize without an
+		// expectation, ...) would leave its emitted bytes sitting on
+		// tm.Output()'s reader. The next Step's substring assertion
+		// reads them as "post-event bytes" — its len(latest) > 0 guard
+		// is satisfied by the *previous* Step's output, and a substring
+		// already present in the prior frame is recorded as a match
+		// even if the current Step's input was silently dropped (false
+		// positive). Draining here makes `drained` the canonical
+		// snapshot up to and including the just-finished Step, so the
+		// next Step's WaitFor only counts bytes its own input produced.
+		// For Steps that already ran evaluateViewExpectations this is
+		// idempotent: the assertion path already moved their bytes into
+		// `drained` via the TeeReader, so drainAvailable just consumes
+		// whatever bubbletea emitted after the assertion returned.
+		drainAvailable(tm.Output(), &drained, scenarioIdleSettleDuration, scenarioWaitInterval)
 	}
 
 	if err := tm.Quit(); err != nil {
@@ -400,6 +418,59 @@ func evaluateViewExpectations(
 
 	if hasGoldenCheck {
 		compareGolden(t, name, stepLabel, drained.Bytes(), cols, rows, expect.ViewGolden)
+	}
+}
+
+// drainAvailable pulls every byte currently sitting on r into dst, with a
+// short idle settle so a single frame split across multiple writes is fully
+// captured. It is the end-of-step boundary advance: each Step must finish with
+// `dst` containing all bytes bubbletea emitted up to that point, otherwise the
+// next Step's substring assertion would treat the previous Step's leftover
+// bytes as its own post-event output (false-positive match on a stale frame).
+//
+// Unlike idleFlush this never has a hard ceiling beyond a brief settle wait,
+// and it never short-circuits the loop on read errors mid-stream — it always
+// flushes whatever is currently buffered. The settle wait is the same one
+// idleFlush uses (~25ms) because the failure mode it guards against is
+// identical: bubbletea sometimes splits a control-sequence prelude and the
+// content payload across separate writes under load, and an early-exit drain
+// would leave the tail byte sitting on tm.Output() for the next Step.
+func drainAvailable(r io.Reader, dst *bytes.Buffer, settle, pollInterval time.Duration) {
+	// firstPollDeadline gives bubbletea a brief window to emit its post-event
+	// frame before we declare "no bytes" and exit. Without this, a no-view
+	// Step that just dispatched (e.g. SendKey: "j") could poll the reader
+	// 0.1ms after Send returned, find it empty, and exit before the renderer
+	// finishes encoding the frame. The bytes would then sit on the reader
+	// for the *next* Step's WaitFor to pick up as "post-event" output for
+	// an input it did not send (the regression this drain is supposed to
+	// prevent). The settle duration doubles as the first-poll wait ceiling;
+	// it is the same ~25ms window idleFlush uses for the same reason.
+	firstPollDeadline := time.Now().Add(settle)
+	var lastByteAt time.Time
+	for {
+		buf, err := io.ReadAll(r)
+		if err != nil {
+			return
+		}
+		if len(buf) > 0 {
+			dst.Write(buf)
+			lastByteAt = time.Now()
+		}
+		if lastByteAt.IsZero() {
+			if time.Now().After(firstPollDeadline) {
+				// settle elapsed without a single byte — the Step
+				// was a true no-op (mouse release, esc-with-no-modal,
+				// non-wheel mouse button, ...) or its output was
+				// already pulled in by evaluateViewExpectations.
+				return
+			}
+			time.Sleep(pollInterval)
+			continue
+		}
+		if time.Since(lastByteAt) >= settle {
+			return
+		}
+		time.Sleep(pollInterval)
 	}
 }
 
