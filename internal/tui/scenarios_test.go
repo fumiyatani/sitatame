@@ -561,6 +561,65 @@ func TestScenario_RequiresPostEventOutput(t *testing.T) {
 	})
 }
 
+// TestScenario_NoViewStepDrainsBoundary pins the "advance drain boundary on
+// every step" contract documented at the bottom of runScenario's Step loop.
+//
+// Before the fix, a Step with no view expectation (e.g. just SendKey: "j" with
+// an empty Expect) skipped the entire evaluateViewExpectations path — including
+// the captured-byte writeback into `drained`. The bytes bubbletea emitted in
+// response to that Step's input stayed parked on tm.Output()'s reader. When the
+// *next* Step kicked off a substring assertion, teatest.WaitFor's first poll
+// would pull those leftover bytes back as "post-event output", satisfying the
+// `len(latest) > 0` guard with bytes the current Step did not produce. Any
+// substring already in the previous frame would then short-circuit the
+// assertion to true — even if the current Step's input had been silently
+// dropped (the regression the post-event guard was supposed to catch).
+//
+// The scenario uses two `j` Steps:
+//   - Step 1: SendKey: "j" with no view expectation. The runner advances the
+//     drain boundary at the end of this Step so its bytes land in `drained`,
+//     not on the live reader.
+//   - Step 2: SendKey: "j" with ViewContains asserting substrings already
+//     present in the Step 1 frame (header / hint line / path). These all live
+//     in `drained` by the time Step 2 starts; the only way the assertion can
+//     fairly pass is if Step 2's WaitFor observes its own post-event frame
+//     bytes (which it does because `j` always emits a delta repaint), not
+//     Step 1's bytes leaked through the unflushed reader.
+//
+// If a future change regresses the end-of-step drain to "skip on no-view"
+// (the original bug), Step 2's WaitFor reads Step 1's parked bytes on the
+// first poll and returns immediately — the test would still pass on the
+// happy path, but it would also pass if Step 2's `j` were silently dropped.
+// This is the same "indirect coverage" approach used by
+// TestScenario_RequiresPostEventOutput: the contract is documented here, and
+// the assertion exercises the path the fix protects.
+func TestScenario_NoViewStepDrainsBoundary(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:  "no_view_step_drains_boundary",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// No view expectation — the Step loop must still drain
+				// this Step's emitted bytes into `drained` so they do
+				// not leak forward as "post-event output" for Step 2.
+				SendKey: "j",
+			},
+			{
+				// Same substrings as Step 1's frame would contain. They
+				// are already in `drained` after Step 1's end-of-step
+				// flush; the WaitFor here can only complete by observing
+				// Step 2's own post-event frame bytes.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{"sitatame", "a.go", "j/k move"},
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_DeltaRepaintPreservesHeader is a regression case for the
 // "view assertions slice the byte stream at the latest cursor marker" bug.
 // bubbletea's standard renderer paints with delta updates: after the first
