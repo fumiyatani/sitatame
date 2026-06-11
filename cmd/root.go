@@ -176,7 +176,9 @@ func RunRoot(env Env, args []string) int {
 		Head:   review.Ref{Ref: headRef, SHA: headRefSHA},
 	}
 
-	store := review.NewStore(review.NewPaths(repo.Workdir, branch))
+	paths := review.NewPaths(repo.Workdir, branch)
+	warnLegacySitatameDir(env, paths.LegacyRoot())
+	store := review.NewStore(paths)
 	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
 		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
 	}
@@ -254,6 +256,24 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 		return "no working-tree changes"
 	}
 	panic(fmt.Sprintf("emptyDiffMessage: unexpected Source %d", spec.Source))
+}
+
+// warnLegacySitatameDir prints a one-line stderr notice when a pre-#38
+// <repo>/.sitatame/ directory is still present. We intentionally do not
+// auto-migrate: users may have stale drafts they want to review or commit
+// before deleting, and a silent move could clobber work. Empty legacyDir or
+// a missing path is a no-op.
+func warnLegacySitatameDir(env Env, legacyDir string) {
+	if legacyDir == "" {
+		return
+	}
+	if _, err := os.Stat(legacyDir); err != nil {
+		return
+	}
+	fmt.Fprintf(env.Stderr,
+		"sitatame: legacy %s/ detected — reviews are now written under ~/.sitatame/<project-slug>/. The legacy directory is ignored.\n",
+		legacyDir,
+	)
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the
