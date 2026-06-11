@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"time"
@@ -52,6 +53,16 @@ const (
 // evaluated against the final model; this is documented in scenario.go so
 // authors can decide whether to split a multi-state case into two scenarios
 // or fold it into one with view-based mid-step checks.
+//
+// View assertions (ViewContains / ViewNotContains / ViewGolden) are evaluated
+// against the latest rendered frame, not the cumulative output history.
+// teatest.Output() yields every byte bubbletea has ever written to its
+// in-memory writer, so a naive Contains check over the whole stream would
+// report stale matches from earlier steps (and ViewNotContains could never
+// pass once a forbidden substring had appeared once). latestFrame slices the
+// stream at the most recent inter-frame cursor sequence so each view check
+// looks at the most recent View(), which is what scenarios actually care
+// about.
 func runScenario(t *testing.T, sc Scenario) {
 	t.Helper()
 
@@ -204,10 +215,42 @@ func mouseMsgFromSpec(ev MouseEvent) (tea.MouseMsg, error) {
 	return tea.MouseMsg{Button: btn, Action: action, X: ev.X, Y: ev.Y}, nil
 }
 
-// checkViewSubstrings polls the teatest output until every required substring
-// appears (or every forbidden substring is confirmed absent at the steady
-// state). The drained buffer carries history across calls because the output
-// reader is consumed by ReadAll on each WaitFor pass.
+// frameStartPattern matches the ANSI sequences that bubbletea writes at the
+// top of every redraw. The standard non-altscreen renderer emits
+// `\x1b[<n>A` (CursorUp) to rewind before painting the new frame; altScreen
+// mode emits `\x1b[H` (CursorHomePosition) or `\x1b[2J` (clear screen) at
+// initialisation. Splitting the accumulated output at the *last* such
+// marker recovers the most recently rendered frame — see latestFrame.
+var frameStartPattern = regexp.MustCompile(`\x1b\[(?:[0-9]*A|H|2J|1;1H)`)
+
+// latestFrame returns the slice of b that starts at the last inter-frame
+// cursor sequence. teatest.Output() returns the cumulative byte stream
+// since program start, so view assertions need a way to isolate the
+// current frame; without it, ViewContains can pass on a stale match from
+// an earlier step and ViewNotContains can never pass once the forbidden
+// substring has appeared once.
+//
+// If no marker is found (e.g. only the very first frame has been written,
+// which doesn't have a preceding CursorUp), latestFrame returns b
+// unchanged — that case the whole buffer is the current frame.
+func latestFrame(b []byte) []byte {
+	idxs := frameStartPattern.FindAllIndex(b, -1)
+	if len(idxs) == 0 {
+		return b
+	}
+	return b[idxs[len(idxs)-1][0]:]
+}
+
+// checkViewSubstrings polls the teatest output until the latest frame
+// contains every required substring and no forbidden substring. Each poll
+// concatenates the previously-drained bytes with the bytes WaitFor has just
+// read, then asks latestFrame to slice to the most recent rendered frame.
+//
+// The drained buffer carries the full byte history across calls because
+// teatest.Output() is a single one-shot reader; once WaitFor has consumed a
+// segment we can't re-read it. We need the history so the *next* step's
+// poll can still see frame-start markers that arrived during this step,
+// even if WaitFor returned at the very first match.
 func checkViewSubstrings(
 	t *testing.T,
 	name, stepLabel string,
@@ -222,21 +265,14 @@ func checkViewSubstrings(
 	condition := func(latest []byte) bool {
 		out := append([]byte(nil), drained.Bytes()...)
 		out = append(out, latest...)
-		text := stripANSI(string(out))
+		frame := stripANSI(string(latestFrame(out)))
 		for _, want := range required {
-			if !strings.Contains(text, want) {
+			if !strings.Contains(frame, want) {
 				return false
 			}
 		}
-		// For ViewNotContains the polling can only confirm "not yet". The
-		// runner accepts the first time required passes and forbidden is
-		// absent — if a forbidden substring is currently in the buffer
-		// because of an earlier step's frame, the condition keeps waiting
-		// until a later frame overwrites it (teatest output is cumulative
-		// but the ANSI compressor collapses consecutive frames, so this
-		// converges in practice).
 		for _, bad := range forbidden {
-			if strings.Contains(text, bad) {
+			if strings.Contains(frame, bad) {
 				return false
 			}
 		}
@@ -270,8 +306,10 @@ func checkViewGolden(
 	t.Helper()
 
 	// Drain everything currently buffered so the snapshot captures the
-	// latest frame. The ANSICompressor in teatest collapses consecutive
-	// frames, so the last full View is what survives at the tail.
+	// latest frame. We slice via latestFrame so the golden compares
+	// against just the most recent View() output, not the cumulative
+	// teatest stream (which would grow per step and include every prior
+	// frame).
 	var captured bytes.Buffer
 	tee := io.TeeReader(tm.Output(), &captured)
 	teatest.WaitFor(t, tee, func(b []byte) bool {
@@ -283,7 +321,7 @@ func checkViewGolden(
 	)
 	drained.Write(captured.Bytes())
 
-	combined := stripANSI(drained.String())
+	combined := stripANSI(string(latestFrame(drained.Bytes())))
 	lines := strings.Split(combined, "\n")
 	for i, l := range lines {
 		lines[i] = strings.TrimRight(l, " \t")

@@ -126,15 +126,22 @@ type Expectation struct {
 	// CommentsLen asserts len(m.Review.Comments) (final-model only).
 	CommentsLen *int
 	// ViewContains lists substrings that must be present in the rendered
-	// view after this step (ANSI stripped). Checked against the teatest
-	// output reader via WaitFor.
+	// view after this step (ANSI stripped). Checked against the *latest
+	// frame* the teatest harness has captured — not the cumulative output
+	// history — so a match here means the substring is visible on the
+	// current screen, not just that it appeared in some earlier step.
 	ViewContains []string
 	// ViewNotContains is the negative form: each substring must be absent
-	// from the rendered view after this step. Useful for confirming that
-	// a guard hid an element (e.g. "RANGE" tag disappears after Tab).
+	// from the *latest frame* after this step. Useful for confirming that
+	// a guard hid an element (e.g. "RANGE" tag disappears after Tab) or
+	// that an off-screen item is no longer rendered after scrolling.
+	// Asserting against the latest frame (not the full history) is what
+	// makes this assertion meaningful — bubbletea's output stream is
+	// cumulative, so a "not contains" check over the whole stream could
+	// never pass once the forbidden substring had been drawn once.
 	ViewNotContains []string
 	// ViewGolden, when non-empty, names a golden file under
 	// testdata/scenarios/<ViewGolden>.golden. The runner compares it
-	// against the ANSI-stripped view of this step.
+	// against the ANSI-stripped *latest frame* of this step.
 	ViewGolden string
 }
