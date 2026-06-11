@@ -83,6 +83,52 @@ func (m *Model) scrollToCursor() {
 	}
 }
 
+// scrollViewportBy moves the unified viewport's top by d rows (positive scrolls
+// down, negative scrolls up). Used by mouse-wheel input where decoupling top
+// from cursor matches user expectation. The cursor is clamped into the new
+// viewport so that subsequent cursor moves (j/k) don't snap top back via
+// scrollToCursor, and so cursor-driven actions like `c` don't target an
+// off-screen row.
+func (m *Model) scrollViewportBy(d int) {
+	if len(m.rows) == 0 {
+		return
+	}
+	h := m.viewportHeight()
+	maxTop := len(m.rows) - h
+	if maxTop < 0 {
+		maxTop = 0
+	}
+	m.top += d
+	if m.top < 0 {
+		m.top = 0
+	}
+	if m.top > maxTop {
+		m.top = maxTop
+	}
+	// Keep the cursor inside the visible window. Without this, wheel scrolling
+	// leaves the cursor off-screen and the next moveCursorBy → scrollToCursor
+	// snaps top back to where the cursor was.
+	if m.cursor < m.top {
+		m.cursor = m.top
+	}
+	if bottom := m.top + h - 1; m.cursor > bottom {
+		m.cursor = bottom
+	}
+	if last := len(m.rows) - 1; m.cursor > last {
+		m.cursor = last
+	}
+	if m.cursor < 0 {
+		m.cursor = 0
+	}
+	// Range selection follows the cursor in unified mode (keyboard j/k already
+	// does this via extendSelection). Without this, `r` → wheel → `c` would
+	// save a comment against the pre-wheel Extent because the cursor moved
+	// out from under the selection without updating it.
+	if m.selection != nil {
+		m.extendSelection()
+	}
+}
+
 func (m *Model) moveCursorBy(d int) {
 	if len(m.rows) == 0 {
 		return

@@ -99,6 +99,33 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.scrollSplitToCursor()
 		}
 		return m, nil
+	case tea.MouseMsg:
+		// Help is rendered as a full-screen overlay, so silently scrolling
+		// the diff behind it would be invisible until the user closes help —
+		// a stealth state change. Drop wheel events while help is up.
+		if m.showHelp {
+			return m, nil
+		}
+		// Only wheel-press events scroll; releases, drags, and other buttons
+		// are ignored so we don't fight the natural single-tick model.
+		if msg.Action != tea.MouseActionPress {
+			return m, nil
+		}
+		switch msg.Button {
+		case tea.MouseButtonWheelUp:
+			if m.layout == LayoutSplit {
+				m.scrollSplitViewportBy(-mouseWheelStep)
+			} else {
+				m.scrollViewportBy(-mouseWheelStep)
+			}
+		case tea.MouseButtonWheelDown:
+			if m.layout == LayoutSplit {
+				m.scrollSplitViewportBy(mouseWheelStep)
+			} else {
+				m.scrollViewportBy(mouseWheelStep)
+			}
+		}
+		return m, nil
 	case tea.KeyMsg:
 		// Any key clears the previous transient message; guards below re-set
 		// it for the keys we intercept in split mode.

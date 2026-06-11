@@ -16,3 +16,7 @@ const (
 	KeySave        = "s"
 	KeyToggleLayout = "tab"
 )
+
+// mouseWheelStep is the number of rows the viewport scrolls per wheel tick.
+// Chosen to feel responsive without overshooting on a single notch.
+const mouseWheelStep = 3
