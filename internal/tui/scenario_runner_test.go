@@ -7,13 +7,13 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"testing"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
+	"github.com/hinshun/vt10x"
 
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
 	"github.com/fumiyatani/sitatame/internal/review"
@@ -55,14 +55,24 @@ const (
 // or fold it into one with view-based mid-step checks.
 //
 // View assertions (ViewContains / ViewNotContains / ViewGolden) are evaluated
-// against the latest rendered frame, not the cumulative output history.
-// teatest.Output() yields every byte bubbletea has ever written to its
-// in-memory writer, so a naive Contains check over the whole stream would
-// report stale matches from earlier steps (and ViewNotContains could never
-// pass once a forbidden substring had appeared once). latestFrame slices the
-// stream at the most recent inter-frame cursor sequence so each view check
-// looks at the most recent View(), which is what scenarios actually care
-// about.
+// against the currently visible terminal screen, not the cumulative byte
+// stream. teatest.Output() yields every byte bubbletea has ever written to
+// its in-memory writer, and bubbletea's standard renderer uses *delta repaint*
+// — after the first frame, only changed lines are re-emitted via ANSI cursor
+// motion. A naive substring scan of the cumulative bytes therefore both
+//
+//   - reports stale matches from prior frames (ViewContains can pass on a
+//     substring that has since scrolled off-screen), and
+//   - reports never-cleared matches (ViewNotContains can never pass once a
+//     forbidden substring has been drawn once).
+//
+// Earlier iterations tried to slice the stream at the most recent inter-frame
+// cursor marker, but delta repaint means most frames have *no* such marker —
+// only changed rows are re-emitted, and the fixed header/body never reappear
+// in the byte stream. The runner now feeds the cumulative bytes into a
+// hinshun/vt10x virtual terminal sized to the scenario's WindowSize and
+// renders the resulting cell grid into a string, which exactly mirrors what a
+// real terminal would display.
 func runScenario(t *testing.T, sc Scenario) {
 	t.Helper()
 
@@ -99,10 +109,10 @@ func runScenario(t *testing.T, sc Scenario) {
 		// process the message and re-render. teatest.WaitFor handles
 		// that polling for us.
 		if len(step.Expect.ViewContains) > 0 || len(step.Expect.ViewNotContains) > 0 {
-			checkViewSubstrings(t, sc.Name, stepLabel, tm, &drained, step.Expect)
+			checkViewSubstrings(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect)
 		}
 		if step.Expect.ViewGolden != "" {
-			checkViewGolden(t, sc.Name, stepLabel, tm, &drained, step.Expect.ViewGolden)
+			checkViewGolden(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect.ViewGolden)
 		}
 	}
 
@@ -215,47 +225,61 @@ func mouseMsgFromSpec(ev MouseEvent) (tea.MouseMsg, error) {
 	return tea.MouseMsg{Button: btn, Action: action, X: ev.X, Y: ev.Y}, nil
 }
 
-// frameStartPattern matches the ANSI sequences that bubbletea writes at the
-// top of every redraw. The standard non-altscreen renderer emits
-// `\x1b[<n>A` (CursorUp) to rewind before painting the new frame; altScreen
-// mode emits `\x1b[H` (CursorHomePosition) or `\x1b[2J` (clear screen) at
-// initialisation. Splitting the accumulated output at the *last* such
-// marker recovers the most recently rendered frame — see latestFrame.
-var frameStartPattern = regexp.MustCompile(`\x1b\[(?:[0-9]*A|H|2J|1;1H)`)
-
-// latestFrame returns the slice of b that starts at the last inter-frame
-// cursor sequence. teatest.Output() returns the cumulative byte stream
-// since program start, so view assertions need a way to isolate the
-// current frame; without it, ViewContains can pass on a stale match from
-// an earlier step and ViewNotContains can never pass once the forbidden
-// substring has appeared once.
+// renderScreen reconstructs the currently visible terminal contents from the
+// cumulative bubbletea output stream. teatest.Output() returns every byte
+// bubbletea has ever written, and bubbletea's standard renderer paints with
+// delta updates — only changed rows are re-emitted via ANSI cursor motion,
+// while fixed header/body lines stay rendered from earlier frames. A plain
+// substring scan of the raw bytes therefore cannot tell what is on screen.
 //
-// If no marker is found (e.g. only the very first frame has been written,
-// which doesn't have a preceding CursorUp), latestFrame returns b
-// unchanged — that case the whole buffer is the current frame.
-func latestFrame(b []byte) []byte {
-	idxs := frameStartPattern.FindAllIndex(b, -1)
-	if len(idxs) == 0 {
-		return b
+// We replay the entire byte stream through a hinshun/vt10x virtual terminal
+// sized to the scenario's WindowSize, then dump the resulting cell grid into
+// a string with trailing whitespace trimmed per line. The output matches what
+// a real terminal would display after consuming the same bytes, including
+// delta repaints, cursor motions, and clear-screen sequences.
+//
+// vt10x's Cell(x, y) returns the rune at each grid position; an empty cell
+// has Char == 0, which we render as a space so the resulting string lines up
+// with header/body assertions written against the literal View() output.
+func renderScreen(out []byte, cols, rows int) string {
+	if cols <= 0 || rows <= 0 {
+		cols, rows = 80, 24
 	}
-	return b[idxs[len(idxs)-1][0]:]
+	term := vt10x.New(vt10x.WithSize(cols, rows))
+	_, _ = term.Write(out)
+	var b strings.Builder
+	for y := 0; y < rows; y++ {
+		var line strings.Builder
+		for x := 0; x < cols; x++ {
+			g := term.Cell(x, y).Char
+			if g == 0 {
+				g = ' '
+			}
+			line.WriteRune(g)
+		}
+		b.WriteString(strings.TrimRight(line.String(), " \t"))
+		b.WriteByte('\n')
+	}
+	return b.String()
 }
 
-// checkViewSubstrings polls the teatest output until the latest frame
-// contains every required substring and no forbidden substring. Each poll
-// concatenates the previously-drained bytes with the bytes WaitFor has just
-// read, then asks latestFrame to slice to the most recent rendered frame.
+// checkViewSubstrings polls the teatest output until the reconstructed
+// screen contains every required substring and no forbidden substring.
+// Each poll concatenates the previously-drained bytes with the bytes
+// WaitFor has just read, then feeds the whole stream into renderScreen to
+// produce the current screen contents.
 //
 // The drained buffer carries the full byte history across calls because
 // teatest.Output() is a single one-shot reader; once WaitFor has consumed a
-// segment we can't re-read it. We need the history so the *next* step's
-// poll can still see frame-start markers that arrived during this step,
-// even if WaitFor returned at the very first match.
+// segment we can't re-read it. We need the history so that the vt10x
+// terminal in renderScreen sees every byte bubbletea ever wrote, which is
+// what makes delta-repaint frames reconstruct correctly.
 func checkViewSubstrings(
 	t *testing.T,
 	name, stepLabel string,
 	tm *teatest.TestModel,
 	drained *bytes.Buffer,
+	cols, rows int,
 	expect Expectation,
 ) {
 	t.Helper()
@@ -265,7 +289,7 @@ func checkViewSubstrings(
 	condition := func(latest []byte) bool {
 		out := append([]byte(nil), drained.Bytes()...)
 		out = append(out, latest...)
-		frame := stripANSI(string(latestFrame(out)))
+		frame := renderScreen(out, cols, rows)
 		for _, want := range required {
 			if !strings.Contains(frame, want) {
 				return false
@@ -293,23 +317,23 @@ func checkViewSubstrings(
 	drained.Write(captured.Bytes())
 }
 
-// checkViewGolden compares the current rendered view against a golden file.
-// Like golden_test.go, the comparison is ANSI-stripped and trailing whitespace
-// trimmed per line so cursor / textarea noise doesn't make snapshots flaky.
+// checkViewGolden compares the reconstructed screen against a golden file.
+// Like golden_test.go, trailing whitespace is trimmed per line so cursor /
+// textarea noise doesn't make snapshots flaky — that trimming happens inside
+// renderScreen itself.
 func checkViewGolden(
 	t *testing.T,
 	name, stepLabel string,
 	tm *teatest.TestModel,
 	drained *bytes.Buffer,
+	cols, rows int,
 	goldenName string,
 ) {
 	t.Helper()
 
 	// Drain everything currently buffered so the snapshot captures the
-	// latest frame. We slice via latestFrame so the golden compares
-	// against just the most recent View() output, not the cumulative
-	// teatest stream (which would grow per step and include every prior
-	// frame).
+	// latest screen state. The full byte history goes to renderScreen so
+	// the vt10x emulator can replay every delta repaint correctly.
 	var captured bytes.Buffer
 	tee := io.TeeReader(tm.Output(), &captured)
 	teatest.WaitFor(t, tee, func(b []byte) bool {
@@ -321,12 +345,7 @@ func checkViewGolden(
 	)
 	drained.Write(captured.Bytes())
 
-	combined := stripANSI(string(latestFrame(drained.Bytes())))
-	lines := strings.Split(combined, "\n")
-	for i, l := range lines {
-		lines[i] = strings.TrimRight(l, " \t")
-	}
-	got := strings.Join(lines, "\n")
+	got := renderScreen(drained.Bytes(), cols, rows)
 
 	path := filepath.Join("testdata", "scenarios", goldenName+".golden")
 	if *updateScenarioGolden {
