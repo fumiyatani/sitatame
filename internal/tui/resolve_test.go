@@ -212,6 +212,112 @@ func TestResolveToggle_NoopDuringModal(t *testing.T) {
 	}
 }
 
+// TestResolveToggle_UndoUsesSameAnchor pins the P2 fix from PR #41 round 3:
+// when a row hosts `[open A, resolved B]`, the first `x` must resolve A
+// (open-biased default) and a follow-up `x` *without* moving the cursor must
+// reopen A — not flip B, which the previous "last resolved" fallback did.
+// Silent mutation of B would corrupt an unrelated comment with no UI feedback.
+func TestResolveToggle_UndoUsesSameAnchor(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	r := review.Review{Comments: []review.Comment{
+		{
+			Anchor: review.Anchor{AnchorID: "a-open", Kind: review.KindLine, Path: "a.go", Side: review.SideHead, Line: 2, Blob: "b2"},
+			State:  review.StateOpen,
+			Body:   "needs work",
+		},
+		{
+			Anchor: review.Anchor{AnchorID: "a-resolved", Kind: review.KindLine, Path: "a.go", Side: review.SideHead, Line: 2, Blob: "b2"},
+			State:  review.StateResolved,
+			Body:   "already fixed",
+		},
+	}}
+	m := New([]diffmodel.File{f}, r)
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+
+	// First press: open-biased default resolves A.
+	m, _ = applyKey(m, "x")
+	if got := m.Review.Comments[0].State; got != review.StateResolved {
+		t.Fatalf("after first x: A state = %q, want %q", got, review.StateResolved)
+	}
+	if got := m.Review.Comments[1].State; got != review.StateResolved {
+		t.Fatalf("after first x: B state = %q, want %q (must not move)", got, review.StateResolved)
+	}
+
+	// Second press without moving cursor: must reopen A, not flip B.
+	m, _ = applyKey(m, "x")
+	if got := m.Review.Comments[0].State; got != review.StateOpen {
+		t.Errorf("after second x: A state = %q, want %q (undo target)", got, review.StateOpen)
+	}
+	if got := m.Review.Comments[1].State; got != review.StateResolved {
+		t.Errorf("after second x: B state = %q, want %q (must not be silently mutated)", got, review.StateResolved)
+	}
+	if want := "reopened: a-open"; m.statusMsg != want {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, want)
+	}
+}
+
+// TestResolveToggle_LastAnchorClearedOnCursorMove verifies the sticky anchor
+// is bound to the current row: once the user moves away (and back), `x`
+// resets to the open-biased default rather than re-using the previous
+// row's anchor. Without this clear, a row visited later with a different
+// `[open, resolved]` mix would target the wrong comment.
+func TestResolveToggle_LastAnchorClearedOnCursorMove(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	r := review.Review{Comments: []review.Comment{
+		{
+			Anchor: review.Anchor{AnchorID: "a-open", Kind: review.KindLine, Path: "a.go", Side: review.SideHead, Line: 2, Blob: "b2"},
+			State:  review.StateOpen,
+			Body:   "needs work",
+		},
+		{
+			Anchor: review.Anchor{AnchorID: "a-resolved", Kind: review.KindLine, Path: "a.go", Side: review.SideHead, Line: 2, Blob: "b2"},
+			State:  review.StateResolved,
+			Body:   "already fixed",
+		},
+	}}
+	m := New([]diffmodel.File{f}, r)
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	row := m.Cursor()
+
+	// First x: A becomes resolved. Then move away and come back.
+	m, _ = applyKey(m, "x")
+	if got := m.Review.Comments[0].State; got != review.StateResolved {
+		t.Fatalf("setup: A state = %q, want %q", got, review.StateResolved)
+	}
+	m, _ = applyKey(m, "j")
+	if m.Cursor() == row {
+		t.Fatalf("cursor did not move on j")
+	}
+	if m.lastToggledAnchor != "" {
+		t.Errorf("lastToggledAnchor not cleared on cursor move: %q", m.lastToggledAnchor)
+	}
+	m, _ = applyKey(m, "k")
+	if m.Cursor() != row {
+		t.Fatalf("cursor did not return to original row (%d != %d)", m.Cursor(), row)
+	}
+
+	// Both comments are now resolved. With the sticky anchor cleared,
+	// the open-biased default has no open candidate and falls back to
+	// reopening the *last* resolved (a-resolved by slice order), proving
+	// we are not re-targeting a-open from the prior toggle.
+	m, _ = applyKey(m, "x")
+	if got := m.Review.Comments[1].State; got != review.StateOpen {
+		t.Errorf("expected a-resolved to be reopened (default path), got state = %q", got)
+	}
+	if got := m.Review.Comments[0].State; got != review.StateResolved {
+		t.Errorf("a-open should stay resolved after move-away undo path: state = %q", got)
+	}
+	if want := "reopened: a-resolved"; m.statusMsg != want {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, want)
+	}
+}
+
 // TestResolveToggle_SplitModeShowsHint mirrors the c/r/R guards: x is
 // preview-only in split layout and should surface the same hint without
 // touching review state.
