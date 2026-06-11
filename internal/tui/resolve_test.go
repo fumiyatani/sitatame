@@ -318,6 +318,137 @@ func TestResolveToggle_LastAnchorClearedOnCursorMove(t *testing.T) {
 	}
 }
 
+// TestResolveToggle_StickyClearedByTabAlone pins the cheapest failure mode of
+// the P2: a single Tab press (no split-side navigation, no return trip) must
+// already drop the sticky resolve anchor. Without this, a user that toggles
+// in unified, peeks at split, and Tabs back would silently re-toggle the
+// same comment on the next `x`.
+func TestResolveToggle_StickyClearedByTabAlone(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	r := review.Review{Comments: []review.Comment{{
+		Anchor: review.Anchor{AnchorID: "a-open", Kind: review.KindLine, Path: "a.go", Side: review.SideHead, Line: 2, Blob: "b2"},
+		State:  review.StateOpen,
+		Body:   "needs work",
+	}}}
+	m := setSize(New([]diffmodel.File{f}, r), 80, 24)
+	m, _ = applyKey(m, "j") // hunk header
+	m, _ = applyKey(m, "j") // line 1
+	m, _ = applyKey(m, "j") // line 2
+
+	m, _ = applyKey(m, "x")
+	if m.lastToggledAnchor != "a-open" {
+		t.Fatalf("setup: sticky not set after first toggle: %q", m.lastToggledAnchor)
+	}
+
+	// First Tab: enter split mode.
+	m = sendNamedKey(m, tea.KeyTab)
+	if m.layout != LayoutSplit {
+		t.Fatalf("did not enter split layout")
+	}
+	if m.lastToggledAnchor != "" {
+		t.Errorf("Tab into split did not clear sticky anchor: %q", m.lastToggledAnchor)
+	}
+
+	// Toggle once back in unified to re-arm sticky, then Tab in the
+	// opposite direction (unified→split was already covered above; this
+	// verifies the split→unified path also clears).
+	m = sendNamedKey(m, tea.KeyTab) // back to unified
+	m, _ = applyKey(m, "x")         // reopens a-open (sticky points at a-open)
+	if m.lastToggledAnchor != "a-open" {
+		t.Fatalf("setup: sticky not re-set: %q", m.lastToggledAnchor)
+	}
+	m = sendNamedKey(m, tea.KeyTab) // unified → split
+	m = sendNamedKey(m, tea.KeyTab) // split → unified
+	if m.lastToggledAnchor != "" {
+		t.Errorf("Tab round-trip did not clear sticky anchor: %q", m.lastToggledAnchor)
+	}
+}
+
+// TestResolveToggle_StickyClearedAfterSplitNavigation pins the P2 reported on
+// PR #41 round 4: a range comment toggled in unified must not bleed into
+// the next `x` after the cursor has moved inside split. Range comments cover
+// multiple rows, so an unmaintained sticky anchor would silently re-toggle
+// the range on a follow-up `x` even though the user has navigated to a
+// different line that hosts an unrelated open comment.
+func TestResolveToggle_StickyClearedAfterSplitNavigation(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 4)
+	r := review.Review{Comments: []review.Comment{
+		{
+			Anchor: review.Anchor{
+				AnchorID: "a-range", Kind: review.KindRange,
+				Path: "a.go", Side: review.SideHead,
+				LineStart: 1, LineEnd: 2, Blob: "b2",
+			},
+			State: review.StateOpen,
+			Body:  "range covers lines 1..2",
+		},
+		{
+			Anchor: review.Anchor{
+				AnchorID: "a-line4", Kind: review.KindLine,
+				Path: "a.go", Side: review.SideHead,
+				Line: 4, Blob: "b2",
+			},
+			State: review.StateOpen,
+			Body:  "single-line comment on line 4",
+		},
+	}}
+	m := setSize(New([]diffmodel.File{f}, r), 80, 24)
+
+	// Park on row 2 (HeadLine=1) which the range anchor covers.
+	m, _ = applyKey(m, "j") // hunk header
+	m, _ = applyKey(m, "j") // line 1
+	hits := m.Overlay()[m.Cursor()]
+	if len(hits) == 0 || m.Review.Comments[hits[0]].AnchorID != "a-range" {
+		t.Fatalf("setup: expected a-range overlay at line 1 row, got %+v", hits)
+	}
+
+	// First `x` resolves the range and arms the sticky anchor.
+	m, _ = applyKey(m, "x")
+	if m.Review.Comments[0].State != review.StateResolved {
+		t.Fatalf("setup: range not resolved on first x: %q", m.Review.Comments[0].State)
+	}
+	if m.lastToggledAnchor != "a-range" {
+		t.Fatalf("setup: sticky not set: %q", m.lastToggledAnchor)
+	}
+
+	// Tab into split, walk to the line 4 row, Tab back.
+	m = sendNamedKey(m, tea.KeyTab)
+	if m.layout != LayoutSplit {
+		t.Fatalf("did not enter split layout")
+	}
+	// Move down 3 rows: line 1 → line 2 → line 3 → line 4. (split rows for
+	// a context-only file mirror the unified row order one-to-one.)
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m = sendNamedKey(m, tea.KeyTab) // back to unified
+
+	// We should now be on the row hosting a-line4.
+	hits = m.Overlay()[m.Cursor()]
+	if len(hits) == 0 {
+		t.Fatalf("after split round-trip, expected overlay at cursor row %d, got none", m.Cursor())
+	}
+	gotAnchor := m.Review.Comments[hits[0]].AnchorID
+	if gotAnchor != "a-line4" {
+		t.Fatalf("cursor landed on %q instead of a-line4 (cursor=%d) — test setup needs adjustment", gotAnchor, m.Cursor())
+	}
+
+	// Critical assertion: `x` must resolve a-line4 via the open-biased
+	// default, not silently re-toggle a-range via a stale sticky anchor.
+	m, _ = applyKey(m, "x")
+	if got := m.Review.Comments[1].State; got != review.StateResolved {
+		t.Errorf("a-line4 should have been resolved by post-split x, got %q", got)
+	}
+	if got := m.Review.Comments[0].State; got != review.StateResolved {
+		t.Errorf("a-range must remain resolved (sticky leak would have flipped it): got %q", got)
+	}
+	if want := "resolved: a-line4"; m.statusMsg != want {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, want)
+	}
+}
+
 // TestResolveToggle_SplitModeShowsHint mirrors the c/r/R guards: x is
 // preview-only in split layout and should surface the same hint without
 // touching review state.
