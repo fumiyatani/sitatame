@@ -5,8 +5,8 @@
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
 attach 4 grains of comments (review-level, file, line, range), and saves the
-result as a Markdown + YAML front-matter file under `.sitatame/reviews/` that
-downstream agents can ingest.
+result as a Markdown + YAML front-matter file under
+`~/.sitatame/<project-slug>/reviews/` that downstream agents can ingest.
 
 ## Tech stack
 
@@ -64,7 +64,7 @@ sitatame                # auto-detect base (origin/HEAD, @{upstream}, main, …)
 sitatame origin/main    # explicit base
 sitatame --staged       # review staged changes (index vs HEAD)
 sitatame --working      # review all uncommitted changes (worktree vs HEAD)
-sitatame search TODO    # grep saved reviews under .sitatame/reviews/
+sitatame search TODO    # grep saved reviews under ~/.sitatame/<project-slug>/reviews/
 ```
 
 Keys:
@@ -75,9 +75,9 @@ n / p       next / previous file
 r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
 Shift+R     review-level comment (edits review_comment in front matter)
-s           save & promote — writes .sitatame/reviews/<slug>/<id>.md
+s           save & promote — writes ~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
             and prints SITATAME_REVIEW=<abs path> on stdout
-q           save as draft and exit 1 (drafts/<slug>/<id>.md)
+q           save as draft and exit 1 (~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md)
 ?           toggle help
 Esc         close modal / clear selection
 
@@ -114,7 +114,7 @@ can consume the human reviewer's notes without screen scraping:
 3. `sitatame` exits 0 and writes one machine-readable line to **stdout**:
 
    ```
-   SITATAME_REVIEW=/abs/path/to/.sitatame/reviews/<slug>/<id>.md
+   SITATAME_REVIEW=/abs/path/to/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
    ```
 
 4. Capture that path. The file is YAML front matter + Markdown body. The
@@ -141,8 +141,28 @@ variable only to commands you fully trust — never to values pulled from
 untrusted sources.
 
 `q` on the other hand exits 1 and leaves a draft under
-`.sitatame/drafts/<slug>/<id>.md` — pick it up next session, or feed it to an
-agent that knows to look at drafts before starting work.
+`~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md` — pick it up next
+session, or feed it to an agent that knows to look at drafts before starting
+work.
+
+### Storage location
+
+Reviews and drafts live outside the repository tree so you don't have to add
+ignore rules per project. The output root resolves in this order:
+
+1. `$SITATAME_HOME` if set and non-empty
+2. `~/.sitatame` (default)
+3. `$TMPDIR/sitatame` as a last-resort fallback (with a stderr warning)
+
+Under the output root each repository checkout gets its own
+`<project-slug>/` directory, derived from the basename plus a short hash of
+the absolute repo path. Distinct checkouts of the same repository (e.g.
+worktrees) therefore stay separated.
+
+If a legacy `<repo>/.sitatame/` directory still exists from before this
+change, `sitatame` prints a one-line stderr notice on startup but does not
+auto-migrate or read from it. Delete it once you've copied anything you want
+to keep.
 
 ### Reviewing uncommitted changes
 
