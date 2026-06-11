@@ -74,7 +74,7 @@ j / k       cursor down / up
 n / p       next / previous file
 r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
-x           toggle resolved on the comment under the cursor (open ↔ resolved)
+x           toggle resolved on the comment under the cursor (open ↔ resolved; stale skipped)
 Shift+R     review-level comment (edits review_comment in front matter)
 s           save & promote — writes .sitatame/reviews/<slug>/<id>.md
             and prints SITATAME_REVIEW=<abs path> on stdout
