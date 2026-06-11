@@ -2,7 +2,6 @@ package tui
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io"
 	"os"
@@ -19,11 +18,12 @@ import (
 	"github.com/fumiyatani/sitatame/internal/review"
 )
 
-// updateScenarioGolden mirrors the flag used by golden_test.go. We register
-// our own so the two suites don't collide; callers run them together via
-// `go test -update-golden ./internal/tui/...`.
-var updateScenarioGolden = flag.Bool("update-scenario-golden", false,
-	"rewrite testdata/scenarios/*.golden instead of comparing")
+// Scenario goldens piggy-back on the existing `-update-golden` flag
+// declared in golden_test.go (same package). Sharing the flag keeps the
+// developer story aligned with `make update-golden`, which runs
+// `go test ./internal/tui/ -update-golden` and now updates both the
+// classic snapshots under testdata/ and the scenario snapshots under
+// testdata/scenarios/ in one pass.
 
 const (
 	scenarioWaitForDuration = 2 * time.Second
@@ -451,7 +451,7 @@ func compareGolden(
 	got := renderScreen(out, cols, rows)
 
 	path := filepath.Join("testdata", "scenarios", goldenName+".golden")
-	if *updateScenarioGolden {
+	if *updateGolden {
 		if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 			t.Fatalf("scenario %q %s: %v", name, stepLabel, err)
 		}
@@ -462,7 +462,7 @@ func compareGolden(
 	}
 	want, err := os.ReadFile(path)
 	if err != nil {
-		t.Fatalf("scenario %q %s: missing golden %s — run with -update-scenario-golden to seed",
+		t.Fatalf("scenario %q %s: missing golden %s — run `make update-golden` to seed",
 			name, stepLabel, path)
 	}
 	if string(want) != got {
