@@ -286,6 +286,48 @@ func TestMouse_SplitLayout_WheelUpClampsAtZero(t *testing.T) {
 	}
 }
 
+// TestMouse_WheelExtendsActiveSelection guards the wheel-vs-range-selection
+// integration: starting a range with `r`, then scrolling with the wheel so
+// the cursor is clamped to a new row, must keep Selection.Extent in sync with
+// the cursor. Otherwise `c` saves a comment against the pre-wheel extent and
+// the on-screen highlight disagrees with what gets persisted.
+func TestMouse_WheelExtendsActiveSelection(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+
+	// Move onto the first content row (skip fileHeader + hunkHeader) so `r`
+	// can anchor a selection — startSelection() rejects non-line rows.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	anchor := m.Cursor()
+	m, _ = applyKey(m, "r")
+	if m.selection == nil {
+		t.Fatalf("expected selection after r")
+	}
+	if m.selection.Anchor != anchor || m.selection.Extent != anchor {
+		t.Fatalf("initial selection = (anchor=%d, extent=%d), want both %d",
+			m.selection.Anchor, m.selection.Extent, anchor)
+	}
+
+	// Wheel down past the cursor; scrollViewportBy will clamp the cursor
+	// forward to stay on-screen. Selection.Extent must follow.
+	m = sendMouse(m, wheel(tea.MouseButtonWheelDown))
+
+	if m.Cursor() == anchor {
+		t.Fatalf("wheel didn't move cursor; precondition failed (cursor=%d)", m.Cursor())
+	}
+	if m.selection == nil {
+		t.Fatalf("selection cleared unexpectedly after wheel")
+	}
+	if m.selection.Extent != m.Cursor() {
+		t.Errorf("Selection.Extent = %d, want %d (cursor after wheel)",
+			m.selection.Extent, m.Cursor())
+	}
+	if m.selection.Anchor != anchor {
+		t.Errorf("Selection.Anchor drifted: got %d, want %d", m.selection.Anchor, anchor)
+	}
+}
+
 func TestMouse_SplitLayout_WheelDownClampsAtBottom(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{bigFile()}
