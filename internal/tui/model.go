@@ -269,6 +269,13 @@ func (m *Model) toggleResolvedAtCursor() {
 	m.lastToggledAnchor = m.Review.Comments[target].AnchorID
 }
 
+// invalidateLastToggle drops the sticky resolve anchor so the next `x`
+// press falls back to the open-biased default. Centralised so every
+// cursor/layout mutation path can call a single helper instead of touching
+// the field directly — past regressions (split nav, Tab toggle) all stemmed
+// from forgetting to clear it on a new mutation path.
+func (m *Model) invalidateLastToggle() { m.lastToggledAnchor = "" }
+
 // Cursor returns the current row index (test-only accessor).
 func (m Model) Cursor() int { return m.cursor }
 
