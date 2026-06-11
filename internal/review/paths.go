@@ -32,9 +32,11 @@ type Paths struct {
 	// basename(RepoRoot) + sha1(RepoRoot)[:8] so distinct checkouts of the
 	// same repo (e.g. worktrees) get distinct directories.
 	ProjectSlug string
-	// Branch is the original branch name; Slug is its BranchSlug. When Branch
-	// is empty (e.g. for `sitatame search`, which is branch-independent),
-	// Slug is also empty and the per-branch helpers should not be used.
+	// Branch is the original branch name; Slug is its BranchSlug. Branch may
+	// be empty for branch-independent callers like `sitatame search`, which
+	// only touch ReviewsRoot()/DraftsRoot(); the Slug then falls back to
+	// BranchSlug("") = "branch__da39a3ee" so detached-HEAD writes still stay
+	// branch-scoped instead of landing directly under reviews/ or drafts/.
 	Branch string
 	Slug   string
 }
@@ -44,9 +46,12 @@ type Paths struct {
 //  2. <user home>/.sitatame
 //  3. <os.TempDir>/sitatame (with a one-line stderr warning)
 //
-// Branch may be empty when the caller is not branch-scoped (e.g. search). In
-// that case branch-scoped helpers return paths with an empty slug component
-// and callers should restrict themselves to the project-wide roots.
+// Branch may be empty when the caller is not branch-scoped (e.g. search) or
+// when the repo is in a detached HEAD. The branch-scoped helpers then resolve
+// to BranchSlug("") = "branch__da39a3ee" so detached-HEAD writes still stay
+// under a stable branch-scoped directory instead of polluting reviews/ or
+// drafts/ directly. Distinguishing individual detached HEADs (e.g. by HEAD
+// SHA) is intentionally out of scope here; that would be a separate issue.
 func NewPaths(repoRoot, branch string) Paths {
 	return NewPathsWithRoot(resolveOutputRoot(), repoRoot, branch)
 }
@@ -54,17 +59,20 @@ func NewPaths(repoRoot, branch string) Paths {
 // NewPathsWithRoot is the test-friendly constructor: it takes an explicit
 // OutputRoot instead of going through environment + user-home resolution.
 // Production code should prefer NewPaths.
+//
+// BranchSlug is always invoked, even when branch == "". This is deliberate:
+// BranchSlug("") returns the deterministic "branch__da39a3ee", which keeps
+// detached-HEAD sessions inside a branch-scoped directory rather than letting
+// SaveDraft / DetectDraft / Promote collapse onto ReviewsRoot()/DraftsRoot()
+// directly and share state across unrelated sessions.
 func NewPathsWithRoot(outputRoot, repoRoot, branch string) Paths {
-	p := Paths{
+	return Paths{
 		OutputRoot:  outputRoot,
 		RepoRoot:    repoRoot,
 		ProjectSlug: ProjectSlug(repoRoot),
 		Branch:      branch,
+		Slug:        BranchSlug(branch),
 	}
-	if branch != "" {
-		p.Slug = BranchSlug(branch)
-	}
-	return p
 }
 
 // resolveOutputRoot is split out so NewPaths stays trivially readable. The
