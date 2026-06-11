@@ -307,3 +307,52 @@ func TestScenario_MouseWheelExtendsSelection_LineEnd(t *testing.T) {
 			c.LineEnd, c.LineStart)
 	}
 }
+
+// TestScenario_ScrollThenViewTopMarker is a regression case for the
+// "view assertions read the cumulative output history" bug that the
+// initial harness had. With two files in the diff, the first step
+// observes file 1's "M a.go" header at the top of the viewport;
+// scrolling deep into file 2 then makes that header scroll off-screen.
+// bubbletea's teatest output stream still contains the bytes of every
+// previous frame, so a check that doesn't slice to the latest frame
+// would still see "M a.go" after the scroll and pass — or, worse,
+// trip ViewNotContains["M a.go"] forever.
+//
+// The scenario asserts in two phases:
+//   - step 1 (`j` once): a.go's header is at the top of the visible
+//     frame; ViewContains: "M a.go" pins the starting state and proves
+//     the bytes are written.
+//   - final step (30 j-presses later): ViewContains: "M b.go" plus
+//     ViewNotContains: "M a.go" — file 1's header has scrolled off.
+//
+// If checkViewSubstrings is regressed to read the cumulative stream
+// instead of the latest frame, step 1's bytes still match "M a.go" and
+// the ViewNotContains in the final step fails. That's the contract.
+func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
+	t.Parallel()
+	a := numberedFile("a.go", "a.go", "a1", "a2", 20)
+	b := numberedFile("b.go", "b.go", "b1", "b2", 20)
+
+	steps := []Step{
+		{
+			SendKey: "j",
+			Expect:  Expectation{ViewContains: []string{"M a.go"}},
+		},
+	}
+	// 29 more j-presses (total 30) walks past file 1 (header + hunk
+	// header + 20 lines = 22 rows) and well into file 2; with viewport
+	// height 22 the file 1 header row (row 0) is comfortably off-screen.
+	for i := 0; i < 29; i++ {
+		steps = append(steps, Step{SendKey: "j"})
+	}
+	steps[len(steps)-1].Expect = Expectation{
+		ViewContains:    []string{"M b.go"},
+		ViewNotContains: []string{"M a.go"},
+	}
+
+	runScenario(t, Scenario{
+		Name:  "scroll_then_view_top_marker",
+		Files: []diffmodel.File{a, b},
+		Steps: steps,
+	})
+}
