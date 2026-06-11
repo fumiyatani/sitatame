@@ -187,7 +187,7 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	paths := review.NewPaths(repo.Workdir, branch)
-	warnLegacySitatameDir(env, paths.LegacyRoot())
+	warnLegacySitatameDir(env, paths.LegacyRoot(), paths.DraftsRoot())
 	store := review.NewStore(paths)
 	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
 		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
@@ -268,12 +268,17 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 	panic(fmt.Sprintf("emptyDiffMessage: unexpected Source %d", spec.Source))
 }
 
-// warnLegacySitatameDir prints a one-line stderr notice when a pre-#38
-// <repo>/.sitatame/ directory is still present. We intentionally do not
-// auto-migrate: users may have stale drafts they want to review or commit
-// before deleting, and a silent move could clobber work. Empty legacyDir or
-// a missing path is a no-op.
-func warnLegacySitatameDir(env Env, legacyDir string) {
+// warnLegacySitatameDir prints two one-line stderr notices when a pre-#38
+// <repo>/.sitatame/ directory is still present: one that says the directory is
+// ignored, and one with a copy-pasteable `mv` for the user's actual new
+// drafts root. We intentionally do not auto-migrate: users may have stale
+// drafts they want to review or commit before deleting, and a silent move
+// could clobber work. Empty legacyDir or a missing path is a no-op.
+//
+// newDraftsRoot is `paths.DraftsRoot()` from the caller — i.e. the resolved
+// `<output-root>/<project-slug>/drafts` for this checkout — and is fed into
+// the message so users do not have to compute the project slug by hand.
+func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 	if legacyDir == "" {
 		return
 	}
@@ -281,9 +286,19 @@ func warnLegacySitatameDir(env Env, legacyDir string) {
 		return
 	}
 	fmt.Fprintf(env.Stderr,
-		"sitatame: legacy %s/ detected — reviews are now written under ~/.sitatame/<project-slug>/. The legacy directory is ignored.\n",
+		"sitatame: legacy %s/ detected — ignored.\n",
 		legacyDir,
 	)
+	if newDraftsRoot != "" {
+		abs, err := filepath.Abs(newDraftsRoot)
+		if err != nil || abs == "" {
+			abs = newDraftsRoot
+		}
+		fmt.Fprintf(env.Stderr,
+			"sitatame: To migrate drafts: mv %s/drafts/* %s/\n",
+			legacyDir, abs,
+		)
+	}
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the

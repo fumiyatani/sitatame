@@ -178,6 +178,17 @@ ignore ルールを足す必要はありません。出力ルートは次の順�
 stderr で 1 行通知を出しますが、自動移行や参照は行いません。必要なデータを
 コピーしたら手動で削除してください。
 
+旧 in-repo の draft を引き取りたい場合、stderr に出力される移行先パスを
+そのまま使えば `<project-slug>` を手で計算する必要はありません:
+
+```sh
+# 旧ディレクトリが残っているリポジトリ内で一度だけ実行。stderr の 2 行目に
+#   sitatame: To migrate drafts: mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
+# が出ているので、その `mv` をそのまま流し、空になった旧ディレクトリを削除する。
+mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
+rm -rf .sitatame
+```
+
 ## 開発
 
 ```sh
