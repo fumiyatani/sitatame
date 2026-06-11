@@ -123,6 +123,17 @@ func runScenario(t *testing.T, sc Scenario) {
 	// which would otherwise lose early frames once a later step polls.
 	var drained bytes.Buffer
 
+	// Drain the initial render (the first paint bubbletea emits before any
+	// Step input is delivered) into `drained` so Step 1's substring assertion
+	// does not pick those bytes up as "post-event output". Without this, the
+	// `len(latest) > 0` guard inside evaluateViewExpectations is satisfied by
+	// the initial frame itself, and a Step 1 ViewContains for any substring
+	// already present in the initial render ("sitatame", file path, hint line)
+	// short-circuits to true before bubbletea has had a chance to react to
+	// the Step's input — a false positive that would mask a silently dropped
+	// Step 1 event. Mirrors the end-of-step drain inside the loop.
+	drainAvailable(tm.Output(), &drained, scenarioIdleSettleDuration, scenarioWaitInterval)
+
 	for i, step := range sc.Steps {
 		stepLabel := fmt.Sprintf("step %d", i+1)
 		if err := sendStep(tm, step); err != nil {

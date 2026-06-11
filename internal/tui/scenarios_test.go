@@ -708,3 +708,54 @@ func TestScenario_DeltaRepaintPreservesHeader(t *testing.T) {
 		},
 	})
 }
+
+// TestScenario_FirstStepRequiresPostEventOutput pins the "drain the initial
+// render before the Step loop" contract added to runScenario.
+//
+// Before the fix, teatest.NewTestModel + the WithInitialTermSize WindowSizeMsg
+// caused bubbletea to emit its initial paint into tm.Output() before the Step
+// loop started. `drained` was empty, so when Step 1's WaitFor predicate ran,
+// `latest` (the bytes WaitFor reads off the live reader) immediately contained
+// the entire initial frame — the `len(latest) > 0` guard inside
+// evaluateViewExpectations was therefore satisfied by the initial paint, not by
+// any byte produced in response to Step 1's input. Any ViewContains substring
+// already present in the initial render ("sitatame", file path, hint line) would
+// short-circuit to true on WaitFor's first poll, before bubbletea had time to
+// react to Step 1's SendKey. A Step whose input was silently dropped would
+// still "pass" against the initial frame.
+//
+// The fix is a single drainAvailable call right after NewTestModel and before
+// the Step loop: it pulls the initial paint into `drained`, so Step 1's WaitFor
+// starts from a clean reader and the post-event guard once again requires that
+// bubbletea emit at least one byte *in response to* Step 1's input.
+//
+// This scenario verifies the contract the same way TestScenario_RequiresPostEventOutput
+// does for Step N>1: substrings that are present in the initial render
+// ("sitatame", file path, hint line) are asserted on Step 1; the only way the
+// assertion can pass is if Step 1's `j` actually produces post-event bytes
+// (cursor move, delta repaint) — which it does. If a future change regresses
+// the initial drain, the test would still pass on the happy path, but it would
+// also pass if Step 1's input were silently dropped — making this the indirect
+// coverage for the guard.
+func TestScenario_FirstStepRequiresPostEventOutput(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:  "first_step_requires_post_event_output",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// All three substrings live in the initial render. Without
+				// the pre-loop drain, WaitFor would see them on its first
+				// poll via the unflushed initial frame and return true
+				// before `j` had any chance to take effect. With the
+				// drain in place, the post-event guard forces WaitFor to
+				// wait for `j`'s delta repaint before locking in a verdict.
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{"sitatame", "a.go", "j/k move"},
+				},
+			},
+		},
+	})
+}
