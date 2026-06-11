@@ -19,6 +19,8 @@ import (
 func TestE2E_AgentConsumablePromotedReview(t *testing.T) {
 	dir, baseSHA := newRepo(t)
 	chdir(t, dir)
+	// Isolate this E2E from the developer's real ~/.sitatame.
+	t.Setenv("SITATAME_HOME", t.TempDir())
 
 	env, stdout, stderr := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
 		// Simulate the reviewer leaving a complete set of comments.

@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/fumiyatani/sitatame/internal/review"
 )
 
 // searchEnv builds an Env wired so the Go fallback path is exercised
@@ -23,9 +25,28 @@ func searchEnv() (Env, *bytes.Buffer, *bytes.Buffer) {
 	}, stdout, stderr
 }
 
-func seedReviews(t *testing.T, dir string, files map[string]string) {
+// setupSearchHome points SITATAME_HOME at a fresh temp dir for the test and
+// returns the per-project root that matches what RunSearch will resolve for
+// the given repo dir. See save_test.withSitatameHome for the symlink-resolution
+// rationale.
+func setupSearchHome(t *testing.T, repoDir string) string {
 	t.Helper()
-	root := filepath.Join(dir, ".sitatame", "reviews", "feature")
+	home := t.TempDir()
+	t.Setenv("SITATAME_HOME", home)
+	resolved, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		resolved = repoDir
+	}
+	return filepath.Join(home, review.ProjectSlug(resolved))
+}
+
+// seedReviews writes synthetic review files into the project's reviews/
+// branch-slug subdir so RunSearch (which walks the project reviews root) can
+// find them. The branch name "feature" mirrors the legacy fixture; the slug
+// shape is computed from BranchSlug to track the real layout.
+func seedReviews(t *testing.T, projectRoot string, files map[string]string) {
+	t.Helper()
+	root := filepath.Join(projectRoot, "reviews", review.BranchSlug("feature"))
 	if err := os.MkdirAll(root, 0o755); err != nil {
 		t.Fatal(err)
 	}
@@ -49,7 +70,8 @@ func TestRunSearch_RequiresPattern(t *testing.T) {
 func TestRunSearch_GoFallback_FindsHit(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
-	seedReviews(t, dir, map[string]string{
+	projectRoot := setupSearchHome(t, dir)
+	seedReviews(t, projectRoot, map[string]string{
 		"r1.md": "front matter\nbody mentions a TODO\n",
 		"r2.md": "no relevant text here\n",
 	})
@@ -66,7 +88,8 @@ func TestRunSearch_GoFallback_FindsHit(t *testing.T) {
 func TestRunSearch_NoHit_ReturnsOne(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
-	seedReviews(t, dir, map[string]string{
+	projectRoot := setupSearchHome(t, dir)
+	seedReviews(t, projectRoot, map[string]string{
 		"r1.md": "boring content only\n",
 	})
 	env, stdout, _ := searchEnv()
@@ -81,8 +104,9 @@ func TestRunSearch_NoHit_ReturnsOne(t *testing.T) {
 func TestRunSearch_NoReviewsDir_Succeeds(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
+	_ = setupSearchHome(t, dir)
 	env, _, _ := searchEnv()
-	// No .sitatame/reviews/ exists yet. Searching shouldn't error.
+	// No reviews dir exists yet. Searching shouldn't error.
 	if got := RunSearch(env, []string{"anything"}); got != 0 {
 		t.Errorf("exit = %d, want 0 when reviews dir is absent", got)
 	}
@@ -91,7 +115,8 @@ func TestRunSearch_NoReviewsDir_Succeeds(t *testing.T) {
 func TestRunSearch_InvalidRegex(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
-	seedReviews(t, dir, map[string]string{"r1.md": "x\n"})
+	projectRoot := setupSearchHome(t, dir)
+	seedReviews(t, projectRoot, map[string]string{"r1.md": "x\n"})
 	env, _, stderr := searchEnv()
 	if got := RunSearch(env, []string{"["}); got != 2 {
 		t.Errorf("exit = %d, want 2 on invalid regex", got)
