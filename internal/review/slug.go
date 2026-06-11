@@ -3,12 +3,35 @@ package review
 import (
 	"crypto/sha1"
 	"encoding/hex"
+	"path/filepath"
 )
 
 const (
 	branchPrefixMax = 32
 	branchHashLen   = 8
 )
+
+// ProjectSlug returns "<safe-basename>__<sha1-8>" for a repository absolute
+// path. The basename keeps the directory human-recognisable in `ls
+// ~/.sitatame`, while the path hash guarantees that distinct checkouts of the
+// same repo (e.g. worktrees or two clones with the same name) get distinct
+// per-project directories. When repoAbsPath is empty (defensive), we return
+// "project__" + sha1("")[:8] so callers never see a path with two consecutive
+// slashes.
+func ProjectSlug(repoAbsPath string) string {
+	base := filepath.Base(repoAbsPath)
+	if base == "" || base == "." || base == string(filepath.Separator) {
+		base = "project"
+	}
+	prefix := safePrefix(base)
+	if prefix == "branch" {
+		// safePrefix falls back to "branch" when nothing safe survives; for a
+		// project slug "project" reads better.
+		prefix = "project"
+	}
+	sum := sha1.Sum([]byte(repoAbsPath))
+	return prefix + "__" + hex.EncodeToString(sum[:])[:branchHashLen]
+}
 
 // BranchSlug returns "<safe-prefix>__<sha1-8>" per PRD branch slug rules.
 // safe-prefix is the first 32 chars of branch with any byte outside
