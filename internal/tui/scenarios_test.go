@@ -356,3 +356,51 @@ func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
 		Steps: steps,
 	})
 }
+
+// TestScenario_DeltaRepaintPreservesHeader is a regression case for the
+// "view assertions slice the byte stream at the latest cursor marker" bug.
+// bubbletea's standard renderer paints with delta updates: after the first
+// frame, only rows whose contents changed are re-emitted via ANSI cursor
+// motion. Unchanged rows (the help hint at the bottom, fixed banner labels,
+// etc.) stay rendered from the *earlier* frame's bytes — they never re-appear
+// in the cumulative output stream.
+//
+// The previous latestFrame heuristic sliced the stream at the most recent
+// cursor-home / clear-screen marker and treated the suffix as "the current
+// screen". That suffix only contains the bytes of *delta-repainted* rows,
+// not the lines that were left alone by the renderer, so ViewContains for a
+// fixed footer/hint substring would time out after the first delta paint.
+//
+// This scenario boots the model, sends one `j`, and asserts both a piece of
+// the status header (top row) and a piece of the help hint (bottom row).
+// The hint line is the load-bearing assertion: it does not change between
+// frame 0 and frame 1, so the delta paint after `j` does not re-emit it,
+// and a latestFrame-style slice cannot find it. Reconstructing the screen
+// through vt10x (which replays every byte and tracks per-cell state) makes
+// both substrings observable.
+func TestScenario_DeltaRepaintPreservesHeader(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:  "delta_repaint_preserves_header",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{
+						// statusLine (top row): file path is part of the
+						// always-rendered banner that changes per cursor move.
+						"sitatame",
+						"a.go",
+						// hintLine (bottom row): unchanged by `j`, so a
+						// delta-repaint frame does not re-emit it. This is
+						// the assertion that fails under the old slice-based
+						// latestFrame and passes once we replay through vt10x.
+						"j/k move",
+					},
+				},
+			},
+		},
+	})
+}
