@@ -61,7 +61,11 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 		}
 		r.ID = id
 	}
-	if err := os.MkdirAll(s.Paths.DraftsDir(), 0o755); err != nil {
+	// 0o700 keeps drafts owner-private: reviews can contain unreleased
+	// implementation notes the user does not want world- or group-readable
+	// on shared machines. os.CreateTemp below produces 0o600 files, so the
+	// combined effect is "owner-only" for both the dir and the file.
+	if err := os.MkdirAll(s.Paths.DraftsDir(), 0o700); err != nil {
 		return "", fmt.Errorf("mkdir drafts: %w", err)
 	}
 	final := s.Paths.DraftFile(r.ID)
@@ -100,7 +104,9 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 // The draft directory is left in place even if empty afterwards.
 func (s *Store) Promote(draftPath string) (string, error) {
 	id := strings.TrimSuffix(filepath.Base(draftPath), ".md")
-	if err := os.MkdirAll(s.Paths.ReviewsDir(), 0o755); err != nil {
+	// See SaveDraft: 0o700 keeps promoted reviews owner-private to match the
+	// 0o600 perm os.CreateTemp gave the draft file before it was renamed in.
+	if err := os.MkdirAll(s.Paths.ReviewsDir(), 0o700); err != nil {
 		return "", fmt.Errorf("mkdir reviews: %w", err)
 	}
 	final := s.Paths.ReviewFile(id)
