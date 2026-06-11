@@ -63,17 +63,15 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 // Tests that need to assert on the per-project output root can call
 // review.NewPaths(dir, branch) (or ProjectSlug(dir)) to recover the resolved
 // location.
+//
+// t.Chdir (Go 1.24+) installs a process-wide chdir + automatic restore via
+// t.Cleanup. It also marks the test as non-parallelisable, which matches the
+// semantics we want here — os.Chdir is process-global, so two parallel tests
+// chdir'ing to different repos would race. t.Setenv inherits the same
+// "cannot t.Parallel()" guarantee, so the two calls reinforce each other.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
-	old, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(old) })
-	// t.Setenv is fine in a helper — it just registers another cleanup.
+	t.Chdir(dir)
 	t.Setenv("SITATAME_HOME", t.TempDir())
 }
 

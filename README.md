@@ -164,6 +164,19 @@ change, `sitatame` prints a one-line stderr notice on startup but does not
 auto-migrate or read from it. Delete it once you've copied anything you want
 to keep.
 
+To migrate drafts from the legacy in-repo location, copy the printed target
+path out of stderr — `sitatame` prints the resolved drafts root so you don't
+have to compute the `<project-slug>` by hand:
+
+```sh
+# Run once, inside the repo with the legacy directory. The second stderr line
+# from `sitatame` looks like:
+#   sitatame: To migrate drafts: mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
+# Run that exact `mv` command, then remove the empty legacy directory.
+mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
+rm -rf .sitatame
+```
+
 ### Reviewing uncommitted changes
 
 ```sh
