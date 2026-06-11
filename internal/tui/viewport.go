@@ -98,7 +98,7 @@ func (m *Model) moveCursorBy(d int) {
 	if m.cursor != prev {
 		// Drop the sticky resolve target whenever the user leaves the row.
 		// See toggleResolvedAtCursor for why we anchor by row.
-		m.lastToggledAnchor = ""
+		m.invalidateLastToggle()
 	}
 	m.scrollToCursor()
 }
@@ -249,7 +249,7 @@ func (m *Model) jumpFile(dir int) {
 			if m.rows[i].kind == rowFileHeader {
 				m.cursor = i
 				m.top = i
-				m.lastToggledAnchor = ""
+				m.invalidateLastToggle()
 				return
 			}
 		}
