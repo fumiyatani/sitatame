@@ -28,13 +28,25 @@ var updateScenarioGolden = flag.Bool("update-scenario-golden", false,
 const (
 	scenarioWaitForDuration = 2 * time.Second
 	scenarioWaitInterval    = 5 * time.Millisecond
-	// scenarioIdleFlushDuration caps how long we sit on the teatest output
-	// reader when a step has *no* substring requirement (e.g. golden-only,
-	// or substrings already satisfied before the latest event was processed).
-	// Bubbletea typically emits the new frame within a few ms of receiving a
-	// message; the budget here is a paranoia ceiling rather than an expected
-	// wait. We keep it deliberately small so passing scenarios stay fast.
-	scenarioIdleFlushDuration = 250 * time.Millisecond
+	// scenarioIdleFlushDuration caps how long the idle-flush loop sits on the
+	// teatest output reader when a step has *no* substring requirement (e.g.
+	// golden-only, or no view check at all). Bubbletea typically emits the new
+	// frame within a few ms of receiving a message, but no-op inputs (mouse
+	// release, non-wheel mouse button, Esc with no modal open, ...) are valid
+	// per the DSL and legitimately produce zero bytes. We use this as a hard
+	// ceiling: once it elapses without further bytes we stop waiting and
+	// evaluate the golden against whatever is already buffered.
+	scenarioIdleFlushDuration = 100 * time.Millisecond
+	// scenarioIdleSettleDuration is the post-arrival quiet period the
+	// idle-flush loop waits for once at least one byte has come through. It
+	// gives bubbletea a chance to finish emitting the rest of the current
+	// frame before we lock in the screen for assertion. The ceiling above
+	// caps the absolute worst case (no bytes at all); this caps the early-
+	// exit case (bytes came, we settle once they stop). Set high enough that
+	// a frame split across multiple writes is fully drained — bubbletea
+	// can take ~10ms between control-sequence and content bursts under
+	// load, so 5ms tripped early-exits.
+	scenarioIdleSettleDuration = 25 * time.Millisecond
 	// finalQuitTimeout caps how long we wait for the program goroutine to
 	// finish after we send tea.Quit. The actual model returns immediately
 	// once Quit is processed, so this is just a paranoia ceiling.
@@ -295,11 +307,15 @@ func renderScreen(out []byte, cols, rows int) string {
 //   - If ViewContains / ViewNotContains is set, we use teatest.WaitFor with the
 //     substring condition. The poll terminates as soon as the reconstructed
 //     screen satisfies every required substring and contains no forbidden one.
-//   - Otherwise, we still need to flush whatever bytes the latest event
-//     produced so a golden check (or a Step with no view checks at all)
-//     reflects the post-event frame. We use a short idle-flush wait that
-//     succeeds as soon as at least one byte has come through, capped by
-//     scenarioIdleFlushDuration so steps with no follow-up output stay quick.
+//     If the timeout expires the substring is treated as "never observed" and
+//     the test fails — that's the contract substring assertions need.
+//   - Otherwise (golden-only), we cannot use teatest.WaitFor because its
+//     semantics are "condition must become true or the test fails". No-op
+//     steps (mouse release, non-wheel mouse button, Esc with no modal open)
+//     are valid DSL inputs that legitimately produce zero bytes, and the
+//     golden snapshot for such a step is the *unchanged* previous frame. We
+//     run an idle-flush loop that drains whatever bytes arrive but never
+//     fails on timeout, so a no-op step still gets its golden compared.
 //
 // drained accumulates *every* byte teatest has ever emitted; renderScreen
 // requires the full history because bubbletea's delta repaint leaves the
@@ -326,9 +342,9 @@ func evaluateViewExpectations(
 		return
 	}
 
-	// Capture bytes via a TeeReader so WaitFor can poll while we keep a
-	// copy for the next step. Without this, view assertions in step N+1
-	// would not see frames produced by step N.
+	// Capture bytes via a TeeReader so WaitFor / idleFlush can poll while
+	// we keep a copy for the next step. Without this, view assertions in
+	// step N+1 would not see frames produced by step N.
 	var captured bytes.Buffer
 	tee := io.TeeReader(tm.Output(), &captured)
 
@@ -353,21 +369,49 @@ func evaluateViewExpectations(
 			teatest.WithCheckInterval(scenarioWaitInterval),
 		)
 	} else {
-		// Idle-flush: wait until at least one byte arrives, capped by a
-		// short ceiling so steps that legitimately produce no output (or
-		// already flushed) don't stall.
-		teatest.WaitFor(t, tee, func(latest []byte) bool {
-			return len(latest) > 0
-		},
-			teatest.WithDuration(scenarioIdleFlushDuration),
-			teatest.WithCheckInterval(scenarioWaitInterval),
-		)
+		// Golden-only: idle-flush without failing on timeout. The golden
+		// snapshot for a no-op step is the previous frame, so an empty
+		// drain is legitimate.
+		idleFlush(tee, scenarioIdleFlushDuration, scenarioIdleSettleDuration, scenarioWaitInterval)
 	}
 
 	drained.Write(captured.Bytes())
 
 	if hasGoldenCheck {
 		compareGolden(t, name, stepLabel, drained.Bytes(), cols, rows, expect.ViewGolden)
+	}
+}
+
+// idleFlush drains r until either no new bytes arrive for settle, or the total
+// elapsed time hits ceiling. Unlike teatest.WaitFor it never fails on timeout —
+// a no-op Step (mouse release, non-wheel mouse button, Esc with no modal open,
+// etc.) legitimately produces zero bytes and the caller still wants to evaluate
+// the resulting golden against the unchanged previous frame.
+//
+// The loop polls r once per pollInterval. Each poll calls io.ReadAll on the
+// underlying teatest output (a bytes.Buffer wrapped in a safe ReadWriter); an
+// empty buffer returns immediately with (nil, nil) since bytes.Buffer.Read
+// reports io.EOF the moment it's drained. We track when the most recent byte
+// arrived and break early once settle has passed without further bytes,
+// keeping the happy path fast while still bounded by ceiling for true no-ops.
+func idleFlush(r io.Reader, ceiling, settle, pollInterval time.Duration) {
+	deadline := time.Now().Add(ceiling)
+	var lastByteAt time.Time
+	for time.Now().Before(deadline) {
+		buf, err := io.ReadAll(r)
+		if err != nil {
+			// teatest's safe reader does not surface errors during normal
+			// operation; if one does occur, returning is the right call —
+			// the caller will assert against whatever was drained so far.
+			return
+		}
+		if len(buf) > 0 {
+			lastByteAt = time.Now()
+		}
+		if !lastByteAt.IsZero() && time.Since(lastByteAt) >= settle {
+			return
+		}
+		time.Sleep(pollInterval)
 	}
 }
 
