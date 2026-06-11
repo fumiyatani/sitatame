@@ -219,9 +219,16 @@ func TestHelpToggleVisible(t *testing.T) {
 }
 
 // TestResizeDuringHelp opens the help modal, resizes the pty, and asserts the
-// "sitatame" header still appears in the top region. We avoid asserting on
-// exact column / row counts because vt10x and bubbletea both reflow on resize
-// and the precise layout depends on lipgloss heuristics.
+// app re-paints in the new geometry. "sitatame" is in the screen *before* the
+// resize too (the boot wait succeeded on the header), so naively asserting it
+// is present afterwards would pass even if the SIGWINCH redraw never landed.
+//
+// The trick is that just calling Resize() changes Screen() output regardless
+// of child behavior — Screen() iterates the new Term geometry and emits more
+// columns/rows of spaces. So WaitForScreenChange is not enough on its own.
+// We instead verify that the *child* emitted fresh bytes after SIGWINCH: a
+// hung or non-resize-aware bubbletea would stop writing to the pty and
+// Stdout() would not grow. We then re-check that the header survived.
 func TestResizeDuringHelp(t *testing.T) {
 	replay.SkipIfNoPTY(t)
 	bin := buildBinary(t)
@@ -235,15 +242,32 @@ func TestResizeDuringHelp(t *testing.T) {
 		t.Fatalf("help did not appear: %v\nscreen=\n%s", err, s.Screen())
 	}
 
+	// Give the pump a beat to absorb any tail bytes from rendering the help
+	// modal so the post-resize growth check is not racing in-flight bytes.
+	time.Sleep(100 * time.Millisecond)
+	oldStdoutLen := len(s.Stdout())
 	if err := s.Resize(140, 50); err != nil {
 		t.Fatalf("resize: %v", err)
 	}
 
-	// Give bubbletea a moment to re-render on SIGWINCH. We then assert that
-	// the header is still on screen somewhere — that's a stable signal the
-	// app survived the resize rather than getting stuck.
-	if err := s.WaitFor("sitatame", 3*time.Second); err != nil {
-		t.Fatalf("header missing after resize: %v\nscreen=\n%s", err, s.Screen())
+	// Poll until the child emits fresh bytes in response to SIGWINCH. This is
+	// the real signal that resize handling reached the program — without it,
+	// a hung child would still let the test pass because we manually resize
+	// the local vt10x terminal.
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if len(s.Stdout()) > oldStdoutLen {
+			break
+		}
+		time.Sleep(20 * time.Millisecond)
+	}
+	if len(s.Stdout()) <= oldStdoutLen {
+		t.Fatalf("child wrote no bytes after resize (stdoutLen=%d, was=%d)\nscreen=\n%s",
+			len(s.Stdout()), oldStdoutLen, s.Screen())
+	}
+
+	if !strings.Contains(s.Screen(), "sitatame") {
+		t.Fatalf("header missing after resize\nscreen=\n%s", s.Screen())
 	}
 
 	s.Send("q")
