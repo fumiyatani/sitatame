@@ -223,8 +223,11 @@ func (m *Model) jumpSplitFile(dir int) {
 	}
 }
 
-// scrollSplitViewportBy moves the split layout's top by d rows without moving
-// splitCursor. Mirrors scrollViewportBy for wheel input in split mode.
+// scrollSplitViewportBy moves the split layout's top by d rows. Mirrors
+// scrollViewportBy for wheel input in split mode. The splitCursor is clamped
+// into the new visible window for the same reason as the unified path: keep
+// subsequent j/k from snapping top back, and keep cursor-driven actions
+// pointed at an on-screen row.
 func (m *Model) scrollSplitViewportBy(d int) {
 	if len(m.splitRows) == 0 {
 		return
@@ -241,6 +244,22 @@ func (m *Model) scrollSplitViewportBy(d int) {
 	if m.splitTop > maxTop {
 		m.splitTop = maxTop
 	}
+	if m.splitCursor < m.splitTop {
+		m.splitCursor = m.splitTop
+	}
+	if bottom := m.splitTop + h - 1; m.splitCursor > bottom {
+		m.splitCursor = bottom
+	}
+	if last := len(m.splitRows) - 1; m.splitCursor > last {
+		m.splitCursor = last
+	}
+	if m.splitCursor < 0 {
+		m.splitCursor = 0
+	}
+	// Keep preferredSide consistent with the (possibly different) row class
+	// the cursor just landed on — paired vs single-side affects the unified
+	// round-trip when Tab is pressed.
+	m.refreshSplitPreferredSide()
 }
 
 func (m *Model) scrollSplitToCursor() {
