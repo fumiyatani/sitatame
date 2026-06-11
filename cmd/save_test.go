@@ -13,6 +13,27 @@ import (
 	"github.com/fumiyatani/sitatame/internal/tui"
 )
 
+// withSitatameHome points SITATAME_HOME at a fresh temp dir so the test does
+// not write into the developer's real ~/.sitatame, and returns the resolved
+// per-project root for that test repo (matching what RunRoot will use).
+//
+// On macOS t.TempDir() returns an unresolved /tmp/... path while `git
+// rev-parse --show-toplevel` returns /private/tmp/... — the symlink
+// resolution differs. RunRoot keys the project slug off the resolved repo
+// root (via gitx.Discover), so we resolve symlinks here too to keep the
+// test's expectation aligned with the runtime behaviour.
+func withSitatameHome(t *testing.T, repoDir string) (homeDir, projectRoot string) {
+	t.Helper()
+	homeDir = t.TempDir()
+	t.Setenv("SITATAME_HOME", homeDir)
+	resolved, err := filepath.EvalSymlinks(repoDir)
+	if err != nil {
+		resolved = repoDir
+	}
+	projectRoot = filepath.Join(homeDir, review.ProjectSlug(resolved))
+	return homeDir, projectRoot
+}
+
 func teaKeyRunes(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
@@ -33,6 +54,7 @@ func envWithRunner(stdin *os.File, run func(Env, TUIOptions) (TUIResult, error))
 func TestRunRoot_SaveAndPromote_PrintsMachineLine(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
 
 	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
 		// Add a comment so SaveDraft serialises non-trivial state.
@@ -53,15 +75,21 @@ func TestRunRoot_SaveAndPromote_PrintsMachineLine(t *testing.T) {
 	if _, err := os.Stat(pathLine); err != nil {
 		t.Errorf("review file missing at printed path: %v", err)
 	}
-	// Promotion lands the file under reviews/, not drafts/.
-	if !strings.Contains(pathLine, filepath.Join(".sitatame", "reviews")) {
-		t.Errorf("promoted path should live under reviews/, got %q", pathLine)
+	// Promotion lands the file under <SITATAME_HOME>/<project-slug>/reviews/,
+	// not drafts/, and not anywhere inside the repository tree.
+	wantReviewsRoot := filepath.Join(projectRoot, "reviews")
+	if !strings.HasPrefix(pathLine, wantReviewsRoot+string(filepath.Separator)) {
+		t.Errorf("promoted path should live under %s, got %q", wantReviewsRoot, pathLine)
+	}
+	if strings.Contains(pathLine, filepath.Join(dir, ".sitatame")) {
+		t.Errorf("promoted path leaked into repo tree: %q", pathLine)
 	}
 }
 
 func TestRunRoot_QuitDraft_KeepsFileUnderDrafts(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
 
 	env, _, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
 		return TUIResult{Review: opts.Review, Reason: tui.QuitDraft}, nil
@@ -69,7 +97,7 @@ func TestRunRoot_QuitDraft_KeepsFileUnderDrafts(t *testing.T) {
 	if code := RunRoot(env, nil); code != 1 {
 		t.Fatalf("exit = %d, want 1 on q", code)
 	}
-	draftDir := filepath.Join(dir, ".sitatame", "drafts")
+	draftDir := filepath.Join(projectRoot, "drafts")
 	found := false
 	_ = filepath.Walk(draftDir, func(p string, info os.FileInfo, err error) error {
 		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(p, ".md") {
@@ -85,6 +113,7 @@ func TestRunRoot_QuitDraft_KeepsFileUnderDrafts(t *testing.T) {
 func TestRunRoot_PanicSavesDraftAndPropagates(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
 
 	// Runner panics partway through: shutdown wrapper must still write a draft
 	// using whatever state we can recover (the initial Review here).
@@ -97,8 +126,8 @@ func TestRunRoot_PanicSavesDraftAndPropagates(t *testing.T) {
 		if r == nil {
 			t.Fatal("expected panic to propagate from RunRoot")
 		}
-		// And a draft file must exist under .sitatame/drafts/<slug>/.
-		draftDir := filepath.Join(dir, ".sitatame", "drafts")
+		// And a draft file must exist under <SITATAME_HOME>/<project>/drafts/<slug>/.
+		draftDir := filepath.Join(projectRoot, "drafts")
 		found := false
 		_ = filepath.Walk(draftDir, func(p string, info os.FileInfo, _ error) error {
 			if info != nil && !info.IsDir() && strings.HasSuffix(p, ".md") {

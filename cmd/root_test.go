@@ -58,7 +58,11 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// chdir switches into dir for the duration of the test.
+// chdir switches into dir for the duration of the test and isolates
+// SITATAME_HOME so the test never touches the developer's real ~/.sitatame.
+// Tests that need to assert on the per-project output root can call
+// review.NewPaths(dir, branch) (or ProjectSlug(dir)) to recover the resolved
+// location.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
 	old, err := os.Getwd()
@@ -69,6 +73,8 @@ func chdir(t *testing.T, dir string) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = os.Chdir(old) })
+	// t.Setenv is fine in a helper — it just registers another cleanup.
+	t.Setenv("SITATAME_HOME", t.TempDir())
 }
 
 func ttyEnv(stdin *os.File, term bool) Env {

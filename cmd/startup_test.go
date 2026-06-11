@@ -13,9 +13,19 @@ import (
 func TestRunRoot_DetectsExistingDraftOnStartup(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
+	// Anchor SITATAME_HOME so the seeded path matches what RunRoot resolves.
+	home := t.TempDir()
+	t.Setenv("SITATAME_HOME", home)
+	// Mirror the resolved path that gitx.Discover hands to NewPaths inside
+	// RunRoot, otherwise the seeded draft lands under a different
+	// project-slug and DetectDraft won't see it.
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
 
 	// Pre-seed a draft for the current branch ("feature").
-	paths := review.NewPaths(dir, "feature")
+	paths := review.NewPaths(resolved, "feature")
 	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
 		t.Fatal(err)
 	}
