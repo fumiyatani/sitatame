@@ -171,10 +171,15 @@ have to compute the `<project-slug>` by hand:
 ```sh
 # Run once, inside the repo with the legacy directory. The second stderr line
 # from `sitatame` looks like:
-#   sitatame: To migrate drafts: mkdir -p /Users/you/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
-# Run that exact command (the `mkdir -p` is there so the first upgrade does
-# not fail when the new drafts root doesn't exist yet), then remove the empty
-# legacy directory.
+#   sitatame: To migrate drafts: mkdir -p '/Users/you/.sitatame/<project-slug>/drafts' && mv '/path/to/repo/.sitatame'/drafts/* '/Users/you/.sitatame/<project-slug>/drafts'/
+# Paths are POSIX single-quoted so spaces and shell metacharacters in your
+# checkout or `$SITATAME_HOME` survive copy-paste; the `/drafts/*` glob is
+# left outside the closing quote so the shell still expands it. Run that
+# printed line (the `mkdir -p` is there so the first upgrade does not fail
+# when the new drafts root doesn't exist yet), then remove the empty legacy
+# directory. The form below is the same shape but uses `~` for brevity — if
+# your repo path or `$SITATAME_HOME` contains spaces, prefer copy-pasting the
+# stderr line verbatim instead.
 mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
 rm -rf .sitatame
 ```

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,6 +78,59 @@ func TestRunRoot_LegacySitatameDir_HintIncludesMkdir(t *testing.T) {
 	}
 	if !strings.Contains(got, " && mv ") {
 		t.Errorf("migration hint should chain mkdir and mv with `&&`; got %q", got)
+	}
+}
+
+// TestWarnLegacySitatameDir_ShellQuotesPaths guards the PR #42 round-4 P2 fix:
+// the migration hint is meant to be copy-pasted into a shell, so paths must be
+// POSIX single-quoted to survive spaces and shell metacharacters. The mv glob
+// `/drafts/*` must stay *outside* the closing quote of the legacy path so the
+// shell still expands it — otherwise a literal `*` would be passed to mv and
+// the command would fail with "no such file".
+func TestWarnLegacySitatameDir_ShellQuotesPaths(t *testing.T) {
+	// Build a legacy directory under a path with a space — this is the
+	// canonical case that an unquoted hint would split on.
+	base := t.TempDir()
+	legacy := filepath.Join(base, "with space", ".sitatame")
+	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	newDraftsRoot := filepath.Join(base, "out put", "slug", "drafts")
+
+	var stderr bytes.Buffer
+	env := Env{Stderr: &stderr}
+	warnLegacySitatameDir(env, legacy, newDraftsRoot)
+
+	got := stderr.String()
+	// The legacy path must appear single-quoted, with `/drafts/*` left outside
+	// the quotes so the shell still globs.
+	wantLegacyFragment := "'" + legacy + "'/drafts/*"
+	if !strings.Contains(got, wantLegacyFragment) {
+		t.Errorf("stderr should contain %q (legacy path quoted, glob outside); got %q", wantLegacyFragment, got)
+	}
+	// The new drafts root appears twice (mkdir + mv target), both quoted.
+	wantNewQuoted := "'" + newDraftsRoot + "'"
+	if strings.Count(got, wantNewQuoted) < 2 {
+		t.Errorf("stderr should contain quoted new drafts root %q at least twice; got %q", wantNewQuoted, got)
+	}
+	// Sanity: the unquoted form must not appear on its own (would mean a path
+	// leaked through without quoting). We check the legacy fragment specifically
+	// because a bare space-containing path with no surrounding quote is the
+	// failure mode we're guarding against.
+	bareLegacyFragment := " " + legacy + "/drafts/*"
+	if strings.Contains(got, bareLegacyFragment) {
+		t.Errorf("stderr leaked unquoted legacy path; got %q", got)
+	}
+}
+
+// TestShellQuote_EscapesEmbeddedSingleQuote covers the one tricky case in the
+// `'\''` escape sequence: a path containing a literal single quote must be
+// split into two quoted segments separated by an escaped quote.
+func TestShellQuote_EscapesEmbeddedSingleQuote(t *testing.T) {
+	got := shellQuote("a'b")
+	want := `'a'\''b'`
+	if got != want {
+		t.Errorf("shellQuote(\"a'b\") = %q, want %q", got, want)
 	}
 }
 
