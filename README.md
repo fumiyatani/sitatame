@@ -72,6 +72,7 @@ Keys:
 ```
 j / k       cursor down / up
 n / p       next / previous file
+wheel       scroll the diff (hold Option/Fn to text-select)
 r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
 Shift+R     review-level comment (edits review_comment in front matter)
