@@ -188,6 +188,42 @@ func TestMouse_IgnoredWhileModalOpen(t *testing.T) {
 	}
 }
 
+// Help is rendered as a full-screen overlay. If wheel events were forwarded to
+// the diff while help is up, the user would see no change until closing help —
+// then the viewport would silently jump. Make sure wheel is dropped instead.
+func TestMouse_IgnoredWhileHelpOpen(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{bigFile()}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	m, _ = applyKey(m, "?")
+	if !m.ShowingHelp() {
+		t.Fatal("expected help to be open")
+	}
+	beforeTop := m.Top()
+	m = sendMouse(m, wheel(tea.MouseButtonWheelDown))
+	if m.Top() != beforeTop {
+		t.Errorf("help open: Top = %d, want %d (mouse must be ignored)", m.Top(), beforeTop)
+	}
+}
+
+// Shift+R opens the review-level modal directly (no anchor needed). Same
+// invariant as the comment modal: wheel events must not leak through to the
+// background viewport.
+func TestMouse_IgnoredWhileReviewModalOpen(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{bigFile()}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	m.openReviewModal()
+	if m.Modal() == nil {
+		t.Fatal("expected review modal to be open")
+	}
+	beforeTop := m.Top()
+	m = sendMouse(m, wheel(tea.MouseButtonWheelDown))
+	if m.Top() != beforeTop {
+		t.Errorf("review modal open: Top = %d, want %d (mouse must be ignored)", m.Top(), beforeTop)
+	}
+}
+
 // SplitTop accessor for tests; mirrored on Top()/Cursor().
 func (m Model) splitTopForTest() int { return m.splitTop }
 

@@ -255,6 +255,12 @@ func renderExcerpt(lines []excerptLine) string {
 // open. Ctrl+S confirms; Esc cancels. Confirm stays modifier-bound so the
 // textarea can accept any printable rune in the comment body.
 func (m *Model) updateModal(msg tea.Msg) tea.Cmd {
+	// Drop mouse events outright. bubbles/textarea v1.0.0's MouseMsg handling
+	// is unverified, and the modal is keyboard-only by design (Ctrl+S / Esc /
+	// printable runes), so wheel scrolls should not leak into the textarea.
+	if _, ok := msg.(tea.MouseMsg); ok {
+		return nil
+	}
 	if k, ok := msg.(tea.KeyMsg); ok {
 		switch k.String() {
 		case "ctrl+s":
