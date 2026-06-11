@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -282,6 +283,12 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 // from the caller — i.e. the resolved `<output-root>/<project-slug>/drafts`
 // for this checkout — and is fed into the message so users do not have to
 // compute the project slug by hand.
+//
+// Paths are POSIX single-quote wrapped via shellQuote so users with spaces or
+// shell metacharacters (`$`, `*`, `(`, ...) in their checkout / SITATAME_HOME
+// can paste the hint as-is. The `/drafts/*` glob in the mv source is left
+// outside the quotes so the shell still expands it; quoting it would turn the
+// `*` into a literal and the `mv` would fail with "no such file".
 func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 	if legacyDir == "" {
 		return
@@ -300,9 +307,18 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 		}
 		fmt.Fprintf(env.Stderr,
 			"sitatame: To migrate drafts: mkdir -p %s && mv %s/drafts/* %s/\n",
-			abs, legacyDir, abs,
+			shellQuote(abs), shellQuote(legacyDir), shellQuote(abs),
 		)
 	}
+}
+
+// shellQuote wraps s in POSIX single quotes, escaping embedded single quotes
+// with the standard `'\''` trick. Used so paths printed into copy-paste shell
+// snippets survive spaces and metacharacters (`$`, `*`, `(`, backticks, ...).
+// We don't use strconv.Quote because that produces Go-style double-quoted
+// strings, which would re-expand `$VAR` and friends under sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the

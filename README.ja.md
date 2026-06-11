@@ -183,10 +183,15 @@ stderr で 1 行通知を出しますが、自動移行や参照は行いませ�
 
 ```sh
 # 旧ディレクトリが残っているリポジトリ内で一度だけ実行。stderr の 2 行目に
-#   sitatame: To migrate drafts: mkdir -p /Users/you/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* /Users/you/.sitatame/<project-slug>/drafts/
-# が出ているので、その 1 行をそのまま流す（初回アップグレード時は新 drafts
-# root が未作成のため `mkdir -p` を同梱している）。空になった旧ディレクトリは
-# 別途削除する。
+#   sitatame: To migrate drafts: mkdir -p '/Users/you/.sitatame/<project-slug>/drafts' && mv '/path/to/repo/.sitatame'/drafts/* '/Users/you/.sitatame/<project-slug>/drafts'/
+# が出ているので、その 1 行をそのまま流す（パスは POSIX の single quote で
+# 囲まれているため、checkout や `$SITATAME_HOME` にスペースやシェル
+# メタ文字が含まれていてもそのまま貼り付けて動く。末尾の `/drafts/*` は
+# シェルに glob 展開させるため quote の外に出している。初回アップグレード時は
+# 新 drafts root が未作成のため `mkdir -p` を同梱している）。空になった旧
+# ディレクトリは別途削除する。下の例は同じ形を `~` で簡略化したもの。
+# repo パスや `$SITATAME_HOME` にスペースが含まれる場合は、こちらではなく
+# stderr の行をそのままコピペすること。
 mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
 rm -rf .sitatame
 ```
