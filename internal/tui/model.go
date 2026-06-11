@@ -59,6 +59,14 @@ type Model struct {
 	// the user tries to comment / select in split mode). Cleared on the
 	// next key press.
 	statusMsg string
+
+	// lastToggledAnchor remembers the anchor_id touched by the most recent
+	// `x` press so a follow-up `x` on the same row undoes that exact
+	// comment instead of falling back to "last open / last resolved" — the
+	// latter silently mutates an unrelated neighbor when the row hosts
+	// `[open A, resolved B]`. Cleared whenever the cursor moves so a fresh
+	// row starts back at the open-biased default.
+	lastToggledAnchor string
 }
 
 const previewOnlyMsg = "split is preview-only — press Tab to return"
@@ -204,10 +212,96 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.openReviewModal()
 			return m, nil
+		case KeyResolveToggle:
+			if m.layout == LayoutSplit {
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
+			m.toggleResolvedAtCursor()
+			return m, nil
 		}
 	}
 	return m, nil
 }
+
+// toggleResolvedAtCursor flips the state of the comment anchored at the
+// cursor row between open and resolved. Target selection has two tiers:
+//
+//  1. If a previous `x` on this row toggled anchor X and X is still on the
+//     row, X is flipped again. This is the undo path: pressing `x` twice in
+//     a row on the same line must touch the *same* comment so a row of
+//     `[open A, resolved B]` doesn't silently mutate B on the second press.
+//  2. Otherwise the open-biased default applies:
+//     - any open comment exists → the last open one is resolved
+//     - only resolved comments remain → the last resolved one is reopened
+//
+// Stale comments are ignored entirely — the underlying code has drifted
+// and silently resolving them would hide a follow-up.
+//
+// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
+// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
+// even when several comments share the row, and `lastToggledAnchor` is
+// updated so a subsequent `x` re-targets the same comment.
+func (m *Model) toggleResolvedAtCursor() {
+	idxs := m.overlay[m.cursor]
+	if len(idxs) == 0 {
+		return
+	}
+
+	stickyIdx := -1
+	lastOpen := -1
+	lastResolved := -1
+	for _, idx := range idxs {
+		if idx < 0 || idx >= len(m.Review.Comments) {
+			continue
+		}
+		c := m.Review.Comments[idx]
+		if m.lastToggledAnchor != "" && c.AnchorID == m.lastToggledAnchor {
+			// Only open/resolved comments are toggleable; stale stays out
+			// of the sticky path too.
+			if c.State == review.StateOpen || c.State == review.StateResolved {
+				stickyIdx = idx
+			}
+		}
+		switch c.State {
+		case review.StateOpen:
+			lastOpen = idx
+		case review.StateResolved:
+			lastResolved = idx
+		}
+		// StateStale: ignored on purpose.
+	}
+
+	target := -1
+	switch {
+	case stickyIdx >= 0:
+		target = stickyIdx
+	case lastOpen >= 0:
+		target = lastOpen
+	case lastResolved >= 0:
+		target = lastResolved
+	}
+	if target < 0 {
+		return
+	}
+
+	switch m.Review.Comments[target].State {
+	case review.StateOpen:
+		m.Review.Comments[target].State = review.StateResolved
+		m.statusMsg = "resolved: " + m.Review.Comments[target].AnchorID
+	case review.StateResolved:
+		m.Review.Comments[target].State = review.StateOpen
+		m.statusMsg = "reopened: " + m.Review.Comments[target].AnchorID
+	}
+	m.lastToggledAnchor = m.Review.Comments[target].AnchorID
+}
+
+// invalidateLastToggle drops the sticky resolve anchor so the next `x`
+// press falls back to the open-biased default. Centralised so every
+// cursor/layout mutation path can call a single helper instead of touching
+// the field directly — past regressions (split nav, Tab toggle) all stemmed
+// from forgetting to clear it on a new mutation path.
+func (m *Model) invalidateLastToggle() { m.lastToggledAnchor = "" }
 
 // Cursor returns the current row index (test-only accessor).
 func (m Model) Cursor() int { return m.cursor }

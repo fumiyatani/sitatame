@@ -75,6 +75,7 @@ n / p       next / previous file
 wheel       scroll the diff (hold Option/Fn to text-select)
 r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
+x           toggle resolved on the comment under the cursor (open ↔ resolved; stale skipped)
 Shift+R     review-level comment (edits review_comment in front matter)
 s           save & promote — writes ~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
             and prints SITATAME_REVIEW=<abs path> on stdout
