@@ -357,6 +357,34 @@ func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
 	})
 }
 
+// TestScenario_ViewContainsAndGoldenTogether pins the shared-drain contract:
+// when a single Step lists both ViewContains and ViewGolden, the runner must
+// reconstruct the screen once and feed it to both assertions. Earlier the
+// substring poll consumed the post-event frame and the subsequent golden poll
+// blocked waiting for bytes that had already been delivered, so the golden
+// step timed out. The fix is documented in evaluateViewExpectations.
+//
+// The golden snapshot is the same frame the substring matches, so the two
+// assertions are not duplicates — they exercise different code paths
+// (substring scan vs. byte-for-byte comparison) over the same bytes.
+func TestScenario_ViewContainsAndGoldenTogether(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	runScenario(t, Scenario{
+		Name:  "contains_and_golden_together",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				SendKey: "j",
+				Expect: Expectation{
+					ViewContains: []string{"sitatame", "a.go"},
+					ViewGolden:   "contains_and_golden_together",
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_DeltaRepaintPreservesHeader is a regression case for the
 // "view assertions slice the byte stream at the latest cursor marker" bug.
 // bubbletea's standard renderer paints with delta updates: after the first

@@ -28,6 +28,13 @@ var updateScenarioGolden = flag.Bool("update-scenario-golden", false,
 const (
 	scenarioWaitForDuration = 2 * time.Second
 	scenarioWaitInterval    = 5 * time.Millisecond
+	// scenarioIdleFlushDuration caps how long we sit on the teatest output
+	// reader when a step has *no* substring requirement (e.g. golden-only,
+	// or substrings already satisfied before the latest event was processed).
+	// Bubbletea typically emits the new frame within a few ms of receiving a
+	// message; the budget here is a paranoia ceiling rather than an expected
+	// wait. We keep it deliberately small so passing scenarios stay fast.
+	scenarioIdleFlushDuration = 250 * time.Millisecond
 	// finalQuitTimeout caps how long we wait for the program goroutine to
 	// finish after we send tea.Quit. The actual model returns immediately
 	// once Quit is processed, so this is just a paranoia ceiling.
@@ -42,8 +49,11 @@ const (
 //   - starts a teatest.TestModel with the requested initial window size
 //   - replays each Step:
 //   - delivers the input message via tm.Send
-//   - for ViewContains / ViewNotContains / ViewGolden, polls the
-//     accumulated output via teatest.WaitFor until the view stabilizes
+//   - for each Step, runs at most one drain pass per step and asserts
+//     every view-level expectation (ViewContains / ViewNotContains /
+//     ViewGolden) against the same reconstructed screen — sharing the
+//     drain is what lets a single Step combine substring and golden
+//     checks without one starving the other
 //   - sends tea.Quit, awaits FinalModel, and asserts every model-state
 //     Expectation field across all steps (the final model is the only place
 //     the runner can reach back into the Model without smuggling probes
@@ -105,15 +115,12 @@ func runScenario(t *testing.T, sc Scenario) {
 			t.Fatalf("scenario %q %s: %v", sc.Name, stepLabel, err)
 		}
 
-		// View-level checks need a moment for the program goroutine to
-		// process the message and re-render. teatest.WaitFor handles
-		// that polling for us.
-		if len(step.Expect.ViewContains) > 0 || len(step.Expect.ViewNotContains) > 0 {
-			checkViewSubstrings(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect)
-		}
-		if step.Expect.ViewGolden != "" {
-			checkViewGolden(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect.ViewGolden)
-		}
+		// View assertions share a single drain pass per step so that a
+		// substring check and a golden check on the same Step reconstruct
+		// the screen from identical bytes. Without this sharing, the
+		// substring poll would consume the new frame and the subsequent
+		// golden poll would wait on bytes that already arrived.
+		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, w, h, step.Expect)
 	}
 
 	if err := tm.Quit(); err != nil {
@@ -263,18 +270,27 @@ func renderScreen(out []byte, cols, rows int) string {
 	return b.String()
 }
 
-// checkViewSubstrings polls the teatest output until the reconstructed
-// screen contains every required substring and no forbidden substring.
-// Each poll concatenates the previously-drained bytes with the bytes
-// WaitFor has just read, then feeds the whole stream into renderScreen to
-// produce the current screen contents.
+// evaluateViewExpectations performs at most one drain pass per step and then
+// asserts every view-level expectation against the same reconstructed screen.
+// Sharing the drain pass is what makes "ViewContains + ViewGolden on the same
+// Step" work: a previous design ran the substring poll first and then re-polled
+// for golden, which timed out whenever the newest frame had already been
+// consumed by the first poll.
 //
-// The drained buffer carries the full byte history across calls because
-// teatest.Output() is a single one-shot reader; once WaitFor has consumed a
-// segment we can't re-read it. We need the history so that the vt10x
-// terminal in renderScreen sees every byte bubbletea ever wrote, which is
-// what makes delta-repaint frames reconstruct correctly.
-func checkViewSubstrings(
+// Polling strategy:
+//   - If ViewContains / ViewNotContains is set, we use teatest.WaitFor with the
+//     substring condition. The poll terminates as soon as the reconstructed
+//     screen satisfies every required substring and contains no forbidden one.
+//   - Otherwise, we still need to flush whatever bytes the latest event
+//     produced so a golden check (or a Step with no view checks at all)
+//     reflects the post-event frame. We use a short idle-flush wait that
+//     succeeds as soon as at least one byte has come through, capped by
+//     scenarioIdleFlushDuration so steps with no follow-up output stay quick.
+//
+// drained accumulates *every* byte teatest has ever emitted; renderScreen
+// requires the full history because bubbletea's delta repaint leaves the
+// fixed header/body in earlier frames and only re-emits changed rows.
+func evaluateViewExpectations(
 	t *testing.T,
 	name, stepLabel string,
 	tm *teatest.TestModel,
@@ -283,69 +299,77 @@ func checkViewSubstrings(
 	expect Expectation,
 ) {
 	t.Helper()
+
 	required := expect.ViewContains
 	forbidden := expect.ViewNotContains
+	hasSubstringCheck := len(required) > 0 || len(forbidden) > 0
+	hasGoldenCheck := expect.ViewGolden != ""
 
-	condition := func(latest []byte) bool {
-		out := append([]byte(nil), drained.Bytes()...)
-		out = append(out, latest...)
-		frame := renderScreen(out, cols, rows)
-		for _, want := range required {
-			if !strings.Contains(frame, want) {
-				return false
-			}
-		}
-		for _, bad := range forbidden {
-			if strings.Contains(frame, bad) {
-				return false
-			}
-		}
-		return true
+	if !hasSubstringCheck && !hasGoldenCheck {
+		// No view-level assertion for this Step. Skip the drain so the
+		// next view assertion gets the freshest bytes; nothing in this
+		// branch needs the screen to be observed right now.
+		return
 	}
 
 	// Capture bytes via a TeeReader so WaitFor can poll while we keep a
-	// copy for the next step. Without this, ViewContains in step N+1
+	// copy for the next step. Without this, view assertions in step N+1
 	// would not see frames produced by step N.
 	var captured bytes.Buffer
 	tee := io.TeeReader(tm.Output(), &captured)
-	teatest.WaitFor(t, tee, func(b []byte) bool {
-		return condition(b)
-	},
-		teatest.WithDuration(scenarioWaitForDuration),
-		teatest.WithCheckInterval(scenarioWaitInterval),
-	)
+
+	if hasSubstringCheck {
+		teatest.WaitFor(t, tee, func(latest []byte) bool {
+			out := append([]byte(nil), drained.Bytes()...)
+			out = append(out, latest...)
+			frame := renderScreen(out, cols, rows)
+			for _, want := range required {
+				if !strings.Contains(frame, want) {
+					return false
+				}
+			}
+			for _, bad := range forbidden {
+				if strings.Contains(frame, bad) {
+					return false
+				}
+			}
+			return true
+		},
+			teatest.WithDuration(scenarioWaitForDuration),
+			teatest.WithCheckInterval(scenarioWaitInterval),
+		)
+	} else {
+		// Idle-flush: wait until at least one byte arrives, capped by a
+		// short ceiling so steps that legitimately produce no output (or
+		// already flushed) don't stall.
+		teatest.WaitFor(t, tee, func(latest []byte) bool {
+			return len(latest) > 0
+		},
+			teatest.WithDuration(scenarioIdleFlushDuration),
+			teatest.WithCheckInterval(scenarioWaitInterval),
+		)
+	}
+
 	drained.Write(captured.Bytes())
+
+	if hasGoldenCheck {
+		compareGolden(t, name, stepLabel, drained.Bytes(), cols, rows, expect.ViewGolden)
+	}
 }
 
-// checkViewGolden compares the reconstructed screen against a golden file.
-// Like golden_test.go, trailing whitespace is trimmed per line so cursor /
-// textarea noise doesn't make snapshots flaky — that trimming happens inside
-// renderScreen itself.
-func checkViewGolden(
+// compareGolden reconstructs the screen from the cumulative byte stream and
+// compares it against testdata/scenarios/<goldenName>.golden. Trailing
+// whitespace per line is trimmed inside renderScreen so cursor/textarea noise
+// doesn't make snapshots flaky.
+func compareGolden(
 	t *testing.T,
 	name, stepLabel string,
-	tm *teatest.TestModel,
-	drained *bytes.Buffer,
+	out []byte,
 	cols, rows int,
 	goldenName string,
 ) {
 	t.Helper()
-
-	// Drain everything currently buffered so the snapshot captures the
-	// latest screen state. The full byte history goes to renderScreen so
-	// the vt10x emulator can replay every delta repaint correctly.
-	var captured bytes.Buffer
-	tee := io.TeeReader(tm.Output(), &captured)
-	teatest.WaitFor(t, tee, func(b []byte) bool {
-		// Wait until at least one frame has come through this step.
-		return len(b) > 0
-	},
-		teatest.WithDuration(scenarioWaitForDuration),
-		teatest.WithCheckInterval(scenarioWaitInterval),
-	)
-	drained.Write(captured.Bytes())
-
-	got := renderScreen(drained.Bytes(), cols, rows)
+	got := renderScreen(out, cols, rows)
 
 	path := filepath.Join("testdata", "scenarios", goldenName+".golden")
 	if *updateScenarioGolden {
