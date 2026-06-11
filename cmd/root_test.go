@@ -58,17 +58,21 @@ func mustGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
-// chdir switches into dir for the duration of the test.
+// chdir switches into dir for the duration of the test and isolates
+// SITATAME_HOME so the test never touches the developer's real ~/.sitatame.
+// Tests that need to assert on the per-project output root can call
+// review.NewPaths(dir, branch) (or ProjectSlug(dir)) to recover the resolved
+// location.
+//
+// t.Chdir (Go 1.24+) installs a process-wide chdir + automatic restore via
+// t.Cleanup. It also marks the test as non-parallelisable, which matches the
+// semantics we want here — os.Chdir is process-global, so two parallel tests
+// chdir'ing to different repos would race. t.Setenv inherits the same
+// "cannot t.Parallel()" guarantee, so the two calls reinforce each other.
 func chdir(t *testing.T, dir string) {
 	t.Helper()
-	old, err := os.Getwd()
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := os.Chdir(dir); err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = os.Chdir(old) })
+	t.Chdir(dir)
+	t.Setenv("SITATAME_HOME", t.TempDir())
 }
 
 func ttyEnv(stdin *os.File, term bool) Env {
@@ -310,6 +314,39 @@ func TestRunRoot_Staged_NoChanges(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "no staged changes") {
 		t.Errorf("stderr = %q, want contains 'no staged changes'", stderr.String())
+	}
+}
+
+// TestRunRoot_DetachedHEAD_UsesShaInBranchSlug guards the PR #42 P1 fix:
+// when the repo is in detached HEAD, RunRoot must synthesise a branch label
+// of "detached/<sha[:12]>" so the per-branch slug stays unique per detached
+// session instead of collapsing onto the empty-branch fallback
+// (BranchSlug("") = "branch__da39a3ee") and letting two unrelated detached
+// sessions share state.
+func TestRunRoot_DetachedHEAD_UsesShaInBranchSlug(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	// Detach HEAD at the main commit — base auto-detection will still resolve
+	// `main` as the base ref.
+	mustGit(t, dir, "checkout", "-q", "--detach", mainSHA)
+	// newRepo left us on `feature` (one commit ahead). Replace that commit so
+	// the detached HEAD points at a fresh, distinct SHA. We just write a new
+	// file and commit it.
+	if err := os.WriteFile(filepath.Join(dir, "detached-marker"), []byte("d\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "-A")
+	mustGit(t, dir, "commit", "-q", "-m", "detached")
+	detachedSHA := mustGit(t, dir, "rev-parse", "HEAD")
+
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	wantBranch := "detached/" + detachedSHA[:12]
+	if captured.Review.Branch != wantBranch {
+		t.Errorf("Review.Branch = %q, want %q", captured.Review.Branch, wantBranch)
 	}
 }
 

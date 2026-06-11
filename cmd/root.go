@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 
@@ -159,6 +160,16 @@ func RunRoot(env Env, args []string) int {
 
 	branch, _ := repo.CurrentBranch()
 	headSHA, _ := repo.HeadSHA()
+	// In detached HEAD CurrentBranch returns "" and review.BranchSlug("")
+	// collapses every detached session in this repo onto the same
+	// "branch__da39a3ee" directory — two concurrent detached sessions would
+	// share state. Normalising into "detached/<sha[:12]>" gives each detached
+	// HEAD its own per-SHA slug; if HeadSHA also fails (pathological /
+	// unborn-HEAD case) we fall back to the empty-branch slug, matching the
+	// previous behaviour.
+	if branch == "" && len(headSHA) >= 12 {
+		branch = "detached/" + headSHA[:12]
+	}
 	headRef := "HEAD"
 	headRefSHA := headSHA
 	switch spec.Source {
@@ -176,7 +187,9 @@ func RunRoot(env Env, args []string) int {
 		Head:   review.Ref{Ref: headRef, SHA: headRefSHA},
 	}
 
-	store := review.NewStore(review.NewPaths(repo.Workdir, branch))
+	paths := review.NewPaths(repo.Workdir, branch)
+	warnLegacySitatameDir(env, paths.LegacyRoot(), paths.DraftsRoot())
+	store := review.NewStore(paths)
 	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
 		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
 	}
@@ -254,6 +267,58 @@ func emptyDiffMessage(spec gitx.DiffSpec) string {
 		return "no working-tree changes"
 	}
 	panic(fmt.Sprintf("emptyDiffMessage: unexpected Source %d", spec.Source))
+}
+
+// warnLegacySitatameDir prints two one-line stderr notices when a pre-#38
+// <repo>/.sitatame/ directory is still present: one that says the directory is
+// ignored, and one with a copy-pasteable migration command for the user's
+// actual new drafts root. We intentionally do not auto-migrate: users may
+// have stale drafts they want to review or commit before deleting, and a
+// silent move could clobber work. Empty legacyDir or a missing path is a
+// no-op.
+//
+// The migration line bundles `mkdir -p <newDraftsRoot> && mv ...` because on
+// a first upgrade the new drafts root does not exist yet; a bare `mv` would
+// fail and leave the user guessing. newDraftsRoot is `paths.DraftsRoot()`
+// from the caller — i.e. the resolved `<output-root>/<project-slug>/drafts`
+// for this checkout — and is fed into the message so users do not have to
+// compute the project slug by hand.
+//
+// Paths are POSIX single-quote wrapped via shellQuote so users with spaces or
+// shell metacharacters (`$`, `*`, `(`, ...) in their checkout / SITATAME_HOME
+// can paste the hint as-is. The `/drafts/*` glob in the mv source is left
+// outside the quotes so the shell still expands it; quoting it would turn the
+// `*` into a literal and the `mv` would fail with "no such file".
+func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
+	if legacyDir == "" {
+		return
+	}
+	if _, err := os.Stat(legacyDir); err != nil {
+		return
+	}
+	fmt.Fprintf(env.Stderr,
+		"sitatame: legacy %s/ detected — ignored.\n",
+		legacyDir,
+	)
+	if newDraftsRoot != "" {
+		abs, err := filepath.Abs(newDraftsRoot)
+		if err != nil || abs == "" {
+			abs = newDraftsRoot
+		}
+		fmt.Fprintf(env.Stderr,
+			"sitatame: To migrate drafts: mkdir -p %s && mv %s/drafts/* %s/\n",
+			shellQuote(abs), shellQuote(legacyDir), shellQuote(abs),
+		)
+	}
+}
+
+// shellQuote wraps s in POSIX single quotes, escaping embedded single quotes
+// with the standard `'\''` trick. Used so paths printed into copy-paste shell
+// snippets survive spaces and metacharacters (`$`, `*`, `(`, backticks, ...).
+// We don't use strconv.Quote because that produces Go-style double-quoted
+// strings, which would re-expand `$VAR` and friends under sh.
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 // runTUIWithShutdown wraps the runner with a defer-based safety net: if the
