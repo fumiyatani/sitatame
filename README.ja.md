@@ -71,6 +71,7 @@ sitatame search TODO    # ~/.sitatame/<project-slug>/reviews/ を grep
 ```
 j / k       カーソル下 / 上
 n / p       次 / 前のファイル
+wheel       diff をスクロール（Option/Fn 押下でテキスト選択）
 r           範囲選択開始（j/k で拡張、Esc で解除）
 c           カーソル位置にコメント（kind は選択 / 行種別から自動決定）
 Shift+R     review 全体コメント（front matter の review_comment を編集）

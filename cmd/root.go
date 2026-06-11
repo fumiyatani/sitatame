@@ -64,6 +64,7 @@ func defaultRunTUI(env Env, opts TUIOptions) (TUIResult, error) {
 	model := tui.New(opts.Files, opts.Review)
 	p := tea.NewProgram(model,
 		tea.WithAltScreen(),
+		tea.WithMouseCellMotion(),
 		tea.WithInput(env.Stdin),
 		tea.WithOutput(env.Stdout),
 	)
