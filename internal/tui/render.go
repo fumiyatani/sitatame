@@ -42,7 +42,7 @@ func stripANSI(s string) string {
 
 // sanitizePath removes control bytes from a string that will be rendered as
 // chrome text (e.g. file picker rows) instead of as a diff body. Two-step:
-// stripANSI for CSI sequences, then drop bare ESC and other C0 controls so
+// stripANSI for CSI sequences, then drop bare ESC and other C0/C1 controls so
 // nothing reaches the terminal that could move the cursor or rewrite cells.
 //
 // Why this exists separately from renderLine's writeBody: the file picker
@@ -50,9 +50,12 @@ func stripANSI(s string) string {
 // goes through writeBody, so without this helper File.Path bytes coming from
 // `git diff --raw -z` would render verbatim. Tab is preserved as a space so
 // path widths stay visually similar to the original; every other byte below
-// 0x20, plus DEL (0x7F), is replaced with '?' to keep a visible signal that
-// something was scrubbed (vs. silently dropping bytes which could collapse
-// distinct paths to identical-looking strings).
+// 0x20, plus DEL (0x7F) and the C1 control range U+0080–U+009F (notably
+// 0x9B CSI / 0x9E PM / 0x9F APC, which xterm-compatible terminals will
+// interpret as ESC-introduced sequences when received as raw UTF-8), is
+// replaced with '?' to keep a visible signal that something was scrubbed
+// (vs. silently dropping bytes which could collapse distinct paths to
+// identical-looking strings).
 func sanitizePath(s string) string {
 	s = stripANSI(s)
 	if !needsControlScrub(s) {
@@ -68,7 +71,7 @@ func sanitizePath(s string) string {
 			b.WriteRune('?')
 		case r == '\t':
 			b.WriteByte(' ')
-		case r < ' ' || r == 0x7F:
+		case r < 0x20 || r == 0x7F || (r >= 0x80 && r < 0xA0):
 			b.WriteRune('?')
 		default:
 			b.WriteRune(r)
@@ -78,11 +81,14 @@ func sanitizePath(s string) string {
 }
 
 // needsControlScrub is a fast pre-check so the common case (clean ASCII path)
-// avoids allocating a builder.
+// avoids allocating a builder. Any byte >= 0x80 forces the slow path so the
+// UTF-8 decoder can identify C1 controls (U+0080–U+009F) that would otherwise
+// slip through a byte-wise check — e.g. 0x9B (CSI) acts as a single-byte
+// escape introducer on xterm-compatible terminals.
 func needsControlScrub(s string) bool {
 	for i := 0; i < len(s); i++ {
 		c := s[i]
-		if c < 0x20 || c == 0x7F {
+		if c < 0x20 || c == 0x7F || c >= 0x80 {
 			return true
 		}
 	}

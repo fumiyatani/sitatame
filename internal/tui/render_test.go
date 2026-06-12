@@ -72,3 +72,87 @@ func TestRenderLine_BinaryPlaceholder(t *testing.T) {
 		t.Errorf("binary placeholder mangled: %q", got)
 	}
 }
+
+// TestSanitizePath_StripsC1ControlBytes verifies that every byte in the C1
+// control range (U+0080–U+009F) is replaced with '?' when it appears in a
+// path. xterm-compatible terminals treat 0x9B as a single-byte CSI
+// introducer (equivalent to ESC `[`), so a path containing it could move
+// the cursor or rewrite cells if rendered raw — the original PR54 round 3
+// fast path only checked `< 0x20 || == 0x7F` and let these through.
+func TestSanitizePath_StripsC1ControlBytes(t *testing.T) {
+	t.Parallel()
+	for b := 0x80; b <= 0x9F; b++ {
+		// Encode as UTF-8 — a single rune in [0x80, 0x9F] occupies two
+		// bytes (0xC2 0x80..0xC2 0x9F). We want the *rune* to be a C1
+		// control, not the raw byte (which would be invalid UTF-8 and
+		// caught separately by the RuneError branch).
+		in := "ok/" + string(rune(b)) + "end"
+		got := sanitizePath(in)
+		want := "ok/?end"
+		if got != want {
+			t.Errorf("sanitizePath(C1 0x%02X) = %q, want %q", b, got, want)
+		}
+	}
+	// Spot-check the named offenders so a regression on these specific
+	// codepoints fails loudly.
+	for _, tc := range []struct {
+		name string
+		r    rune
+	}{
+		{"CSI (0x9B)", 0x9B},
+		{"PM (0x9E)", 0x9E},
+		{"APC (0x9F)", 0x9F},
+	} {
+		in := "a" + string(tc.r) + "b"
+		got := sanitizePath(in)
+		if got != "a?b" {
+			t.Errorf("sanitizePath(%s) = %q, want %q", tc.name, got, "a?b")
+		}
+	}
+}
+
+// TestSanitizePath_PreservesValidUTF8 confirms the C1 fix did not over-scrub
+// ordinary multi-byte UTF-8 (Japanese filenames are the canonical case the
+// fast-path widening could regress).
+func TestSanitizePath_PreservesValidUTF8(t *testing.T) {
+	t.Parallel()
+	cases := []string{
+		"日本語/ファイル.go",
+		"café/menü.txt",
+		"emoji/🎉.md",
+		"plain/ascii.go",
+		"", // empty path stays empty
+	}
+	for _, in := range cases {
+		if got := sanitizePath(in); got != in {
+			t.Errorf("sanitizePath(%q) = %q, want unchanged", in, got)
+		}
+	}
+}
+
+// TestSanitizePath_StripsC0AndEscape locks in the pre-existing C0 / ESC /
+// DEL behavior so the C1 widening does not silently drop coverage of the
+// original PR54 round 3 fix.
+func TestSanitizePath_StripsC0AndEscape(t *testing.T) {
+	t.Parallel()
+	cases := []struct {
+		in, want string
+	}{
+		{"safe/path.go", "safe/path.go"},
+		// Full CSI sequence is dropped by stripANSI before sanitizePath
+		// sees it (this is how the helper layers compose).
+		{"esc\x1b[31mred", "escred"},
+		// Bare ESC with no `[ ... letter` survives stripANSI and must be
+		// scrubbed to '?' by sanitizePath.
+		{"bare\x1bend", "bare?end"},
+		{"bell\x07here", "bell?here"},
+		{"del\x7fhere", "del?here"},
+		{"tab\there", "tab here"}, // tab → single space
+		{"\x00null", "?null"},
+	}
+	for _, tc := range cases {
+		if got := sanitizePath(tc.in); got != tc.want {
+			t.Errorf("sanitizePath(%q) = %q, want %q", tc.in, got, tc.want)
+		}
+	}
+}
