@@ -16,36 +16,21 @@ func hasComment(commentIdxs []int) bool {
 	return len(commentIdxs) > 0
 }
 
-// hasToggleableComment は overlay の対象行が「`x` で状態を切り替え可能なコメント」を
-// 1 件以上抱えているかを返す。toggleResolvedAtCursor は StateStale を意図的にスキップ
-// するため、stale のみの行で has-comment hint を出すと `x RESOLVE` の案内に反して何も
-// 起きず、ユーザーを誤誘導する。hint の出し分けはこの helper で stale-only 行を弾く。
-func hasToggleableComment(commentIdxs []int, comments []review.Comment) bool {
-	_, ok := resolveActionLabel(commentIdxs, comments)
-	return ok
-}
-
-// resolveActionLabel は overlay 上のコメント群から `x` キーの実効動作を返す。
-// toggleResolvedAtCursor の優先順位 (open ≥ 1 → resolve, それ以外で resolved ≥ 1 →
-// reopen, stale のみ → no-op) と一致させ、hint のラベルとキー挙動の不一致を防ぐ。
-// ok=false は stale のみ／空 overlay／インデックス無効の「押しても何も起きない」状態。
-func resolveActionLabel(commentIdxs []int, comments []review.Comment) (string, bool) {
-	hasOpen, hasResolved := false, false
-	for _, idx := range commentIdxs {
-		if idx < 0 || idx >= len(comments) {
-			continue
-		}
-		switch comments[idx].State {
-		case review.StateOpen:
-			hasOpen = true
-		case review.StateResolved:
-			hasResolved = true
-		}
+// resolveActionLabel は対象行で `x` キーを押したときに発生する動作のラベルを返す。
+// 内部で Model.resolveTarget を呼ぶため、sticky な lastToggledAnchor も考慮した
+// 「次に実際に flip される comment の現在状態」に基づいてラベルを決める。これにより
+// 例えば open A + open B が並ぶ行で A を resolve した直後 (sticky=A) は、A が
+// 既に resolved なので label が "REOPEN" になり、次の `x` (= A を open に戻す) と
+// 一致する。stale-only / 空 overlay は ok=false で stale-only fallthrough に倒れる。
+func (m Model) resolveActionLabel(row int) (string, bool) {
+	target, ok := m.resolveTarget(row)
+	if !ok {
+		return "", false
 	}
-	switch {
-	case hasOpen:
+	switch m.Review.Comments[target].State {
+	case review.StateOpen:
 		return "RESOLVE", true
-	case hasResolved:
+	case review.StateResolved:
 		return "REOPEN", true
 	default:
 		return "", false
