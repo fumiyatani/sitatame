@@ -216,6 +216,24 @@ The TUI tests use snapshot files in `internal/tui/testdata/`; ANSI escapes
 are stripped before comparison so tests stay deterministic across hosts and
 locales.
 
+### Adding a scenario
+
+`internal/tui/scenarios_test.go` runs declarative `tui.Scenario`s through a
+`teatest`-backed harness. Each scenario lists `Steps` (one input event per
+step) and an `Expectation` per step. The runner asserts view-level
+substrings as the program runs (`ViewContains`, `ViewNotContains`,
+`ViewGolden`) and asserts model-state fields (`Cursor`, `Top`, `Comments`,
+`Layout`, `QuitReason`) against the final model after `tea.Quit`. View
+assertions evaluate against the *currently visible terminal screen* — the
+runner replays the cumulative bubbletea output through a `hinshun/vt10x`
+virtual terminal so that delta-repaint frames reconstruct correctly. That
+way `ViewContains` only matches what's on screen now and `ViewNotContains`
+keeps working even after the forbidden text appeared in an earlier step.
+To add a new regression case, append a
+`Test_Scenario_<Name>` function that calls `runScenario(t, tui.Scenario{...})`;
+see the seed scenarios in `scenarios_test.go` for examples and `scenario.go`
+for the full DSL.
+
 ### PTY smoke tests
 
 `internal/replay/` boots the compiled `sitatame` binary inside a
