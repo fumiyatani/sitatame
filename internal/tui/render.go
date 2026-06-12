@@ -40,6 +40,55 @@ func stripANSI(s string) string {
 	return ansiCSI.ReplaceAllString(s, "")
 }
 
+// sanitizePath removes control bytes from a string that will be rendered as
+// chrome text (e.g. file picker rows) instead of as a diff body. Two-step:
+// stripANSI for CSI sequences, then drop bare ESC and other C0 controls so
+// nothing reaches the terminal that could move the cursor or rewrite cells.
+//
+// Why this exists separately from renderLine's writeBody: the file picker
+// composes its own rows (markers, status column, paths, counts) and never
+// goes through writeBody, so without this helper File.Path bytes coming from
+// `git diff --raw -z` would render verbatim. Tab is preserved as a space so
+// path widths stay visually similar to the original; every other byte below
+// 0x20, plus DEL (0x7F), is replaced with '?' to keep a visible signal that
+// something was scrubbed (vs. silently dropping bytes which could collapse
+// distinct paths to identical-looking strings).
+func sanitizePath(s string) string {
+	s = stripANSI(s)
+	if !needsControlScrub(s) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i := 0; i < len(s); {
+		r, sz := utf8.DecodeRuneInString(s[i:])
+		i += sz
+		switch {
+		case r == utf8.RuneError && sz == 1:
+			b.WriteRune('?')
+		case r == '\t':
+			b.WriteByte(' ')
+		case r < ' ' || r == 0x7F:
+			b.WriteRune('?')
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// needsControlScrub is a fast pre-check so the common case (clean ASCII path)
+// avoids allocating a builder.
+func needsControlScrub(s string) bool {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c == 0x7F {
+			return true
+		}
+	}
+	return false
+}
+
 // renderLine sanitizes a diff content line and clips it to maxWidth columns.
 // `prefix` is one of ' ', '+', '-' and is always emitted; the remaining width
 // is filled with the body. Tabs are expanded to a single space and other
