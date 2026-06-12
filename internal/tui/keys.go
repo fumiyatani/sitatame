@@ -12,6 +12,14 @@ const (
 	KeyUp          = "k"
 	KeyNextFile    = "n"
 	KeyPrevFile    = "p"
+	// Arrow-key aliases for the j/k/n/p navigation set. bubbletea v1.3.10
+	// reports arrow keys as these literal strings via tea.KeyMsg.String(),
+	// so they slot straight into the existing String()-based dispatch in
+	// Update without any extra normalization.
+	KeyDownArrow  = "down"
+	KeyUpArrow    = "up"
+	KeyRightArrow = "right"
+	KeyLeftArrow  = "left"
 	KeySelectKey   = "r"
 	KeySave        = "s"
 	KeyToggleLayout = "tab"

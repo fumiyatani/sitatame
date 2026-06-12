@@ -867,6 +867,73 @@ func TestScenario_NoOpViewContainsOnUnchangedScreen(t *testing.T) {
 // This scenario verifies the contract the same way TestScenario_RequiresPostEventOutput
 // does for Step N>1: substrings that are present in the initial render
 // ("sitatame", file path, hint line) are asserted on Step 1; the only way the
+// TestScenario_ArrowKeysAliasJK pins the arrow-key alias path through the
+// scenario runner: five "down" sends must land the cursor exactly where five
+// "j" sends would. We compare via Cursor in the Expectation block — the
+// runner exposes m.Cursor() on the final model, which is the cleanest
+// equality the DSL offers.
+//
+// Computing the expected cursor through the fixture (j_baseline below)
+// keeps the assertion fixture-agnostic: if buildRows ever changes how it
+// flattens the file headers, this test still pins "arrow == letter" parity
+// instead of a magic number.
+func TestScenario_ArrowKeysAliasJK(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+
+	// Baseline: five `j` sends through Update directly so we know the
+	// target cursor without re-implementing buildRows here.
+	baseline := New([]diffmodel.File{f}, review.Review{})
+	for i := 0; i < 5; i++ {
+		baseline = sendKey(baseline, "j")
+	}
+	jTarget := baseline.Cursor()
+
+	runScenario(t, Scenario{
+		Name:  "arrow_keys_alias_jk",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{SendKey: "down"},
+			{SendKey: "down"},
+			{SendKey: "down"},
+			{SendKey: "down"},
+			{
+				SendKey:                "down",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{Cursor: intPtr(jTarget)},
+			},
+		},
+	})
+}
+
+// TestScenario_ArrowKeysAliasNP pins right/left arrows against the n/p
+// file-jump path. With two files in the fixture, "right" must advance the
+// cursor onto the second file's header — same row as one `n` would.
+func TestScenario_ArrowKeysAliasNP(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{
+		numberedFile("a.go", "a.go", "b1", "b2", 5),
+		numberedFile("b.go", "b.go", "b3", "b4", 5),
+	}
+
+	// Baseline: one `n` lands on file 2's header.
+	baseline := New(files, review.Review{})
+	baseline = sendKey(baseline, "n")
+	nTarget := baseline.Cursor()
+
+	runScenario(t, Scenario{
+		Name:  "arrow_keys_alias_np",
+		Files: files,
+		Steps: []Step{
+			{
+				SendKey:                "right",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{Cursor: intPtr(nTarget)},
+			},
+		},
+	})
+}
+
 // assertion can pass is if Step 1's `j` actually produces post-event bytes
 // (cursor move, delta repaint) — which it does. If a future change regresses
 // the initial drain, the test would still pass on the happy path, but it would
@@ -890,6 +957,79 @@ func TestScenario_FirstStepRequiresPostEventOutput(t *testing.T) {
 				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go", "j/k move"},
+				},
+			},
+		},
+	})
+}
+
+// TestScenario_HintFollowsMode pins the mode-aware hint contract added in
+// PR #48. The hint line must surface a `-- RANGE --` tag the instant a
+// selection starts, and a `-- has comment --` tag the instant the cursor
+// lands on a row whose overlay carries at least one comment. Both are
+// regression-prone because the hint reads three loosely coupled Model
+// fields (selection, layout, cursor+overlay) and a future refactor that
+// short-circuits any one of those reads would silently break the mode
+// switch without breaking the unit tests against hintLine directly.
+func TestScenario_HintFollowsMode(t *testing.T) {
+	t.Parallel()
+	// Seed an open comment on HeadLine=2 so jumping to that row flips the
+	// hint into has-comment mode without needing to author a fresh comment
+	// mid-scenario.
+	f, openComment := scenarioFileWithComment("a.go", 2, "a-open")
+	r := review.Review{Comments: []review.Comment{openComment}}
+	runScenario(t, Scenario{
+		Name:          "hint_follows_mode",
+		Files:         []diffmodel.File{f},
+		InitialReview: r,
+		Steps: []Step{
+			// Walk to the first content row (row 2 holds HeadLine=1).
+			{SendKey: "j"},
+			{SendKey: "j"},
+			// Start a selection — RANGE tag must appear on the next frame.
+			{
+				SendKey:                "r",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"RANGE"}},
+			},
+			// Esc cancels the selection so the hint can flip again.
+			{SendKey: "esc"},
+			// Step onto HeadLine=2 where the seeded comment lives. The
+			// `-- has comment --` tag must surface on the resulting frame.
+			{
+				SendKey:                "j",
+				RequirePostEventOutput: true,
+				Expect: Expectation{
+					ViewContains: []string{"has comment"},
+					// Selection has been cleared, so the RANGE tag must
+					// be gone. Asserting its absence pins the mode-switch
+					// in both directions.
+					ViewNotContains: []string{"RANGE"},
+				},
+			},
+		},
+	})
+}
+
+// TestScenario_LeftClickMovesCursor pins the click-to-place-cursor flow added
+// for issue #47: a left-button press at a diff Y coordinate moves the cursor
+// onto the corresponding row. We click Y=5 on a fresh model with no scrolling,
+// so the targeted row is m.top + (Y - statusBarRows) = 0 + 4 = 4.
+// numberedFile emits rows: file header (0), hunk header (1), content lines
+// 2..N — so row 4 is the third content line.
+func TestScenario_LeftClickMovesCursor(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:       "left_click_moves_cursor",
+		Files:      []diffmodel.File{f},
+		WindowSize: [2]int{60, 14},
+		Steps: []Step{
+			{
+				SendMouse:              &MouseEvent{Button: "left", Action: "press", Y: 5},
+				RequirePostEventOutput: true,
+				Expect: Expectation{
+					Cursor: intPtr(4),
 				},
 			},
 		},

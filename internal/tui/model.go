@@ -147,6 +147,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.scrollViewportBy(mouseWheelStep)
 			}
+		case tea.MouseButtonLeft:
+			m.handleLeftClick(msg.Y)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -174,7 +176,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case KeyToggleLayout:
 			m.toggleLayout()
 			return m, nil
-		case KeyDown:
+		case KeyDown, KeyDownArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(1)
 			} else {
@@ -182,7 +184,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyUp:
+		case KeyUp, KeyUpArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(-1)
 			} else {
@@ -190,7 +192,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyNextFile:
+		case KeyNextFile, KeyRightArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(1)
 			} else {
@@ -198,7 +200,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearSelection()
 			}
 			return m, nil
-		case KeyPrevFile:
+		case KeyPrevFile, KeyLeftArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(-1)
 			} else {
@@ -257,28 +259,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// toggleResolvedAtCursor flips the state of the comment anchored at the
-// cursor row between open and resolved. Target selection has two tiers:
+// resolveTarget picks which comment on `row` the next `x` press would flip,
+// matching the priority used by toggleResolvedAtCursor:
 //
-//  1. If a previous `x` on this row toggled anchor X and X is still on the
-//     row, X is flipped again. This is the undo path: pressing `x` twice in
-//     a row on the same line must touch the *same* comment so a row of
-//     `[open A, resolved B]` doesn't silently mutate B on the second press.
-//  2. Otherwise the open-biased default applies:
-//     - any open comment exists → the last open one is resolved
-//     - only resolved comments remain → the last resolved one is reopened
+//  1. If a previous `x` on this row toggled anchor X and X is still present
+//     in a toggleable state (open/resolved), X is chosen — the undo path.
+//  2. Otherwise the open-biased default: any open comment exists → the last
+//     open one, else the last resolved one.
 //
-// Stale comments are ignored entirely — the underlying code has drifted
-// and silently resolving them would hide a follow-up.
+// Stale comments are skipped entirely. Returns (-1, false) for empty
+// overlays, stale-only rows, or rows where the overlay indexes nothing valid.
 //
-// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
-// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
-// even when several comments share the row, and `lastToggledAnchor` is
-// updated so a subsequent `x` re-targets the same comment.
-func (m *Model) toggleResolvedAtCursor() {
-	idxs := m.overlay[m.cursor]
+// Shared between toggleResolvedAtCursor (which mutates) and the hint label
+// (which only describes) so the hint never disagrees with what `x` will do.
+func (m Model) resolveTarget(row int) (int, bool) {
+	idxs := m.overlay[row]
 	if len(idxs) == 0 {
-		return
+		return -1, false
 	}
 
 	stickyIdx := -1
@@ -305,16 +302,28 @@ func (m *Model) toggleResolvedAtCursor() {
 		// StateStale: ignored on purpose.
 	}
 
-	target := -1
 	switch {
 	case stickyIdx >= 0:
-		target = stickyIdx
+		return stickyIdx, true
 	case lastOpen >= 0:
-		target = lastOpen
+		return lastOpen, true
 	case lastResolved >= 0:
-		target = lastResolved
+		return lastResolved, true
 	}
-	if target < 0 {
+	return -1, false
+}
+
+// toggleResolvedAtCursor flips the state of the comment anchored at the
+// cursor row between open and resolved. Target selection is delegated to
+// resolveTarget so the hint label and the action stay in lock-step.
+//
+// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
+// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
+// even when several comments share the row, and `lastToggledAnchor` is
+// updated so a subsequent `x` re-targets the same comment.
+func (m *Model) toggleResolvedAtCursor() {
+	target, ok := m.resolveTarget(m.cursor)
+	if !ok {
 		return
 	}
 
@@ -379,3 +388,48 @@ func (m Model) ShowingHelp() bool { return m.showHelp }
 
 // FilePicker returns the open file picker or nil. Test-only accessor.
 func (m Model) FilePicker() *filePicker { return m.filePicker }
+
+// statusBarRows is the height of the chrome above the diff viewport. View()
+// emits the status bar on Y=0 and starts diff rows at Y=1, so any click with
+// msg.Y < statusBarRows is on chrome and a click with
+// msg.Y >= statusBarRows + viewportHeight() is on the hint line / padding.
+const statusBarRows = 1
+
+// handleLeftClick maps a click Y coordinate to a row index and moves the
+// cursor (unified) or splitCursor (split) there. Clicks landing on chrome
+// (status bar / hint line) or past the last rendered row are silently
+// dropped — there's nothing meaningful to select on those rows and a no-op
+// is less surprising than snapping to the nearest valid line.
+func (m *Model) handleLeftClick(y int) {
+	row := y - statusBarRows
+	if row < 0 || row >= m.viewportHeight() {
+		return
+	}
+	if m.layout == LayoutSplit {
+		idx := m.splitTop + row
+		if idx < 0 || idx >= len(m.splitRows) {
+			return
+		}
+		if idx == m.splitCursor {
+			return
+		}
+		m.splitCursor = idx
+		m.invalidateLastToggle()
+		m.refreshSplitPreferredSide()
+		m.scrollSplitToCursor()
+		return
+	}
+	idx := m.top + row
+	if idx < 0 || idx >= len(m.rows) {
+		return
+	}
+	if idx == m.cursor {
+		return
+	}
+	m.cursor = idx
+	m.invalidateLastToggle()
+	m.scrollToCursor()
+	if m.selection != nil {
+		m.extendSelection()
+	}
+}

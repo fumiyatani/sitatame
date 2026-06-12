@@ -71,6 +71,7 @@ sitatame search TODO    # ~/.sitatame/<project-slug>/reviews/ を grep
 ```
 j / k       カーソル下 / 上
 n / p       次 / 前のファイル
+↑ ↓ ← →     矢印キーは k / j / p / n の alias
 f           ファイルピッカーモーダル（任意のファイルへジャンプ）
 wheel       diff をスクロール（Option/Fn 押下でテキスト選択）
 r           範囲選択開始（j/k で拡張、Esc で解除）
