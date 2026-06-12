@@ -69,12 +69,37 @@ type Scenario struct {
 // Step describes one input event plus optional assertions to verify after the
 // event was delivered to the model.
 //
-// Exactly one of SendKey / SendMouse / SendResize must be set per Step.
+// Exactly one of SendKey / SendText / SendMouse / SendResize must be set per
+// Step.
 type Step struct {
 	// SendKey is a textual key spec matched against tea.KeyMsg.String().
 	// Examples: "j", "k", "x", "?", "esc", "tab", "enter", "ctrl+s", "R".
-	// Unknown specs cause the runner to fail the test.
+	//
+	// Only single-rune printable characters and the explicitly-mapped named
+	// keys (esc/enter/tab/space/backspace/up/down/left/right/home/end/
+	// pgup/pgdown/ctrl+s/ctrl+c) are accepted. A multi-rune spec that is
+	// not in the named-key table (typo like "ctrl-s", unmapped name like
+	// "F1") causes the runner to fail the test rather than silently
+	// inject the literal string as KeyRunes — earlier iterations would
+	// have shipped the spec verbatim and any Step without a view assertion
+	// would never have noticed the dropped key.
+	//
+	// For typing free-form text into a modal/textarea, use SendText
+	// instead.
 	SendKey string
+
+	// SendText sends a multi-rune literal to the model as a tea.KeyRunes
+	// message — equivalent to typing each character one after another.
+	// Use this for textarea / modal body input where SendKey would
+	// otherwise have to chain dozens of single-rune Steps.
+	//
+	// Empty string is invalid (Step-shape validation rejects it). Multi-
+	// rune content is forwarded verbatim; named-key parsing does NOT
+	// apply here, so callers cannot accidentally route a typo like
+	// "ctrl-s" into a textarea via SendText either — they would get the
+	// literal seven characters "ctrl-s" typed into the buffer, which is
+	// the intended behavior for this path.
+	SendText string
 
 	// SendMouse delivers a mouse event. Releases and non-wheel buttons are
 	// allowed so scenarios can pin the "release is ignored" invariant.

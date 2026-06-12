@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/exp/teatest"
@@ -199,6 +200,9 @@ func sendStep(tm *teatest.TestModel, step Step) error {
 	if step.SendKey != "" {
 		specified++
 	}
+	if step.SendText != "" {
+		specified++
+	}
 	if step.SendMouse != nil {
 		specified++
 	}
@@ -206,7 +210,7 @@ func sendStep(tm *teatest.TestModel, step Step) error {
 		specified++
 	}
 	if specified != 1 {
-		return fmt.Errorf("step must set exactly one of SendKey/SendMouse/SendResize (got %d)", specified)
+		return fmt.Errorf("step must set exactly one of SendKey/SendText/SendMouse/SendResize (got %d)", specified)
 	}
 
 	switch {
@@ -216,6 +220,8 @@ func sendStep(tm *teatest.TestModel, step Step) error {
 			return err
 		}
 		tm.Send(msg)
+	case step.SendText != "":
+		tm.Send(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(step.SendText)})
 	case step.SendMouse != nil:
 		msg, err := mouseMsgFromSpec(*step.SendMouse)
 		if err != nil {
@@ -233,6 +239,19 @@ func sendStep(tm *teatest.TestModel, step Step) error {
 // tea.KeyMsg. Single printable runes ("j", "k", "x", "?", "R", ...) become
 // KeyRunes messages; the named specs below are translated to their tea.KeyType
 // equivalents.
+//
+// A multi-rune spec that is not in the named-key table (e.g. "ctrl-s" — a
+// typo of "ctrl+s" — or "F1" — an unmapped name) returns an error rather
+// than being injected verbatim as a KeyRunes payload. Earlier iterations
+// fell through to "treat anything else as a literal rune sequence", which
+// meant a typo in a Step that did not have a view assertion would never
+// surface: bubbletea would ignore the literal "ctrl-s" / "down" string,
+// the renderer would emit nothing, and the scenario passed against a
+// completely wrong input. The strict path forces a fast failure right at
+// the Step boundary so the author fixes the spec.
+//
+// To inject free-form multi-rune text (typing into a textarea / modal
+// body), use Step.SendText instead.
 func keyMsgFromSpec(spec string) (tea.KeyMsg, error) {
 	switch spec {
 	case "esc":
@@ -245,6 +264,22 @@ func keyMsgFromSpec(spec string) (tea.KeyMsg, error) {
 		return tea.KeyMsg{Type: tea.KeySpace}, nil
 	case "backspace":
 		return tea.KeyMsg{Type: tea.KeyBackspace}, nil
+	case "up":
+		return tea.KeyMsg{Type: tea.KeyUp}, nil
+	case "down":
+		return tea.KeyMsg{Type: tea.KeyDown}, nil
+	case "left":
+		return tea.KeyMsg{Type: tea.KeyLeft}, nil
+	case "right":
+		return tea.KeyMsg{Type: tea.KeyRight}, nil
+	case "home":
+		return tea.KeyMsg{Type: tea.KeyHome}, nil
+	case "end":
+		return tea.KeyMsg{Type: tea.KeyEnd}, nil
+	case "pgup":
+		return tea.KeyMsg{Type: tea.KeyPgUp}, nil
+	case "pgdown":
+		return tea.KeyMsg{Type: tea.KeyPgDown}, nil
 	case "ctrl+s":
 		return tea.KeyMsg{Type: tea.KeyCtrlS}, nil
 	case "ctrl+c":
@@ -253,9 +288,13 @@ func keyMsgFromSpec(spec string) (tea.KeyMsg, error) {
 	if strings.HasPrefix(spec, "ctrl+") {
 		return tea.KeyMsg{}, fmt.Errorf("unsupported ctrl key %q (add to keyMsgFromSpec if needed)", spec)
 	}
-	// Treat anything else as a literal rune sequence — typical for single
-	// printable characters (`j`, `?`, `R`, etc.). Multi-rune specs are
-	// accepted too; the tea event loop forwards them verbatim.
+	// Single printable runes (`j`, `?`, `R`, ...) flow through as
+	// KeyRunes. Multi-rune specs without an explicit mapping are rejected
+	// — if the author meant to type a literal string they should use
+	// SendText; if they meant a named key they should fix the spec.
+	if utf8.RuneCountInString(spec) != 1 {
+		return tea.KeyMsg{}, fmt.Errorf("unknown SendKey spec %q (use SendText for literal multi-rune input, or add a named-key mapping)", spec)
+	}
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(spec)}, nil
 }
 
