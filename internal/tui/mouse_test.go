@@ -328,6 +328,218 @@ func TestMouse_WheelExtendsActiveSelection(t *testing.T) {
 	}
 }
 
+// click builds a left-button press MouseMsg at (x, y). The diff handler
+// only consults Y, so X is left at 0 in the helpers below.
+func click(y int) tea.MouseMsg {
+	return tea.MouseMsg{Button: tea.MouseButtonLeft, Action: tea.MouseActionPress, Y: y}
+}
+
+// TestMouse_LeftClickMovesCursor: a click on row Y inside the diff viewport
+// must move the cursor to m.top + Y - statusBarRows. statusBarRows == 1 in
+// the current layout (status bar occupies Y=0, diff starts at Y=1).
+func TestMouse_LeftClickMovesCursor(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	// Click at Y=5 → row 5 - 1 = 4 (offset from m.top, which is 0).
+	m = sendMouse(m, click(5))
+	if got, want := m.Cursor(), m.Top()+5-statusBarRows; got != want {
+		t.Errorf("Cursor = %d, want %d", got, want)
+	}
+}
+
+// TestMouse_LeftClickAccountsForTop: cursor must move to m.top + (Y-1) so a
+// click in the same physical row picks a different logical row after scrolling.
+func TestMouse_LeftClickAccountsForTop(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	// Scroll first so m.top > 0, then click at Y=3.
+	m = sendMouse(m, wheel(tea.MouseButtonWheelDown))
+	top := m.Top()
+	if top == 0 {
+		t.Fatalf("precondition failed: wheel did not move top")
+	}
+	m = sendMouse(m, click(3))
+	if got, want := m.Cursor(), top+3-statusBarRows; got != want {
+		t.Errorf("Cursor = %d, want %d (top=%d)", got, want, top)
+	}
+}
+
+// TestMouse_LeftClickOnStatusBarIgnored guards Y=0 (status bar) as no-op.
+func TestMouse_LeftClickOnStatusBarIgnored(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	m, _ = applyKey(m, "j")
+	before := m.Cursor()
+	m = sendMouse(m, click(0))
+	if m.Cursor() != before {
+		t.Errorf("Cursor = %d, want %d (Y=0 is status bar)", m.Cursor(), before)
+	}
+}
+
+// TestMouse_LeftClickOnHintIgnored: clicks at or past status+viewportHeight are
+// on the hint line / trailing padding and must not move the cursor.
+func TestMouse_LeftClickOnHintIgnored(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	before := m.Cursor()
+	// height=20, viewportHeight=18, statusBarRows=1; Y=19 is the hint row.
+	m = sendMouse(m, click(19))
+	if m.Cursor() != before {
+		t.Errorf("Cursor = %d, want %d (Y=19 is hint)", m.Cursor(), before)
+	}
+}
+
+// TestMouse_LeftClickPastLastRowIgnored: clicking beyond the last rendered row
+// (trailing pad after a short file) is a silent no-op rather than snapping to
+// the last row.
+func TestMouse_LeftClickPastLastRowIgnored(t *testing.T) {
+	t.Parallel()
+	// Tiny file: 1 hunk with 2 lines → rows = header + hunk header + 2 = 4.
+	// viewport=18 so most of the screen is empty pad.
+	files := []diffmodel.File{makeFile("a", []byte{' ', ' '})}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	before := m.Cursor()
+	m = sendMouse(m, click(10)) // row 10-1=9, but only 4 rows exist.
+	if m.Cursor() != before {
+		t.Errorf("Cursor = %d, want %d (click past last row should no-op)", m.Cursor(), before)
+	}
+}
+
+// TestMouse_LeftClickIgnoredWhileHelpOpen mirrors the wheel-help guard.
+func TestMouse_LeftClickIgnoredWhileHelpOpen(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	m, _ = applyKey(m, "?")
+	if !m.ShowingHelp() {
+		t.Fatal("expected help to be open")
+	}
+	before := m.Cursor()
+	m = sendMouse(m, click(5))
+	if m.Cursor() != before {
+		t.Errorf("help open: Cursor = %d, want %d", m.Cursor(), before)
+	}
+}
+
+// TestMouse_LeftClickIgnoredWhileModalOpen mirrors the wheel-modal guard:
+// modal Update path consumes the message entirely.
+func TestMouse_LeftClickIgnoredWhileModalOpen(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{bigFile()}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	if m.Modal() == nil {
+		t.Fatal("expected comment modal to be open")
+	}
+	before := m.Cursor()
+	m = sendMouse(m, click(5))
+	if m.Cursor() != before {
+		t.Errorf("modal open: Cursor = %d, want %d", m.Cursor(), before)
+	}
+}
+
+// TestMouse_LeftClickExtendsSelection: an active range must follow the click,
+// just like wheel scrolling and j/k do, so the rendered highlight and the
+// persisted Extent stay in sync.
+func TestMouse_LeftClickExtendsSelection(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	// Anchor a selection on the first content row.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	anchor := m.Cursor()
+	m, _ = applyKey(m, "r")
+	if m.selection == nil {
+		t.Fatalf("expected selection after r")
+	}
+	// Click a few rows down inside the same hunk.
+	target := anchor + 3
+	clickY := target - m.Top() + statusBarRows
+	m = sendMouse(m, click(clickY))
+	if m.Cursor() != target {
+		t.Fatalf("Cursor = %d, want %d", m.Cursor(), target)
+	}
+	if m.selection == nil {
+		t.Fatalf("selection cleared unexpectedly after click")
+	}
+	if m.selection.Anchor != anchor || m.selection.Extent != target {
+		t.Errorf("Selection = (anchor=%d, extent=%d), want (%d, %d)",
+			m.selection.Anchor, m.selection.Extent, anchor, target)
+	}
+}
+
+// TestMouse_LeftClickInvalidatesStickyToggle: cursor moves via click must drop
+// the sticky resolve anchor so the next `x` re-evaluates the open-biased
+// default rather than re-toggling the previously-touched comment.
+func TestMouse_LeftClickInvalidatesStickyToggle(t *testing.T) {
+	t.Parallel()
+	m := setSize(New([]diffmodel.File{bigFile()}, review.Review{}), 80, 20)
+	m.lastToggledAnchor = "stale"
+	m = sendMouse(m, click(3))
+	if m.lastToggledAnchor != "" {
+		t.Errorf("lastToggledAnchor = %q, want \"\" (click must invalidate)", m.lastToggledAnchor)
+	}
+}
+
+// TestMouse_LeftClickOnFileHeader: clicking the file header row (the first
+// row) leaves the cursor on rowFileHeader. A follow-up `c` should open the
+// modal with KindFile, since modal kind comes from the anchor row.
+func TestMouse_LeftClickOnFileHeaderThenComment(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{bigFile()}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	// Move cursor away from row 0 first so the click is a real move.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	// Click Y=1 → row m.top + 0 = 0, the file header.
+	m = sendMouse(m, click(1))
+	if m.Cursor() != 0 {
+		t.Fatalf("Cursor = %d, want 0 (file header)", m.Cursor())
+	}
+	m, _ = applyKey(m, "c")
+	if m.Modal() == nil {
+		t.Fatal("expected modal to open after c on file header")
+	}
+	if got := m.Modal().anchor.Kind; got != review.KindFile {
+		t.Errorf("modal kind = %v, want KindFile", got)
+	}
+}
+
+// TestMouse_LeftClickSplitMovesCursor mirrors the unified test for split.
+func TestMouse_LeftClickSplitMovesCursor(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{bigFile()}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	m = sendNamedKey(m, tea.KeyTab)
+	if m.layout != LayoutSplit {
+		t.Fatalf("expected LayoutSplit")
+	}
+	m = sendMouse(m, click(5))
+	want := m.splitTop + 5 - statusBarRows
+	if m.splitCursor != want {
+		t.Errorf("splitCursor = %d, want %d", m.splitCursor, want)
+	}
+	// Unified cursor must not move in split mode.
+	if m.Cursor() != 0 {
+		t.Errorf("unified Cursor mutated in split: %d", m.Cursor())
+	}
+}
+
+// TestMouse_LeftClickSplitPastLastRowIgnored: clicks past the rendered split
+// rows must be a silent no-op, same invariant as unified.
+func TestMouse_LeftClickSplitPastLastRowIgnored(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFile("a", []byte{' ', ' '})}
+	m := setSize(New(files, review.Review{}), 80, 20)
+	m = sendNamedKey(m, tea.KeyTab)
+	before := m.splitCursor
+	m = sendMouse(m, click(10))
+	if m.splitCursor != before {
+		t.Errorf("splitCursor = %d, want %d", m.splitCursor, before)
+	}
+}
+
 func TestMouse_SplitLayout_WheelDownClampsAtBottom(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{bigFile()}
