@@ -158,7 +158,7 @@ func runScenario(t *testing.T, sc Scenario) {
 		// the screen from identical bytes. Without this sharing, the
 		// substring poll would consume the new frame and the subsequent
 		// golden poll would wait on bytes that already arrived.
-		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, cols, rows, step.Expect)
+		evaluateViewExpectations(t, sc.Name, stepLabel, tm, &drained, cols, rows, step.Expect, step.RequirePostEventOutput)
 
 		// Always advance the drain boundary at the end of a Step, even
 		// when the Step has no view assertions. Without this, a no-view
@@ -372,26 +372,27 @@ func renderScreen(out []byte, cols, rows int) string {
 // consumed by the first poll.
 //
 // Polling strategy:
-//   - If ViewContains / ViewNotContains is set, we use teatest.WaitFor with a
-//     compound condition: bubbletea must have emitted at least one byte since
-//     the Step's input was sent AND the reconstructed screen must satisfy
-//     every required substring while containing no forbidden one. Requiring a
-//     post-event byte is the load-bearing part — without it, the WaitFor
-//     predicate would short-circuit on substrings already present in the
-//     cumulative `drained` buffer from earlier frames (the initial render
-//     alone contains the status header, hint line, file path, ...). A Step
-//     whose input was silently dropped would then "pass" against stale
-//     screen contents. The post-event byte requirement forces a positive
-//     observation that bubbletea reacted to the event before any substring
-//     verdict is recorded.
-//   - Otherwise (golden-only), we cannot use teatest.WaitFor because its
-//     semantics are "condition must become true or the test fails". No-op
-//     steps (mouse release, non-wheel mouse button, Esc with no modal open)
-//     are valid DSL inputs that legitimately produce zero bytes, and the
-//     golden snapshot for such a step is the *unchanged* previous frame. We
-//     run an idle-flush loop that drains whatever bytes arrive but never
-//     fails on timeout, so a no-op step still gets its golden compared. The
-//     post-event byte requirement explicitly does NOT apply here.
+//   - We always run idleFlush first so the captured buffer contains the full
+//     post-event frame (or zero bytes for a true no-op) before any predicate
+//     runs. The runScenario loop also drained the *previous* Step's tail into
+//     `drained` at the end of that Step, so when this function reconstructs
+//     the screen from `drained + captured` it is looking at the current frame
+//     — not at stale bytes that pre-dated this Step's input.
+//   - If RequirePostEventOutput is true, we additionally require at least one
+//     post-event byte before flipping the substring verdict. Use that for
+//     Steps whose input MUST cause a visible frame change (wheel scroll,
+//     cursor move, mode toggle, ...). With the guard, a silently-dropped
+//     input surfaces as a timeout instead of a false positive against
+//     `drained`'s pre-existing contents.
+//   - Default (RequirePostEventOutput=false) tolerates zero post-event bytes.
+//     This matches the golden-only path's contract: valid no-op inputs
+//     (mouse release, non-wheel mouse button, esc-with-no-modal, ...) are
+//     allowed to assert ViewContains/ViewNotContains against the unchanged
+//     previous frame. The end-of-previous-step drainAvailable boundary is
+//     what protects this path from false positives — without it, the
+//     "unchanged" frame would silently include leftover bytes from a Step
+//     before the previous one, which is a different bug class entirely
+//     (covered by TestScenario_NoViewStepDrainsBoundary).
 //
 // drained accumulates *every* byte teatest has ever emitted; renderScreen
 // requires the full history because bubbletea's delta repaint leaves the
@@ -403,6 +404,7 @@ func evaluateViewExpectations(
 	drained *bytes.Buffer,
 	cols, rows int,
 	expect Expectation,
+	requirePostEventOutput bool,
 ) {
 	t.Helper()
 
@@ -429,13 +431,23 @@ func evaluateViewExpectations(
 			// `latest` is the cumulative byte slice WaitFor has read out
 			// of tee since this drain started — i.e. exactly the bytes
 			// bubbletea emitted after the Step's input was delivered.
-			// Require at least one such byte before evaluating the
-			// substring verdict; otherwise WaitFor would happily return
-			// true on the very first poll if `required` substrings were
-			// already present in `drained` (which is common — the
-			// initial render alone seeds the header, hint line, and
-			// file path that most Steps assert against).
-			if len(latest) == 0 {
+			//
+			// When RequirePostEventOutput is true, the predicate cannot
+			// flip until bubbletea has actually emitted at least one
+			// byte. That mode is for Steps whose input MUST cause a
+			// frame change: a silently-dropped input then surfaces as a
+			// WaitFor timeout rather than a false-positive match against
+			// `drained`'s pre-existing contents.
+			//
+			// In the default mode (RequirePostEventOutput=false) we
+			// allow `latest` to be empty so that valid no-op inputs
+			// (mouse release, non-wheel mouse button, esc-with-no-modal,
+			// ...) can still assert ViewContains/ViewNotContains
+			// against the unchanged previous frame. The protection
+			// against stale bytes from *earlier* Steps comes from the
+			// drainAvailable boundary at the end of every Step in
+			// runScenario, not from this guard.
+			if requirePostEventOutput && len(latest) == 0 {
 				return false
 			}
 			out := append([]byte(nil), drained.Bytes()...)
