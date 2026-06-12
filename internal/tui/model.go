@@ -159,7 +159,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case KeyToggleLayout:
 			m.toggleLayout()
 			return m, nil
-		case KeyDown:
+		case KeyDown, KeyDownArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(1)
 			} else {
@@ -167,7 +167,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyUp:
+		case KeyUp, KeyUpArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(-1)
 			} else {
@@ -175,7 +175,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyNextFile:
+		case KeyNextFile, KeyRightArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(1)
 			} else {
@@ -183,7 +183,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearSelection()
 			}
 			return m, nil
-		case KeyPrevFile:
+		case KeyPrevFile, KeyLeftArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(-1)
 			} else {
