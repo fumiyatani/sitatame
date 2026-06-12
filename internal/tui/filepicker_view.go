@@ -217,43 +217,84 @@ func pickerHintForWidth(width int) string {
 // filePickerMaxWidth so long paths don't make the picker stretch the whole
 // terminal width, and at the window's actual width when that's smaller so
 // the right border doesn't fall off-screen.
+//
+// On very narrow terminals (windowWidth < ~22) we deliberately let the modal
+// shrink below the "desired minimum" of 20 columns. The window-width cap is a
+// hard ceiling: returning anything larger than windowWidth would make the
+// border lines overflow and wrap, collapsing the modal layout. The trade-off
+// is that the picker text may be heavily clipped on tiny terminals — that is
+// strictly preferable to a wrapped border which destroys the whole frame.
+// We never return less than 1 because builders downstream assume at least one
+// column for the inner area; the caller is expected to refuse to render at
+// windowWidth <= 0 in practice.
 func filePickerWidth(windowWidth int) int {
-	w := filePickerMaxWidth
-	if windowWidth > 0 && windowWidth-2 < w {
-		w = windowWidth - 2
+	const desiredMin = 20
+	w := desiredMin
+	if windowWidth-2 > w {
+		w = min(windowWidth-2, filePickerMaxWidth)
 	}
-	if w < 20 {
-		w = 20
+	if w > windowWidth && windowWidth > 0 {
+		w = windowWidth
+	}
+	if w < 1 {
+		w = 1
 	}
 	return w
 }
 
 // renderBorderTop returns "+- title --------+", padded to width. Plain ASCII
 // to keep the snapshot tests deterministic across terminal locales.
+//
+// On narrow widths (< chrome + title) we clip the whole line to `width` so
+// the rendered modal never overflows the terminal. The trade-off is a chopped
+// title — pickerHintForWidth already handles the bottom variant; here we just
+// trim, because shrinking "Files (N)" mid-token would mislead the user about
+// which file count they're seeing.
 func renderBorderTop(title string, width int) string {
+	if width <= 0 {
+		return ""
+	}
 	titleW := ColWidth(title)
 	dash := width - 2 - titleW
 	if dash < 0 {
 		dash = 0
 	}
-	return "+-" + title + strings.Repeat("-", dash) + "+"
+	line := "+-" + title + strings.Repeat("-", dash) + "+"
+	if ColWidth(line) > width {
+		line = clipForBudget(line, width)
+	}
+	return line
 }
 
 func renderBorderBottom(hint string, width int) string {
+	if width <= 0 {
+		return ""
+	}
 	hintW := ColWidth(hint)
 	dash := width - 2 - hintW
 	if dash < 0 {
 		dash = 0
 	}
-	return "+-" + hint + strings.Repeat("-", dash) + "+"
+	line := "+-" + hint + strings.Repeat("-", dash) + "+"
+	if ColWidth(line) > width {
+		line = clipForBudget(line, width)
+	}
+	return line
 }
 
 func renderPickerBlank(width int) string {
+	if width <= 0 {
+		return ""
+	}
 	inner := width - 2
 	if inner < 0 {
 		inner = 0
 	}
-	return "|" + strings.Repeat(" ", inner) + "|"
+	line := "|" + strings.Repeat(" ", inner) + "|"
+	if ColWidth(line) > width {
+		line = clipForBudget(line, width)
+	}
+	return line
 }
 
 // renderPickerRow lays out one item line:
@@ -264,6 +305,9 @@ func renderPickerBlank(width int) string {
 // counts always survive at the right edge. Centralised here so the
 // truncation budget stays consistent with the surrounding chrome math.
 func renderPickerRow(it filePickItem, selected bool, width int) string {
+	if width <= 0 {
+		return ""
+	}
 	marker := "  "
 	if selected {
 		marker = "> "
@@ -298,7 +342,14 @@ func renderPickerRow(it filePickItem, selected bool, width int) string {
 	} else if bodyW < inner {
 		body = body + strings.Repeat(" ", inner-bodyW)
 	}
-	return "|" + body + "|"
+	line := "|" + body + "|"
+	// Final guard: at widths < 2 there's no room for both borders, so trim
+	// the assembled line to the requested column count. Without this the
+	// "||" sentinel would overflow a 1-column terminal.
+	if ColWidth(line) > width {
+		line = clipForBudget(line, width)
+	}
+	return line
 }
 
 // clipForBudget truncates s to budget display columns, appending an ellipsis

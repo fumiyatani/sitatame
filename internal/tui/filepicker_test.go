@@ -475,6 +475,61 @@ func TestFilePickerView_HintFitsNarrowWidth(t *testing.T) {
 	}
 }
 
+// TestFilePickerWidth_NeverExceedsWindow pins the narrow-terminal contract:
+// the modal width must never exceed the window width once the terminal can
+// actually report one (windowWidth >= 1). Previously the function clamped to
+// a hard floor of 20, which made a 10-column terminal produce a 20-column
+// border line — wrapping the entire modal frame. We accept the readability
+// trade-off (text gets clipped) in exchange for a border that fits.
+//
+// windowWidth=0 is a degenerate case (no terminal would actually report it
+// while we're rendering) so we don't promise <= windowWidth there; we just
+// require a sane positive return so downstream builders don't panic.
+func TestFilePickerWidth_NeverExceedsWindow(t *testing.T) {
+	t.Parallel()
+	for _, ww := range []int{10, 5, 1} {
+		got := filePickerWidth(ww)
+		if got > ww {
+			t.Errorf("filePickerWidth(%d) = %d, must be <= %d (border would overflow)", ww, got, ww)
+		}
+		if got < 1 {
+			t.Errorf("filePickerWidth(%d) = %d, must be >= 1", ww, got)
+		}
+	}
+	if got := filePickerWidth(0); got < 1 {
+		t.Errorf("filePickerWidth(0) = %d, must be >= 1 (downstream builders assume positive width)", got)
+	}
+}
+
+// TestFilePickerView_NarrowTerminalDoesntOverflow renders the picker against a
+// terminal narrower than the historic 20-column floor and asserts every line
+// of the produced view fits within the reported window width. This is the
+// behavioral guarantee TestFilePickerWidth_NeverExceedsWindow pins at the
+// helper level — repeated here at the view level because the helper math
+// could be correct yet still produce overflowing lines if the renderers
+// derived their column count from somewhere else.
+func TestFilePickerView_NarrowTerminalDoesntOverflow(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{
+		pickerFile("a.go", diffmodel.StatusModified, 1, 0),
+		pickerFile("b.go", diffmodel.StatusAdded, 2, 1),
+	}
+	for _, ww := range []int{10, 5, 1} {
+		m := New(files, review.Review{})
+		m = setSize(m, ww, 12)
+		m = sendKey(m, "f")
+		if m.FilePicker() == nil {
+			t.Fatalf("ww=%d: precondition: picker should be open", ww)
+		}
+		v := m.View()
+		for i, line := range strings.Split(v, "\n") {
+			if w := ColWidth(line); w > ww {
+				t.Errorf("ww=%d line %d width=%d exceeds %d: %q", ww, i, w, ww, line)
+			}
+		}
+	}
+}
+
 // TestFilePickerView_HintFallsbackForVerySmall guarantees the hint helper
 // degrades gracefully — at very small widths no variant fits, so the helper
 // must return "" rather than truncate mid-token (which would produce noisy
