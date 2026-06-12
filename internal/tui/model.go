@@ -226,28 +226,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// toggleResolvedAtCursor flips the state of the comment anchored at the
-// cursor row between open and resolved. Target selection has two tiers:
+// resolveTarget picks which comment on `row` the next `x` press would flip,
+// matching the priority used by toggleResolvedAtCursor:
 //
-//  1. If a previous `x` on this row toggled anchor X and X is still on the
-//     row, X is flipped again. This is the undo path: pressing `x` twice in
-//     a row on the same line must touch the *same* comment so a row of
-//     `[open A, resolved B]` doesn't silently mutate B on the second press.
-//  2. Otherwise the open-biased default applies:
-//     - any open comment exists → the last open one is resolved
-//     - only resolved comments remain → the last resolved one is reopened
+//  1. If a previous `x` on this row toggled anchor X and X is still present
+//     in a toggleable state (open/resolved), X is chosen — the undo path.
+//  2. Otherwise the open-biased default: any open comment exists → the last
+//     open one, else the last resolved one.
 //
-// Stale comments are ignored entirely — the underlying code has drifted
-// and silently resolving them would hide a follow-up.
+// Stale comments are skipped entirely. Returns (-1, false) for empty
+// overlays, stale-only rows, or rows where the overlay indexes nothing valid.
 //
-// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
-// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
-// even when several comments share the row, and `lastToggledAnchor` is
-// updated so a subsequent `x` re-targets the same comment.
-func (m *Model) toggleResolvedAtCursor() {
-	idxs := m.overlay[m.cursor]
+// Shared between toggleResolvedAtCursor (which mutates) and the hint label
+// (which only describes) so the hint never disagrees with what `x` will do.
+func (m Model) resolveTarget(row int) (int, bool) {
+	idxs := m.overlay[row]
 	if len(idxs) == 0 {
-		return
+		return -1, false
 	}
 
 	stickyIdx := -1
@@ -274,16 +269,28 @@ func (m *Model) toggleResolvedAtCursor() {
 		// StateStale: ignored on purpose.
 	}
 
-	target := -1
 	switch {
 	case stickyIdx >= 0:
-		target = stickyIdx
+		return stickyIdx, true
 	case lastOpen >= 0:
-		target = lastOpen
+		return lastOpen, true
 	case lastResolved >= 0:
-		target = lastResolved
+		return lastResolved, true
 	}
-	if target < 0 {
+	return -1, false
+}
+
+// toggleResolvedAtCursor flips the state of the comment anchored at the
+// cursor row between open and resolved. Target selection is delegated to
+// resolveTarget so the hint label and the action stay in lock-step.
+//
+// On a successful toggle the status bar echoes `resolved: <anchor_id>` or
+// `reopened: <anchor_id>` so the reviewer can see which anchor was touched
+// even when several comments share the row, and `lastToggledAnchor` is
+// updated so a subsequent `x` re-targets the same comment.
+func (m *Model) toggleResolvedAtCursor() {
+	target, ok := m.resolveTarget(m.cursor)
+	if !ok {
 		return
 	}
 

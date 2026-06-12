@@ -89,6 +89,10 @@ Ctrl+S      confirm and append the comment
 Esc         cancel without saving
 ```
 
+The bottom hint line is mode-aware: it advertises the keys that are useful
+in the current context (selection, existing-comment row, split preview) and
+falls back to a compact form when the viewport is narrow.
+
 Typical flows:
 
 ```
