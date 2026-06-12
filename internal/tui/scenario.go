@@ -110,6 +110,25 @@ type Step struct {
 	// via Scenario.WindowSize instead.
 	SendResize *[2]int
 
+	// RequirePostEventOutput tightens the view-assertion contract for
+	// this Step: when true, the runner additionally requires that
+	// bubbletea emit at least one byte in response to the Step's input
+	// before any ViewContains / ViewNotContains predicate is allowed to
+	// flip true. Use this for Steps whose input MUST cause a visible
+	// frame change (e.g. wheel scroll, cursor move, mode toggle); a
+	// silently-dropped input then surfaces as a timeout instead of a
+	// false-positive match against the previous frame.
+	//
+	// Default (false) is the no-op-tolerant mode: view assertions run
+	// against whatever the screen looks like after an idle settle,
+	// regardless of whether the Step produced new bytes. This is the
+	// correct behavior for genuinely no-op inputs (mouse release,
+	// non-wheel mouse button, esc-with-no-modal, ...) where the screen
+	// is *expected* to be byte-identical to the previous frame and the
+	// caller still wants to assert ViewContains/ViewNotContains against
+	// it.
+	RequirePostEventOutput bool
+
 	// Expect is asserted after the event is sent. See the docs on each
 	// Expectation field for evaluation semantics.
 	Expect Expectation

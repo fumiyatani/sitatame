@@ -75,7 +75,11 @@ func TestScenario_ResolveToggleUndo(t *testing.T) {
 			{
 				// First `x`: open-biased default resolves A. statusMsg
 				// echoes the anchor_id, which we can observe via the view.
-				SendKey: "x",
+				// `x` always emits a status-bar redraw, so we hold the
+				// post-event byte guard here to surface a silently
+				// dropped key as a timeout.
+				SendKey:                "x",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"resolved: a-open"},
 				},
@@ -83,7 +87,8 @@ func TestScenario_ResolveToggleUndo(t *testing.T) {
 			{
 				// Second `x` on the same row: must reopen A, NOT flip B.
 				// Status bar should now read "reopened: a-open".
-				SendKey: "x",
+				SendKey:                "x",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"reopened: a-open"},
 					Comments: []*review.Comment{
@@ -110,30 +115,36 @@ func TestScenario_SplitTabRoundtrip(t *testing.T) {
 			// Move onto a content row so `c` in unified can anchor.
 			{SendKey: "j"},
 			{SendKey: "j"},
-			// Enter split.
+			// Enter split. Mode toggle always repaints, so we keep the
+			// post-event byte guard.
 			{
-				SendKey: "tab",
-				Expect:  Expectation{ViewContains: []string{"split: preview"}},
+				SendKey:                "tab",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"split: preview"}},
 			},
 			// `c` in split must be rejected with the preview-only message.
 			// The full previewOnlyMsg is too long for the 80-col status bar,
-			// so we match its head — enough to prove the guard fired.
+			// so we match its head — enough to prove the guard fired. The
+			// status bar redraw always lands a byte, so we keep the guard.
 			{
-				SendKey: "c",
+				SendKey:                "c",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"split is preview-only"},
 				},
 			},
 			// Back to unified.
 			{
-				SendKey: "tab",
-				Expect:  Expectation{ViewContains: []string{"[unified]"}},
+				SendKey:                "tab",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"[unified]"}},
 			},
 			// `c` in unified opens the modal — modalView replaces the diff
 			// so we look for the modal footer (always present regardless of
 			// header truncation).
 			{
-				SendKey: "c",
+				SendKey:                "c",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"Ctrl+S save"},
 					Layout:       layoutPtr(LayoutUnified),
@@ -164,8 +175,9 @@ func TestScenario_RangeCommentFlow(t *testing.T) {
 			{SendKey: "j"}, // extend selection to line 2
 			{SendKey: "j"}, // extend selection to line 3
 			{
-				SendKey: "c",
-				Expect:  Expectation{ViewContains: []string{"range comment: a.go"}},
+				SendKey:                "c",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"range comment: a.go"}},
 			},
 			// Type a single-character body so the textarea has content.
 			{SendKey: "h"},
@@ -215,8 +227,9 @@ func TestScenario_MouseWheelExtendsSelection(t *testing.T) {
 			{SendKey: "j"},
 			// Start the range at line 1.
 			{
-				SendKey: "r",
-				Expect:  Expectation{ViewContains: []string{"RANGE"}},
+				SendKey:                "r",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"RANGE"}},
 			},
 			// Wheel-scroll three times: each tick advances the cursor by
 			// mouseWheelStep (clamped to viewport bottom) and the
@@ -336,8 +349,11 @@ func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
 
 	steps := []Step{
 		{
-			SendKey: "j",
-			Expect:  Expectation{ViewContains: []string{"M a.go"}},
+			// `j` always emits a delta repaint, so we require post-event
+			// output to surface a silently dropped key.
+			SendKey:                "j",
+			RequirePostEventOutput: true,
+			Expect:                 Expectation{ViewContains: []string{"M a.go"}},
 		},
 	}
 	// 29 more j-presses (total 30) walks past file 1 (header + hunk
@@ -350,6 +366,7 @@ func TestScenario_ScrollThenViewTopMarker(t *testing.T) {
 		ViewContains:    []string{"M b.go"},
 		ViewNotContains: []string{"M a.go"},
 	}
+	steps[len(steps)-1].RequirePostEventOutput = true
 
 	runScenario(t, Scenario{
 		Name:  "scroll_then_view_top_marker",
@@ -405,7 +422,8 @@ func TestScenario_ViewContainsAndGoldenTogether(t *testing.T) {
 		Files: []diffmodel.File{f},
 		Steps: []Step{
 			{
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go"},
 					ViewGolden:   "contains_and_golden_together",
@@ -441,7 +459,8 @@ func TestScenario_CombinedAssertionSettlesBeforeGolden(t *testing.T) {
 		Files: []diffmodel.File{f},
 		Steps: []Step{
 			{
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					// Substring lives in the header — bubbletea emits this
 					// first within the post-event frame, so WaitFor can fire
@@ -477,14 +496,18 @@ func TestScenario_ResizeChangesRenderDimensions(t *testing.T) {
 		Steps: []Step{
 			{
 				// Walk onto the diff body so the cursor row is the one
-				// being clipped at 80 columns.
-				SendKey: "j",
+				// being clipped at 80 columns. `j` always emits a delta
+				// repaint so we keep the post-event guard.
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewNotContains: []string{marker},
 				},
 			},
 			{
-				SendResize: &[2]int{120, 40},
+				// Resize forces a full repaint at the new size.
+				SendResize:             &[2]int{120, 40},
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{marker},
 				},
@@ -583,7 +606,8 @@ func TestScenario_RequiresPostEventOutput(t *testing.T) {
 			{
 				// Step 1 seeds the cumulative drained buffer with the
 				// header, file path, and hint line.
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go", "j/k move"},
 				},
@@ -593,7 +617,8 @@ func TestScenario_RequiresPostEventOutput(t *testing.T) {
 				// drained from Step 1, so the guard is the only thing
 				// stopping the WaitFor from returning true on its first
 				// poll. We rely on `j` emitting a fresh frame.
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go", "j/k move"},
 				},
@@ -652,7 +677,8 @@ func TestScenario_NoViewStepDrainsBoundary(t *testing.T) {
 				// are already in `drained` after Step 1's end-of-step
 				// flush; the WaitFor here can only complete by observing
 				// Step 2's own post-event frame bytes.
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go", "j/k move"},
 				},
@@ -690,7 +716,8 @@ func TestScenario_DeltaRepaintPreservesHeader(t *testing.T) {
 		Files: []diffmodel.File{f},
 		Steps: []Step{
 			{
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{
 						// statusLine (top row): file path is part of the
@@ -759,6 +786,64 @@ func TestScenario_RejectsUnknownKeySpec(t *testing.T) {
 	}
 }
 
+// TestScenario_NoOpViewContainsOnUnchangedScreen pins the
+// "no-op-tolerant view assertion" contract added in this PR.
+//
+// Before the fix, evaluateViewExpectations required at least one
+// post-event byte before any ViewContains/ViewNotContains predicate was
+// allowed to flip true. That guard was the right call for Steps whose
+// input was expected to change the screen — a silently-dropped input
+// would surface as a timeout rather than a false-positive match against
+// `drained`'s pre-existing contents — but it ruled out a legitimate use
+// case: asserting that a substring is present (or absent) on the
+// *unchanged* previous frame after a valid no-op input. The DSL
+// documented no-op inputs as supported (mouse release, non-wheel button,
+// esc-with-no-modal, ...) but the substring branch could not be used on
+// them; the golden branch already tolerated zero bytes via idleFlush,
+// so the two branches diverged on their contract.
+//
+// The fix moves the post-event-byte requirement behind an opt-in
+// Step.RequirePostEventOutput flag. The default is no-op tolerant, and
+// the stale-byte protection moves to runScenario's end-of-step
+// drainAvailable boundary instead (pinned by
+// TestScenario_NoViewStepDrainsBoundary).
+//
+// This scenario walks one row down to establish a frame containing
+// "sitatame" (always in the status header), then sends a mouse-release
+// — a no-op for the unified-mode model — and asserts ViewContains:
+// ["sitatame"] on the unchanged frame. With the old guard this would
+// time out; with the new no-op-tolerant default it passes immediately
+// after the idle settle.
+func TestScenario_NoOpViewContainsOnUnchangedScreen(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 3)
+	runScenario(t, Scenario{
+		Name:  "noop_view_contains_on_unchanged_screen",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			{
+				// Establish a stable post-`j` frame seeded with the
+				// header.
+				SendKey:                "j",
+				RequirePostEventOutput: true,
+				Expect: Expectation{
+					ViewContains: []string{"sitatame"},
+				},
+			},
+			{
+				// Mouse release: no-op in unified mode. The screen is
+				// byte-identical to the previous frame, so this Step's
+				// substring assertion must succeed against the
+				// unchanged screen with no post-event bytes required.
+				SendMouse: &MouseEvent{Button: "left", Action: "release"},
+				Expect: Expectation{
+					ViewContains: []string{"sitatame"},
+				},
+			},
+		},
+	})
+}
+
 // TestScenario_FirstStepRequiresPostEventOutput pins the "drain the initial
 // render before the Step loop" contract added to runScenario.
 //
@@ -801,7 +886,8 @@ func TestScenario_FirstStepRequiresPostEventOutput(t *testing.T) {
 				// before `j` had any chance to take effect. With the
 				// drain in place, the post-event guard forces WaitFor to
 				// wait for `j`'s delta repaint before locking in a verdict.
-				SendKey: "j",
+				SendKey:                "j",
+				RequirePostEventOutput: true,
 				Expect: Expectation{
 					ViewContains: []string{"sitatame", "a.go", "j/k move"},
 				},
