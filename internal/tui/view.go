@@ -188,8 +188,10 @@ func resolveHintMode(m Model) (hintMode, string) {
 	}
 	// stale のみの overlay は has-comment hint を出さない。`x` で何も起きないのに
 	// RESOLVE/REOPEN を案内すると誤誘導になるため、stale-only 行は通常 hint へ。
+	// label は resolveActionLabel (内部で resolveTarget を呼ぶ) 経由で決定し、
+	// sticky な lastToggledAnchor も反映する → 次の `x` の挙動と一致する。
 	if m.cursor >= 0 {
-		if label, ok := resolveActionLabel(m.overlay[m.cursor], m.Review.Comments); ok {
+		if label, ok := m.resolveActionLabel(m.cursor); ok {
 			return hintModeHasComment, label
 		}
 	}

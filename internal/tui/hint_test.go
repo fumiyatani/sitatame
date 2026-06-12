@@ -16,8 +16,10 @@ func hintTestModel(width int) Model {
 }
 
 // openComment / staleComment / resolvedComment are concise factories for the
-// comment slice the hint tests need. The anchor fields don't matter — hintLine
-// only looks at State via hasToggleableComment.
+// comment slice the hint tests need. The anchor fields are only inspected when
+// a test exercises the sticky resolve path (lastToggledAnchor); the other
+// tests get away with state-only comments because hintLine routes through
+// Model.resolveActionLabel which keys off State.
 func openComment() review.Comment     { return review.Comment{State: review.StateOpen} }
 func staleComment() review.Comment    { return review.Comment{State: review.StateStale} }
 func resolvedComment() review.Comment { return review.Comment{State: review.StateResolved} }
@@ -330,5 +332,73 @@ func TestHint_MixedRowKeepsHasComment(t *testing.T) {
 				t.Errorf("mixed row must keep has-comment hint, got %q", got)
 			}
 		})
+	}
+}
+
+// stickyRowModel sets up a hint-test Model with two comments on the same row
+// (A then B) and arms lastToggledAnchor to A's anchor id, simulating the
+// state right after the first `x` toggled A. The caller picks A's and B's
+// initial state to exercise the different sticky-vs-default branches.
+func stickyRowModel(aState, bState review.State, stuck string) Model {
+	m := hintTestModel(80)
+	m.cursor = 1
+	m.overlay[1] = []int{0, 1}
+	m.Review.Comments = []review.Comment{
+		{Anchor: review.Anchor{AnchorID: "A"}, State: aState},
+		{Anchor: review.Anchor{AnchorID: "B"}, State: bState},
+	}
+	m.lastToggledAnchor = stuck
+	return m
+}
+
+// TestHint_StickyAnchorBendsLabel pins the P2 reported on PR #53 round 3:
+// when the row hosts [open A, open B] and the user presses `x` once (which
+// resolves A and arms sticky=A), the hint must flip to "REOPEN". The old
+// label helper looked only at "any open present" and showed "RESOLVE", but
+// the next `x` actually targets A (sticky) and reopens it, so RESOLVE was a
+// lie. Now hint and action are derived from the same resolveTarget call.
+func TestHint_StickyAnchorBendsLabel(t *testing.T) {
+	t.Parallel()
+	// Post-first-toggle snapshot: A is resolved (was open, just flipped),
+	// B is still open, sticky points at A. Next `x` will reopen A.
+	m := stickyRowModel(review.StateResolved, review.StateOpen, "A")
+	got := hintLine(m)
+	if !strings.Contains(got, "x REOPEN") {
+		t.Errorf("sticky-on-resolved A must show REOPEN label, got %q", got)
+	}
+	if strings.Contains(got, "x RESOLVE") {
+		t.Errorf("sticky must override the open-biased default, got %q", got)
+	}
+	if !strings.Contains(got, modeTagHasComment) {
+		t.Errorf("has-comment tag should still surface, got %q", got)
+	}
+}
+
+// TestHint_StickyClearedReturnsToOpenPriority verifies the symmetric path:
+// after the sticky anchor is cleared (which happens on any cursor move via
+// invalidateLastToggle), the label falls back to the open-biased default.
+// Without this, leaving and returning to the row would keep the stale
+// REOPEN label even though the next `x` would re-resolve B (open).
+func TestHint_StickyClearedReturnsToOpenPriority(t *testing.T) {
+	t.Parallel()
+	// Same row state, but sticky cleared (as if the user moved j/k away
+	// and back). resolveTarget should fall through to the last open
+	// comment (B) and the label should read RESOLVE.
+	m := stickyRowModel(review.StateResolved, review.StateOpen, "")
+	got := hintLine(m)
+	if !strings.Contains(got, "x RESOLVE") {
+		t.Errorf("cleared sticky must restore RESOLVE label, got %q", got)
+	}
+	if strings.Contains(got, "x REOPEN") {
+		t.Errorf("cleared sticky must not show REOPEN, got %q", got)
+	}
+
+	// Belt-and-braces: invalidateLastToggle on a still-armed model must
+	// also flip the label back, proving the cursor-move path (which calls
+	// invalidateLastToggle internally) reaches the same outcome.
+	armed := stickyRowModel(review.StateResolved, review.StateOpen, "A")
+	armed.invalidateLastToggle()
+	if got := hintLine(armed); !strings.Contains(got, "x RESOLVE") {
+		t.Errorf("invalidateLastToggle did not restore RESOLVE label, got %q", got)
 	}
 }
