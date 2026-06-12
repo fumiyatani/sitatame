@@ -66,6 +66,16 @@ func (m Model) updateFilePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.filePicker.height = m.filePickerHeight()
 			m.filePicker.scrollToIdx()
 		}
+		// Keep the underlying diff viewport(s) in sync with the new height
+		// even though we don't render them while the picker is open. The
+		// non-picker WindowSizeMsg path (model.go) calls these on every
+		// resize; skipping them here would leave m.top pointing at a row
+		// outside [m.top, m.top+viewportHeight()) once the picker closes,
+		// so the diff would appear scrolled into a stale region on Esc.
+		m.scrollToCursor()
+		if m.layout == LayoutSplit {
+			m.scrollSplitToCursor()
+		}
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {

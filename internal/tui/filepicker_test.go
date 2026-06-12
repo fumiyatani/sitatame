@@ -404,3 +404,48 @@ func TestScenario_FilePickerJumpFlow(t *testing.T) {
 		},
 	})
 }
+
+// TestFilePicker_ResizeMaintainsCursorVisibility guards the picker-open
+// WindowSizeMsg path: the underlying diff viewport must follow the new height
+// even though we don't render it. Without scrollToCursor() on this path, m.top
+// keeps pointing at the pre-resize row range and the cursor falls outside
+// [m.top, m.top+viewportHeight()) once the picker closes — the diff would then
+// appear scrolled into a stale region on Esc.
+func TestFilePicker_ResizeMaintainsCursorVisibility(t *testing.T) {
+	t.Parallel()
+	// Many files so the cursor can sit far past the row count a tiny
+	// viewport can hold.
+	var files []diffmodel.File
+	for i := 0; i < 30; i++ {
+		files = append(files, pickerFile(fmt.Sprintf("f%02d.go", i), diffmodel.StatusModified, 1, 0))
+	}
+	m := New(files, review.Review{})
+	m = setSize(m, 80, 24)
+	// Walk the cursor deep into the row stream so a later shrink will force
+	// scrollToCursor() to update m.top.
+	for i := 0; i < 40; i++ {
+		m = sendKey(m, "j")
+	}
+	cursorBefore := m.Cursor()
+	// Open the picker, then shrink the window. Picker absorbs the resize;
+	// underlying diff invariants must still be satisfied.
+	m = sendKey(m, "f")
+	if m.FilePicker() == nil {
+		t.Fatal("precondition: picker should be open")
+	}
+	m = setSize(m, 80, 8)
+	// Close the picker. After Esc the cursor must remain inside the visible
+	// viewport for the new (smaller) height.
+	m = sendNamedKey(m, tea.KeyEsc)
+	if m.FilePicker() != nil {
+		t.Fatal("Esc should close picker")
+	}
+	if m.Cursor() != cursorBefore {
+		t.Errorf("Esc moved cursor: before=%d after=%d", cursorBefore, m.Cursor())
+	}
+	h := m.viewportHeight()
+	if m.Cursor() < m.Top() || m.Cursor() >= m.Top()+h {
+		t.Errorf("cursor out of viewport after resize-while-picker-open: cursor=%d top=%d height=%d",
+			m.Cursor(), m.Top(), h)
+	}
+}
