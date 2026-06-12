@@ -183,7 +183,10 @@ func resolveHintMode(m Model) hintMode {
 	if m.selection != nil {
 		return hintModeSelection
 	}
-	if m.cursor >= 0 && hasComment(m.overlay[m.cursor]) {
+	// stale のみの overlay は has-comment hint を出さない。`x RESOLVE` の案内に
+	// 反して toggleResolvedAtCursor は stale をスキップするため、stale-only 行は
+	// 通常 hint にフォールバックして「押しても何も起きない」誤誘導を避ける。
+	if m.cursor >= 0 && hasToggleableComment(m.overlay[m.cursor], m.Review.Comments) {
 		return hintModeHasComment
 	}
 	return hintModeNormal
