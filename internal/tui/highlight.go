@@ -21,16 +21,35 @@ func hasComment(commentIdxs []int) bool {
 // するため、stale のみの行で has-comment hint を出すと `x RESOLVE` の案内に反して何も
 // 起きず、ユーザーを誤誘導する。hint の出し分けはこの helper で stale-only 行を弾く。
 func hasToggleableComment(commentIdxs []int, comments []review.Comment) bool {
+	_, ok := resolveActionLabel(commentIdxs, comments)
+	return ok
+}
+
+// resolveActionLabel は overlay 上のコメント群から `x` キーの実効動作を返す。
+// toggleResolvedAtCursor の優先順位 (open ≥ 1 → resolve, それ以外で resolved ≥ 1 →
+// reopen, stale のみ → no-op) と一致させ、hint のラベルとキー挙動の不一致を防ぐ。
+// ok=false は stale のみ／空 overlay／インデックス無効の「押しても何も起きない」状態。
+func resolveActionLabel(commentIdxs []int, comments []review.Comment) (string, bool) {
+	hasOpen, hasResolved := false, false
 	for _, idx := range commentIdxs {
 		if idx < 0 || idx >= len(comments) {
 			continue
 		}
 		switch comments[idx].State {
-		case review.StateOpen, review.StateResolved:
-			return true
+		case review.StateOpen:
+			hasOpen = true
+		case review.StateResolved:
+			hasResolved = true
 		}
 	}
-	return false
+	switch {
+	case hasOpen:
+		return "RESOLVE", true
+	case hasResolved:
+		return "REOPEN", true
+	default:
+		return "", false
+	}
 }
 
 // applyCommentHighlight は文字列を commentColorFG で囲んで返す。

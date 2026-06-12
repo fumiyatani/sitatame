@@ -83,6 +83,59 @@ func TestHint_HasComment(t *testing.T) {
 	}
 }
 
+func TestHint_OpenRowShowsResolve(t *testing.T) {
+	t.Parallel()
+	// open のみ → `x` は resolve に倒す。ラベルが action と一致することを固定する。
+	m := hintTestModel(80)
+	m.cursor = 1
+	m.overlay[1] = []int{0}
+	m.Review.Comments = []review.Comment{openComment()}
+	got := hintLine(m)
+	if !strings.Contains(got, "x RESOLVE") {
+		t.Errorf("open-only row must show RESOLVE label, got %q", got)
+	}
+	if strings.Contains(got, "x REOPEN") {
+		t.Errorf("open-only row must not show REOPEN label, got %q", got)
+	}
+}
+
+func TestHint_ResolvedOnlyRowShowsReopen(t *testing.T) {
+	t.Parallel()
+	// resolved のみ → `x` は reopen 側に倒す (toggleResolvedAtCursor の挙動)。
+	// 旧実装は RESOLVE 固定で表示しており、PR53 round2 の P2 はこの齟齬を指摘。
+	m := hintTestModel(80)
+	m.cursor = 1
+	m.overlay[1] = []int{0}
+	m.Review.Comments = []review.Comment{resolvedComment()}
+	got := hintLine(m)
+	if !strings.Contains(got, "x REOPEN") {
+		t.Errorf("resolved-only row must show REOPEN label, got %q", got)
+	}
+	if strings.Contains(got, "x RESOLVE") {
+		t.Errorf("resolved-only row must not show RESOLVE label, got %q", got)
+	}
+	if !strings.Contains(got, modeTagHasComment) {
+		t.Errorf("resolved-only row should still surface has-comment tag, got %q", got)
+	}
+}
+
+func TestHint_MixedRowShowsResolve(t *testing.T) {
+	t.Parallel()
+	// open と resolved が同居する場合、toggleResolvedAtCursor は open 優先で
+	// resolve 側に倒す。ラベルも RESOLVE に揃え、押下時の動作と一致させる。
+	m := hintTestModel(80)
+	m.cursor = 1
+	m.overlay[1] = []int{0, 1}
+	m.Review.Comments = []review.Comment{resolvedComment(), openComment()}
+	got := hintLine(m)
+	if !strings.Contains(got, "x RESOLVE") {
+		t.Errorf("mixed row must prefer RESOLVE label, got %q", got)
+	}
+	if strings.Contains(got, "x REOPEN") {
+		t.Errorf("mixed row must not show REOPEN label, got %q", got)
+	}
+}
+
 func TestHint_HasCommentIgnoresEmptyOverlay(t *testing.T) {
 	t.Parallel()
 	// An empty overlay slice must not be treated as "row has comments";
