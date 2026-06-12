@@ -72,6 +72,7 @@ Keys:
 ```
 j / k       cursor down / up
 n / p       next / previous file
+↑ ↓ ← →     arrow-key aliases for k / j / p / n
 f           file picker modal (jump to any file by name)
 wheel       scroll the diff (hold Option/Fn to text-select)
 r           start range selection (extend with j/k, Esc to clear)
@@ -88,6 +89,10 @@ Inside the comment modal:
 Ctrl+S      confirm and append the comment
 Esc         cancel without saving
 ```
+
+The bottom hint line is mode-aware: it advertises the keys that are useful
+in the current context (selection, existing-comment row, split preview) and
+falls back to a compact form when the viewport is narrow.
 
 Typical flows:
 

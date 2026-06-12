@@ -9,6 +9,7 @@ var helpLines = []string{
 	"",
 	"  j / k     cursor down / up",
 	"  n / p     next / previous file",
+	"  ↑ ↓ ← →  arrow-key aliases for k / j / p / n",
 	"  f         file picker (jump to any file) — unified only",
 	"  wheel     scroll the diff (hold Option/Fn to text-select)",
 	"  Tab       toggle unified ↔ split (preview)",
