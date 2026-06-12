@@ -183,9 +183,34 @@ func filePickerView(m Model) string {
 		b.WriteByte('\n')
 	}
 
-	hint := " j/k or up/down select - Enter jump - Esc close "
+	hint := pickerHintForWidth(width)
 	b.WriteString(renderBorderBottom(hint, width))
 	return b.String()
+}
+
+// pickerHintForWidth picks the longest hint variant that fits inside the modal
+// chrome at the given width. The bottom border is "+-<hint><dashes>+", so the
+// hint must satisfy `2 + hintW + 1 <= width` (i.e. hintW <= width - 3) to leave
+// room for the two corner '+' and at least one trailing dash. When even the
+// shortest legend would overflow we return "" so the bottom border degrades to
+// plain "+---...+" rather than wrapping past the modal width.
+//
+// Variants are ordered longest → shortest; each carries a leading + trailing
+// space because renderBorderBottom embeds the hint verbatim between dashes and
+// the spaces give the text visual breathing room against the corner pieces.
+func pickerHintForWidth(width int) string {
+	variants := []string{
+		" j/k or up/down select - Enter jump - Esc close ",
+		" j/k select - Enter - Esc ",
+		" jk Ent Esc ",
+	}
+	budget := width - 3
+	for _, v := range variants {
+		if ColWidth(v) <= budget {
+			return v
+		}
+	}
+	return ""
 }
 
 // filePickerWidth picks a friendly column count for the modal. We cap at
