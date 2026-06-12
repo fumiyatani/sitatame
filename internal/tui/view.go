@@ -174,29 +174,37 @@ const (
 //  2. an active selection beats a comment-row indicator. (The selection might
 //     happen to cover a row with existing comments; the right tag should still
 //     surface the selection mode.)
-//  3. an existing comment on the cursor row.
+//  3. an existing comment on the cursor row (action label = RESOLVE/REOPEN).
 //  4. fallthrough to the default.
-func resolveHintMode(m Model) hintMode {
+//
+// 第 2 戻り値はカーソル行で `x` が実行する動作のラベル。hintModeHasComment 以外では
+// 空文字でよい。stale のみの行は ok=false で hintModeNormal に倒れる。
+func resolveHintMode(m Model) (hintMode, string) {
 	if m.layout == LayoutSplit {
-		return hintModeSplit
+		return hintModeSplit, ""
 	}
 	if m.selection != nil {
-		return hintModeSelection
+		return hintModeSelection, ""
 	}
-	// stale のみの overlay は has-comment hint を出さない。`x RESOLVE` の案内に
-	// 反して toggleResolvedAtCursor は stale をスキップするため、stale-only 行は
-	// 通常 hint にフォールバックして「押しても何も起きない」誤誘導を避ける。
-	if m.cursor >= 0 && hasToggleableComment(m.overlay[m.cursor], m.Review.Comments) {
-		return hintModeHasComment
+	// stale のみの overlay は has-comment hint を出さない。`x` で何も起きないのに
+	// RESOLVE/REOPEN を案内すると誤誘導になるため、stale-only 行は通常 hint へ。
+	if m.cursor >= 0 {
+		if label, ok := resolveActionLabel(m.overlay[m.cursor], m.Review.Comments); ok {
+			return hintModeHasComment, label
+		}
 	}
-	return hintModeNormal
+	return hintModeNormal, ""
 }
 
 // hintVariantsFor returns the candidate hint variants for `mode`, ordered from
 // the richest expression to the shortest fallback. selectHint walks the slice
 // and picks the first variant that fits in `width`; the final entry is always
 // kept short enough that an 80-col viewport can hold it.
-func hintVariantsFor(mode hintMode) []hintVariant {
+//
+// `action` は hintModeHasComment 限定で `x` の挙動ラベル ("RESOLVE" / "REOPEN") を
+// 受け取り、rich/short の両 variant に同じ文字列を埋め込む。両方で一致させるのは
+// 80 桁未満に縮退した際にラベルと action が食い違わないようにするため。
+func hintVariantsFor(mode hintMode, action string) []hintVariant {
 	switch mode {
 	case hintModeSelection:
 		return []hintVariant{
@@ -205,7 +213,7 @@ func hintVariantsFor(mode hintMode) []hintVariant {
 		}
 	case hintModeHasComment:
 		return []hintVariant{
-			{left: "j/k move · x RESOLVE · c add", right: modeTagHasComment},
+			{left: "j/k move · x " + action + " · c add", right: modeTagHasComment},
 			{left: "j/k · x · c", right: modeTagHasCommentShort},
 		}
 	case hintModeSplit:
@@ -266,8 +274,8 @@ func selectHint(variants []hintVariant, width int) hintVariant {
 }
 
 func hintLine(m Model) string {
-	mode := resolveHintMode(m)
-	variants := hintVariantsFor(mode)
+	mode, action := resolveHintMode(m)
+	variants := hintVariantsFor(mode, action)
 	v := selectHint(variants, m.width)
 	return formatHint(v, m.width)
 }
