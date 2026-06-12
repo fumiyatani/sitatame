@@ -449,3 +449,51 @@ func TestFilePicker_ResizeMaintainsCursorVisibility(t *testing.T) {
 			m.Cursor(), m.Top(), h)
 	}
 }
+
+// TestFilePickerView_HintFitsNarrowWidth pins the bottom-border width
+// invariant: every rendered line of the picker view must fit inside the modal
+// width when the terminal itself is narrow. Without the hint-variant fallback,
+// the full legend overflows past the right border and wraps, collapsing the
+// modal layout.
+func TestFilePickerView_HintFitsNarrowWidth(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{
+		pickerFile("a.go", diffmodel.StatusModified, 1, 0),
+		pickerFile("b.go", diffmodel.StatusAdded, 2, 1),
+	}
+	m := New(files, review.Review{})
+	m = setSize(m, 30, 12)
+	m = sendKey(m, "f")
+	if m.FilePicker() == nil {
+		t.Fatal("precondition: picker should be open")
+	}
+	v := m.View()
+	for i, line := range strings.Split(v, "\n") {
+		if w := ColWidth(line); w > 30 {
+			t.Errorf("line %d width=%d exceeds 30: %q", i, w, line)
+		}
+	}
+}
+
+// TestFilePickerView_HintFallsbackForVerySmall guarantees the hint helper
+// degrades gracefully — at very small widths no variant fits, so the helper
+// must return "" rather than truncate mid-token (which would produce noisy
+// half-words inside the border).
+func TestFilePickerView_HintFallsbackForVerySmall(t *testing.T) {
+	t.Parallel()
+	// width=10: modal budget = width-3 = 7. Shortest variant " jk Ent Esc "
+	// is 12 columns, so the helper must fall through to "".
+	if got := pickerHintForWidth(10); got != "" {
+		t.Errorf("very small width: got %q, want empty", got)
+	}
+	// Sanity: at a comfortable width we pick the full legend.
+	full := " j/k or up/down select - Enter jump - Esc close "
+	if got := pickerHintForWidth(80); got != full {
+		t.Errorf("wide width: got %q, want full legend", got)
+	}
+	// At a medium width, the shorter variant should win.
+	medium := " j/k select - Enter - Esc "
+	if got := pickerHintForWidth(30); got != medium {
+		t.Errorf("medium width: got %q, want medium legend", got)
+	}
+}
