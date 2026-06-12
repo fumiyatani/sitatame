@@ -234,6 +234,25 @@ To add a new regression case, append a
 see the seed scenarios in `scenarios_test.go` for examples and `scenario.go`
 for the full DSL.
 
+### PTY smoke tests
+
+`internal/replay/` boots the compiled `sitatame` binary inside a
+pseudo-terminal, mirrors its output through a [`vt10x`][vt10x] virtual
+terminal, and asserts on the reconstructed screen. The tests cover the boot
+path, `q` / `s` exit paths, the help modal toggle, SIGWINCH-style resize, and
+xterm SGR-mode mouse wheel events.
+
+```sh
+go test ./internal/replay -count=1
+```
+
+Each scenario calls `replay.SkipIfNoPTY(t)` first and skips cleanly on hosts
+where the kernel will not allocate a pty (sandboxed CI shells, containers
+without `/dev/ptmx`). On a regular developer machine or a standard Linux CI
+runner the tests execute the real binary end to end.
+
+[vt10x]: https://github.com/hinshun/vt10x
+
 ## Phase 2 (not in this MVP)
 
 - GitHub Release / goreleaser-driven distribution; `go install <module>@<version>`
