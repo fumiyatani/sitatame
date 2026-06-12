@@ -552,3 +552,75 @@ func TestFilePickerView_HintFallsbackForVerySmall(t *testing.T) {
 		t.Errorf("medium width: got %q, want medium legend", got)
 	}
 }
+
+// TestFilePickerView_SanitizesPathANSI pins the security guarantee that
+// File.Path bytes carrying ANSI CSI sequences never reach the terminal
+// verbatim. `git diff --raw -z` is the upstream for File.Path and it is
+// technically capable of producing such bytes (filenames are essentially
+// arbitrary byte strings on POSIX). Without sanitization the picker would
+// emit "ESC [ 31 m evil ESC [ 0 m" and the user's terminal would interpret
+// the SGR codes as styling — at best confusing, at worst a vector for
+// terminal control injection if a hostile path also carried cursor moves.
+//
+// The test bypasses newFilePicker so it can inject the raw byte sequence
+// directly; going through diffmodel would force normalization details that
+// don't belong to this regression.
+func TestFilePickerView_SanitizesPathANSI(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{pickerFile("placeholder.go", diffmodel.StatusModified, 1, 0)}
+	m := New(files, review.Review{})
+	m = setSize(m, 80, 24)
+	m.filePicker = &filePicker{
+		items: []filePickItem{{
+			FileIdx: 0,
+			Status:  "M",
+			Path:    "\x1b[31mevil\x1b[0m.go",
+			Adds:    1,
+			Dels:    0,
+		}},
+		height: 1,
+	}
+	v := m.View()
+	if strings.ContainsRune(v, '\x1b') {
+		t.Errorf("picker view leaked ESC byte; raw output:\n%q", v)
+	}
+	if !strings.Contains(v, "evil.go") {
+		t.Errorf("sanitized path should still contain visible name 'evil.go':\n%s", v)
+	}
+}
+
+// TestFilePickerView_SanitizesControlChars covers the non-CSI control-byte
+// path: bare ESC, NUL, BEL. stripANSI alone only handles `ESC [ ... letter`
+// sequences, so a path like "\x00boom\x07.go" or "\x1bnot-a-csi.go" would
+// otherwise survive into the rendered modal — BEL would ring the terminal,
+// NUL is a known cell-rendering hazard in some emulators, and a bare ESC
+// preceding a printable letter can still be interpreted as a two-byte
+// escape sequence by terminals.
+//
+// We assert (a) no raw control byte makes it into the view, (b) the
+// printable suffix is preserved so the user can still recognize the file.
+func TestFilePickerView_SanitizesControlChars(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{pickerFile("placeholder.go", diffmodel.StatusModified, 1, 0)}
+	m := New(files, review.Review{})
+	m = setSize(m, 80, 24)
+	m.filePicker = &filePicker{
+		items: []filePickItem{{
+			FileIdx: 0,
+			Status:  "M",
+			Path:    "\x00boom\x07\x1bend.go",
+			Adds:    1,
+			Dels:    0,
+		}},
+		height: 1,
+	}
+	v := m.View()
+	for _, c := range []byte{0x00, 0x07, 0x1b} {
+		if strings.ContainsRune(v, rune(c)) {
+			t.Errorf("picker view leaked control byte %#x; raw output:\n%q", c, v)
+		}
+	}
+	if !strings.Contains(v, "end.go") {
+		t.Errorf("sanitized path should still contain visible suffix 'end.go':\n%s", v)
+	}
+}

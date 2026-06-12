@@ -312,7 +312,16 @@ func renderPickerRow(it filePickItem, selected bool, width int) string {
 	if selected {
 		marker = "> "
 	}
-	statusCol := it.Status + " "
+	// Sanitize the user-influenced fields before any width math: File.Path is
+	// sourced from `git diff --raw -z` and can technically carry ANSI escapes
+	// or control bytes that would inject terminal commands when rendered.
+	// Status is normally a single fixed letter, but we run the same scrub for
+	// defense in depth — the cost is negligible for short strings and it keeps
+	// the rule "anything we paint into picker chrome goes through sanitizePath"
+	// uniform.
+	rawStatus := sanitizePath(it.Status)
+	rawPath := sanitizePath(it.Path)
+	statusCol := rawStatus + " "
 	counts := fmt.Sprintf("+%d -%d", it.Adds, it.Dels)
 	// inner width = total - "|" - "|" - "marker" - " status " - " " - counts
 	inner := width - 2
@@ -325,7 +334,7 @@ func renderPickerRow(it filePickItem, selected bool, width int) string {
 	if pathBudget < 1 {
 		pathBudget = 1
 	}
-	path := clipForBudget(it.Path, pathBudget)
+	path := clipForBudget(rawPath, pathBudget)
 	// Pad the path to fill the budget so the counts column aligns even when
 	// paths differ in length.
 	pad := pathBudget - ColWidth(path)
@@ -354,8 +363,8 @@ func renderPickerRow(it filePickItem, selected bool, width int) string {
 
 // clipForBudget truncates s to budget display columns, appending an ellipsis
 // when truncation occurred. Mirrors writeBody's ellipsis policy in render.go
-// but doesn't drop control bytes — picker text is sourced from File.Path /
-// File.Status, which are already sanitized by the diffmodel layer.
+// but doesn't itself drop control bytes — callers must hand in already-
+// sanitized text (renderPickerRow runs sanitizePath on Path/Status first).
 func clipForBudget(s string, budget int) string {
 	if budget <= 0 {
 		return ""
