@@ -9,11 +9,18 @@ import (
 )
 
 // hintTestModel keeps the test inputs minimal: hintLine only reads m.width,
-// m.selection, m.layout, m.cursor, and m.overlay. Building a full Model via
-// New() would pull in row construction we don't need here.
+// m.selection, m.layout, m.cursor, m.overlay, and m.Review.Comments. Building a
+// full Model via New() would pull in row construction we don't need here.
 func hintTestModel(width int) Model {
 	return Model{width: width, overlay: map[int][]int{}}
 }
+
+// openComment / staleComment / resolvedComment are concise factories for the
+// comment slice the hint tests need. The anchor fields don't matter — hintLine
+// only looks at State via hasToggleableComment.
+func openComment() review.Comment     { return review.Comment{State: review.StateOpen} }
+func staleComment() review.Comment    { return review.Comment{State: review.StateStale} }
+func resolvedComment() review.Comment { return review.Comment{State: review.StateResolved} }
 
 func TestHint_Normal(t *testing.T) {
 	t.Parallel()
@@ -50,6 +57,7 @@ func TestHint_SelectionWinsOverComment(t *testing.T) {
 	m := hintTestModel(80)
 	m.cursor = 0
 	m.overlay[0] = []int{0}
+	m.Review.Comments = []review.Comment{openComment()}
 	m.selection = &Selection{Anchor: 0, Extent: 0}
 	got := hintLine(m)
 	if !strings.Contains(got, modeTagRange) {
@@ -65,6 +73,7 @@ func TestHint_HasComment(t *testing.T) {
 	m := hintTestModel(80)
 	m.cursor = 3
 	m.overlay[3] = []int{0}
+	m.Review.Comments = []review.Comment{openComment()}
 	got := hintLine(m)
 	if !strings.Contains(got, "x RESOLVE") || !strings.Contains(got, "c add") {
 		t.Errorf("has-comment hint missing rich left half: %q", got)
@@ -115,6 +124,7 @@ func TestHint_SplitBeatsSelectionAndComment(t *testing.T) {
 	m.layout = LayoutSplit
 	m.cursor = 0
 	m.overlay[0] = []int{0}
+	m.Review.Comments = []review.Comment{openComment()}
 	m.selection = &Selection{Anchor: 0, Extent: 0}
 	got := hintLine(m)
 	if strings.Contains(got, modeTagRange) || strings.Contains(got, modeTagHasComment) {
@@ -150,6 +160,7 @@ func TestHint_WidthFallback(t *testing.T) {
 			setup: func(m *Model) {
 				m.cursor = 0
 				m.overlay[0] = []int{0}
+				m.Review.Comments = []review.Comment{openComment()}
 			},
 			want:  "j/k · x · c",
 			notIn: "x RESOLVE",
@@ -219,5 +230,52 @@ func TestHint_RealOverlayDrivesHasComment(t *testing.T) {
 	got := hintLine(m)
 	if !strings.Contains(got, modeTagHasComment) {
 		t.Errorf("hint = %q, want substring %q", got, modeTagHasComment)
+	}
+}
+
+func TestHint_StaleOnlyRowFallsBackToDefault(t *testing.T) {
+	t.Parallel()
+	// overlay にぶら下がるコメントが stale のみのとき、`x RESOLVE` を案内する
+	// has-comment hint を出すと toggleResolvedAtCursor の挙動と矛盾する
+	// (stale は意図的にスキップされ何も起きない)。stale-only 行は通常 hint に
+	// フォールバックさせ、ユーザーを誤誘導しないことを保証する。
+	m := hintTestModel(80)
+	m.cursor = 2
+	m.overlay[2] = []int{0}
+	m.Review.Comments = []review.Comment{staleComment()}
+	got := hintLine(m)
+	if strings.Contains(got, modeTagHasComment) || strings.Contains(got, modeTagHasCommentShort) {
+		t.Errorf("stale-only row must not surface has-comment hint, got %q", got)
+	}
+	if !strings.Contains(got, "c cmt") {
+		t.Errorf("stale-only row must fall back to normal hint, got %q", got)
+	}
+}
+
+func TestHint_MixedRowKeepsHasComment(t *testing.T) {
+	t.Parallel()
+	// open / resolved が 1 件でも残っていれば `x` で状態を切り替えられるため、
+	// stale が混ざっていても has-comment hint を維持する。stale-only 行との
+	// 線引きが「open or resolved の存在」であることを固定する。
+	cases := []struct {
+		name     string
+		comments []review.Comment
+	}{
+		{name: "open_plus_stale", comments: []review.Comment{openComment(), staleComment()}},
+		{name: "stale_plus_resolved", comments: []review.Comment{staleComment(), resolvedComment()}},
+	}
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			m := hintTestModel(80)
+			m.cursor = 1
+			m.overlay[1] = []int{0, 1}
+			m.Review.Comments = tc.comments
+			got := hintLine(m)
+			if !strings.Contains(got, modeTagHasComment) {
+				t.Errorf("mixed row must keep has-comment hint, got %q", got)
+			}
+		})
 	}
 }
