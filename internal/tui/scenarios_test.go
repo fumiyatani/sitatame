@@ -962,3 +962,28 @@ func TestScenario_FirstStepRequiresPostEventOutput(t *testing.T) {
 		},
 	})
 }
+
+// TestScenario_LeftClickMovesCursor pins the click-to-place-cursor flow added
+// for issue #47: a left-button press at a diff Y coordinate moves the cursor
+// onto the corresponding row. We click Y=5 on a fresh model with no scrolling,
+// so the targeted row is m.top + (Y - statusBarRows) = 0 + 4 = 4.
+// numberedFile emits rows: file header (0), hunk header (1), content lines
+// 2..N — so row 4 is the third content line.
+func TestScenario_LeftClickMovesCursor(t *testing.T) {
+	t.Parallel()
+	f := numberedFile("a.go", "a.go", "b1", "b2", 10)
+	runScenario(t, Scenario{
+		Name:       "left_click_moves_cursor",
+		Files:      []diffmodel.File{f},
+		WindowSize: [2]int{60, 14},
+		Steps: []Step{
+			{
+				SendMouse:              &MouseEvent{Button: "left", Action: "press", Y: 5},
+				RequirePostEventOutput: true,
+				Expect: Expectation{
+					Cursor: intPtr(4),
+				},
+			},
+		},
+	})
+}
