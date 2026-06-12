@@ -709,6 +709,56 @@ func TestScenario_DeltaRepaintPreservesHeader(t *testing.T) {
 	})
 }
 
+// TestScenario_RejectsUnknownKeySpec pins the strict-key-spec contract.
+//
+// Before the fix, keyMsgFromSpec fell through to "treat anything else as a
+// literal rune sequence" for any spec that did not match the explicit
+// named-key table — multi-rune typos ("ctrl-s" instead of "ctrl+s") or
+// unmapped named keys ("F1", "pgup-half") were silently injected as a
+// KeyRunes message whose payload was the spec string itself. bubbletea
+// then ignored the unrecognized rune sequence, the renderer emitted
+// nothing, and any Step without a view assertion happily passed against
+// a wrong input — the exact false-positive class the runner is supposed
+// to catch.
+//
+// The strict path in keyMsgFromSpec now returns an error on any multi-rune
+// spec that is neither a named key nor in the ctrl+ table. sendStep
+// surfaces that error and runScenario calls t.Fatalf with it.
+//
+// We can't drive runScenario through an outer-passing sub-test (Go's
+// t.Run propagates the inner Fatal to the parent, so the outer test would
+// FAIL even though that is "the expected behavior"). Instead we exercise
+// the underlying keyMsgFromSpec and sendStep paths directly — both
+// surfaces a Scenario author would hit when typo-ing a key. This is the
+// same contract pinned at the layer that actually enforces it.
+//
+// Table covers:
+//   - "ctrl-s": typo of "ctrl+s". The reviewer's specific example.
+//   - "F1": unmapped named key with multiple runes.
+//   - "pgup-half": made-up name with the right shape (no ctrl+ prefix).
+//
+// Single-rune printable specs ("j", "?", "R") and the named-key table
+// entries ("up", "down", "esc", ...) are validated implicitly by the
+// scenario suite running green; if they regressed every other Scenario
+// would fail noisily.
+func TestScenario_RejectsUnknownKeySpec(t *testing.T) {
+	t.Parallel()
+	cases := []string{"ctrl-s", "F1", "pgup-half"}
+	for _, spec := range cases {
+		spec := spec
+		t.Run(spec, func(t *testing.T) {
+			t.Parallel()
+			if _, err := keyMsgFromSpec(spec); err == nil {
+				t.Fatalf("keyMsgFromSpec(%q) returned no error; want one", spec)
+			}
+			step := Step{SendKey: spec}
+			if err := sendStep(nil, step); err == nil {
+				t.Fatalf("sendStep(SendKey=%q) returned no error; want one", spec)
+			}
+		})
+	}
+}
+
 // TestScenario_FirstStepRequiresPostEventOutput pins the "drain the initial
 // render before the Step loop" contract added to runScenario.
 //
