@@ -132,6 +132,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			} else {
 				m.scrollViewportBy(mouseWheelStep)
 			}
+		case tea.MouseButtonLeft:
+			m.handleLeftClick(msg.Y)
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -159,7 +161,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case KeyToggleLayout:
 			m.toggleLayout()
 			return m, nil
-		case KeyDown:
+		case KeyDown, KeyDownArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(1)
 			} else {
@@ -167,7 +169,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyUp:
+		case KeyUp, KeyUpArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(-1)
 			} else {
@@ -175,7 +177,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.extendSelection()
 			}
 			return m, nil
-		case KeyNextFile:
+		case KeyNextFile, KeyRightArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(1)
 			} else {
@@ -183,7 +185,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.clearSelection()
 			}
 			return m, nil
-		case KeyPrevFile:
+		case KeyPrevFile, KeyLeftArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(-1)
 			} else {
@@ -347,3 +349,48 @@ func (m Model) QuitReason() QuitReason { return m.quitReason }
 
 // ShowingHelp reports whether the help modal is currently visible. Exposed for tests.
 func (m Model) ShowingHelp() bool { return m.showHelp }
+
+// statusBarRows is the height of the chrome above the diff viewport. View()
+// emits the status bar on Y=0 and starts diff rows at Y=1, so any click with
+// msg.Y < statusBarRows is on chrome and a click with
+// msg.Y >= statusBarRows + viewportHeight() is on the hint line / padding.
+const statusBarRows = 1
+
+// handleLeftClick maps a click Y coordinate to a row index and moves the
+// cursor (unified) or splitCursor (split) there. Clicks landing on chrome
+// (status bar / hint line) or past the last rendered row are silently
+// dropped — there's nothing meaningful to select on those rows and a no-op
+// is less surprising than snapping to the nearest valid line.
+func (m *Model) handleLeftClick(y int) {
+	row := y - statusBarRows
+	if row < 0 || row >= m.viewportHeight() {
+		return
+	}
+	if m.layout == LayoutSplit {
+		idx := m.splitTop + row
+		if idx < 0 || idx >= len(m.splitRows) {
+			return
+		}
+		if idx == m.splitCursor {
+			return
+		}
+		m.splitCursor = idx
+		m.invalidateLastToggle()
+		m.refreshSplitPreferredSide()
+		m.scrollSplitToCursor()
+		return
+	}
+	idx := m.top + row
+	if idx < 0 || idx >= len(m.rows) {
+		return
+	}
+	if idx == m.cursor {
+		return
+	}
+	m.cursor = idx
+	m.invalidateLastToggle()
+	m.scrollToCursor()
+	if m.selection != nil {
+		m.extendSelection()
+	}
+}
