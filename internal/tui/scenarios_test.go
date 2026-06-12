@@ -895,3 +895,51 @@ func TestScenario_FirstStepRequiresPostEventOutput(t *testing.T) {
 		},
 	})
 }
+
+// TestScenario_HintFollowsMode pins the mode-aware hint contract added in
+// PR #48. The hint line must surface a `-- RANGE --` tag the instant a
+// selection starts, and a `-- has comment --` tag the instant the cursor
+// lands on a row whose overlay carries at least one comment. Both are
+// regression-prone because the hint reads three loosely coupled Model
+// fields (selection, layout, cursor+overlay) and a future refactor that
+// short-circuits any one of those reads would silently break the mode
+// switch without breaking the unit tests against hintLine directly.
+func TestScenario_HintFollowsMode(t *testing.T) {
+	t.Parallel()
+	// Seed an open comment on HeadLine=2 so jumping to that row flips the
+	// hint into has-comment mode without needing to author a fresh comment
+	// mid-scenario.
+	f, openComment := scenarioFileWithComment("a.go", 2, "a-open")
+	r := review.Review{Comments: []review.Comment{openComment}}
+	runScenario(t, Scenario{
+		Name:          "hint_follows_mode",
+		Files:         []diffmodel.File{f},
+		InitialReview: r,
+		Steps: []Step{
+			// Walk to the first content row (row 2 holds HeadLine=1).
+			{SendKey: "j"},
+			{SendKey: "j"},
+			// Start a selection — RANGE tag must appear on the next frame.
+			{
+				SendKey:                "r",
+				RequirePostEventOutput: true,
+				Expect:                 Expectation{ViewContains: []string{"RANGE"}},
+			},
+			// Esc cancels the selection so the hint can flip again.
+			{SendKey: "esc"},
+			// Step onto HeadLine=2 where the seeded comment lives. The
+			// `-- has comment --` tag must surface on the resulting frame.
+			{
+				SendKey:                "j",
+				RequirePostEventOutput: true,
+				Expect: Expectation{
+					ViewContains: []string{"has comment"},
+					// Selection has been cleared, so the RANGE tag must
+					// be gone. Asserting its absence pins the mode-switch
+					// in both directions.
+					ViewNotContains: []string{"RANGE"},
+				},
+			},
+		},
+	})
+}
