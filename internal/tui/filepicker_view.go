@@ -1,0 +1,296 @@
+package tui
+
+import (
+	"fmt"
+	"strings"
+
+	tea "github.com/charmbracelet/bubbletea"
+)
+
+// File picker chrome: title line + 4 lines of border/hint padding. Sized so
+// the picker stays compact even on terminals that report tiny heights.
+const (
+	filePickerChromeRows = 4 // top border, bottom border, hint, spacer
+	filePickerMaxWidth   = 80
+	filePickerMinHeight  = 3
+)
+
+// openFilePicker seeds the modal centered on the file the cursor is currently
+// inside. Empty diffs short-circuit — without items the picker would absorb
+// keystrokes (j/k/Enter) without doing anything, which is worse than refusing
+// to open. Single-file diffs are allowed: the user can still confirm with
+// Enter as a no-op, which is consistent with the help screen never lying
+// about which keys are bound.
+func (m *Model) openFilePicker() {
+	if len(m.Files) == 0 {
+		return
+	}
+	cur := fileIndexAtCursor(*m)
+	h := m.filePickerHeight()
+	m.filePicker = newFilePicker(m.Files, cur, h)
+}
+
+// filePickerHeight returns how many item rows we can show inside the picker
+// modal. The window height has to swallow the picker chrome (title, border,
+// hint, spacer) plus the underlying status / hint lines that mainView normally
+// shows; we clamp to at least filePickerMinHeight so a tiny terminal still
+// renders something usable.
+func (m Model) filePickerHeight() int {
+	avail := m.height - filePickerChromeRows
+	if avail < filePickerMinHeight {
+		avail = filePickerMinHeight
+	}
+	if avail > len(m.Files) {
+		avail = len(m.Files)
+	}
+	if avail < 1 {
+		avail = 1
+	}
+	return avail
+}
+
+// updateFilePicker handles input while the picker is open. The contract is
+// intentionally narrow: arrow keys + j/k move the highlight, Enter confirms
+// the jump, Esc closes without moving the cursor. Every other key is
+// swallowed so the underlying diff bindings don't fire by accident — `q`
+// here must not quit the program because the user expects the picker to
+// take focus.
+func (m Model) updateFilePicker(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.WindowSizeMsg:
+		m.width = msg.Width
+		m.height = msg.Height
+		// Resync the picker's own height to the new window size so the
+		// visible window after a resize still tracks the selection.
+		if m.filePicker != nil {
+			m.filePicker.height = m.filePickerHeight()
+			m.filePicker.scrollToIdx()
+		}
+		return m, nil
+	case tea.KeyMsg:
+		switch msg.String() {
+		case KeyDown, "down":
+			m.filePicker.moveBy(1)
+			return m, nil
+		case KeyUp, "up":
+			m.filePicker.moveBy(-1)
+			return m, nil
+		case "enter":
+			m.confirmFilePicker()
+			return m, nil
+		case KeyEsc:
+			m.cancelFilePicker()
+			return m, nil
+		}
+	}
+	return m, nil
+}
+
+// confirmFilePicker jumps the cursor to the selected file's header row, then
+// closes the picker. We mirror jumpFile's "land on the rowFileHeader and pin
+// top to it" contract so Tab and other layout switches see the same anchor
+// state the user expects from n/p navigation.
+func (m *Model) confirmFilePicker() {
+	if m.filePicker == nil {
+		return
+	}
+	sel := m.filePicker.selected()
+	m.filePicker = nil
+	idx := fileHeaderRowIndex(m.rows, sel.FileIdx)
+	if idx < 0 {
+		// Defensive: the selected FileIdx came from m.Files, which is the
+		// same slice buildRows consumed, so a missing header would mean a
+		// row-stream/file-list mismatch. We choose to just close the picker
+		// rather than panic — the user would otherwise be stuck inside the
+		// modal with no way out except q.
+		return
+	}
+	m.cursor = idx
+	m.top = idx
+	// The sticky resolve target is row-local; jumping into a different file
+	// invalidates it for the same reason n/p does (toggleResolvedAtCursor
+	// godoc).
+	m.invalidateLastToggle()
+	// Range selection is also row-local — anchored in the previous file,
+	// it would silently follow the cursor into the new file's row stream
+	// and produce a comment whose Anchor.Path no longer matches the
+	// Selection.FileIdx. Clear it explicitly to keep the post-jump state
+	// indistinguishable from a fresh `n`-driven file change.
+	m.clearSelection()
+}
+
+func (m *Model) cancelFilePicker() {
+	m.filePicker = nil
+}
+
+// fileHeaderRowIndex returns the row stream index of the rowFileHeader for the
+// given fileIdx, or -1 if not found. Linear scan: row counts are bounded by
+// the diff size, and this only runs on Enter — not in a hot path.
+func fileHeaderRowIndex(rows []row, fileIdx int) int {
+	for i, r := range rows {
+		if r.kind == rowFileHeader && r.fileIdx == fileIdx {
+			return i
+		}
+	}
+	return -1
+}
+
+// filePickerView renders the modal. We deliberately replace the full screen
+// (rather than overlaying on top of the diff) because:
+//   - the underlying diff would compete for the same cells, requiring
+//     transparent compositing the rest of the TUI doesn't otherwise need;
+//   - the user can still glean the current file's context from the title bar
+//     above the items, which carries the selected entry.
+//
+// Layout:
+//
+//	┌─ Files (N) ──────────────────────┐
+//	│ > M cmd/root.go            +12 -3│
+//	│   M internal/tui/model.go  +28 -5│
+//	│   M README.md              +1 -0 │
+//	└─ j/k or up/down · Enter jump · Esc close ─┘
+func filePickerView(m Model) string {
+	fp := m.filePicker
+	if fp == nil {
+		return ""
+	}
+	width := filePickerWidth(m.width)
+	var b strings.Builder
+	// Title row: "Files (N)" + border padding.
+	title := fmt.Sprintf(" Files (%d) ", len(fp.items))
+	b.WriteString(renderBorderTop(title, width))
+	b.WriteByte('\n')
+
+	start, end := fp.visibleRange()
+	for i := start; i < end; i++ {
+		b.WriteString(renderPickerRow(fp.items[i], i == fp.idx, width))
+		b.WriteByte('\n')
+	}
+	// Pad remaining viewport rows so the bottom border stays anchored even
+	// when the diff has fewer files than the picker can hold.
+	for i := end - start; i < fp.height; i++ {
+		b.WriteString(renderPickerBlank(width))
+		b.WriteByte('\n')
+	}
+
+	hint := " j/k or up/down select - Enter jump - Esc close "
+	b.WriteString(renderBorderBottom(hint, width))
+	return b.String()
+}
+
+// filePickerWidth picks a friendly column count for the modal. We cap at
+// filePickerMaxWidth so long paths don't make the picker stretch the whole
+// terminal width, and at the window's actual width when that's smaller so
+// the right border doesn't fall off-screen.
+func filePickerWidth(windowWidth int) int {
+	w := filePickerMaxWidth
+	if windowWidth > 0 && windowWidth-2 < w {
+		w = windowWidth - 2
+	}
+	if w < 20 {
+		w = 20
+	}
+	return w
+}
+
+// renderBorderTop returns "+- title --------+", padded to width. Plain ASCII
+// to keep the snapshot tests deterministic across terminal locales.
+func renderBorderTop(title string, width int) string {
+	titleW := ColWidth(title)
+	dash := width - 2 - titleW
+	if dash < 0 {
+		dash = 0
+	}
+	return "+-" + title + strings.Repeat("-", dash) + "+"
+}
+
+func renderBorderBottom(hint string, width int) string {
+	hintW := ColWidth(hint)
+	dash := width - 2 - hintW
+	if dash < 0 {
+		dash = 0
+	}
+	return "+-" + hint + strings.Repeat("-", dash) + "+"
+}
+
+func renderPickerBlank(width int) string {
+	inner := width - 2
+	if inner < 0 {
+		inner = 0
+	}
+	return "|" + strings.Repeat(" ", inner) + "|"
+}
+
+// renderPickerRow lays out one item line:
+//
+//	"| > M <path>                +A -D |"
+//
+// The path is truncated with a trailing ellipsis if needed so the +A -D
+// counts always survive at the right edge. Centralised here so the
+// truncation budget stays consistent with the surrounding chrome math.
+func renderPickerRow(it filePickItem, selected bool, width int) string {
+	marker := "  "
+	if selected {
+		marker = "> "
+	}
+	statusCol := it.Status + " "
+	counts := fmt.Sprintf("+%d -%d", it.Adds, it.Dels)
+	// inner width = total - "|" - "|" - "marker" - " status " - " " - counts
+	inner := width - 2
+	if inner < 0 {
+		inner = 0
+	}
+	// Reserve columns for marker (2), status (2), trailing space + counts.
+	overhead := ColWidth(marker) + ColWidth(statusCol) + 1 + ColWidth(counts)
+	pathBudget := inner - overhead
+	if pathBudget < 1 {
+		pathBudget = 1
+	}
+	path := clipForBudget(it.Path, pathBudget)
+	// Pad the path to fill the budget so the counts column aligns even when
+	// paths differ in length.
+	pad := pathBudget - ColWidth(path)
+	if pad < 0 {
+		pad = 0
+	}
+	body := marker + statusCol + path + strings.Repeat(" ", pad) + " " + counts
+	bodyW := ColWidth(body)
+	if bodyW > inner {
+		// Defensive truncation in case ColWidth disagreed with our budget
+		// math (e.g. multi-byte counts). Without this, the body would
+		// overflow past the right border on narrow windows.
+		body = clipForBudget(body, inner)
+	} else if bodyW < inner {
+		body = body + strings.Repeat(" ", inner-bodyW)
+	}
+	return "|" + body + "|"
+}
+
+// clipForBudget truncates s to budget display columns, appending an ellipsis
+// when truncation occurred. Mirrors writeBody's ellipsis policy in render.go
+// but doesn't drop control bytes — picker text is sourced from File.Path /
+// File.Status, which are already sanitized by the diffmodel layer.
+func clipForBudget(s string, budget int) string {
+	if budget <= 0 {
+		return ""
+	}
+	if ColWidth(s) <= budget {
+		return s
+	}
+	if budget == 1 {
+		return "…"
+	}
+	cap := budget - 1
+	used := 0
+	var b strings.Builder
+	for _, r := range s {
+		w := widthCond.RuneWidth(r)
+		if used+w > cap {
+			break
+		}
+		b.WriteRune(r)
+		used += w
+	}
+	b.WriteRune('…')
+	return b.String()
+}

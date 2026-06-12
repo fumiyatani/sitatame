@@ -60,6 +60,14 @@ type Model struct {
 	// next key press.
 	statusMsg string
 
+	// filePicker is the modal state for the `f` jump-to-file overlay. nil
+	// when closed; non-nil drives a dedicated Update path (updateFilePicker)
+	// and replaces the diff view with filePickerView. Kept as a separate
+	// field from `modal` because the textarea modal has its own state shape
+	// and confirm/cancel semantics, and forcing both through a single union
+	// would just push the kind switch into every helper.
+	filePicker *filePicker
+
 	// lastToggledAnchor remembers the anchor_id touched by the most recent
 	// `x` press so a follow-up `x` on the same row undoes that exact
 	// comment instead of falling back to "last open / last resolved" — the
@@ -94,6 +102,13 @@ func (m Model) Overlay() map[int][]int { return m.overlay }
 func (m Model) Init() tea.Cmd { return nil }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	if m.filePicker != nil {
+		// File picker has its own narrow key set (j/k, up/down, enter, esc);
+		// the diff's normal binding table is suppressed while it's open so
+		// `q` etc. don't quit out from under the user. WindowSize still
+		// flows through so the picker height stays in sync.
+		return m.updateFilePicker(msg)
+	}
 	if m.modal != nil {
 		cmd := m.updateModal(msg)
 		return m, cmd
@@ -219,6 +234,24 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.toggleResolvedAtCursor()
 			return m, nil
+		case KeyFilePicker:
+			if m.showHelp {
+				// Help is a full-screen overlay; popping a second modal on top
+				// would compete for the same cells and leave the user without
+				// any signal that help is still "behind" the picker. Ignore
+				// the key — the user can press `?` to dismiss help first.
+				return m, nil
+			}
+			if m.layout == LayoutSplit {
+				// File picker would land on a unified row index that the
+				// split cursor can't consume without translation. Guard it
+				// behind the same preview-only banner as the other unified
+				// actions until split learns its own jump path.
+				m.statusMsg = previewOnlyMsg
+				return m, nil
+			}
+			m.openFilePicker()
+			return m, nil
 		}
 	}
 	return m, nil
@@ -322,6 +355,9 @@ func (m Model) View() string {
 	if m.showHelp {
 		return helpView()
 	}
+	if m.filePicker != nil {
+		return filePickerView(m)
+	}
 	if m.modal != nil {
 		return modalView(m)
 	}
@@ -340,3 +376,6 @@ func (m Model) QuitReason() QuitReason { return m.quitReason }
 
 // ShowingHelp reports whether the help modal is currently visible. Exposed for tests.
 func (m Model) ShowingHelp() bool { return m.showHelp }
+
+// FilePicker returns the open file picker or nil. Test-only accessor.
+func (m Model) FilePicker() *filePicker { return m.filePicker }
