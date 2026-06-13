@@ -46,10 +46,15 @@ dependencies {
         // Bundled Git4Idea gives us GitRepositoryManager for repo root and
         // branch detection without shelling out to `git`.
         bundledPlugin("Git4Idea")
+        bundledModule("intellij.platform.vcs.dvcs.impl")
 
         // Test framework + platform tests. Needed for BasePlatformTestCase
         // in the action tests.
         testFramework(TestFrameworkType.Platform)
+
+        // Required by the IntelliJ Platform Gradle Plugin's instrumentCode
+        // task, which runs as part of test/buildPlugin.
+        instrumentationTools()
     }
 
     testImplementation("junit:junit:4.13.2")

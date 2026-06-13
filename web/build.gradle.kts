@@ -62,6 +62,11 @@ kotlin {
 
         val jvmMain by getting {
             dependencies {
+                // The Compose compiler plugin is applied project-wide, so the
+                // JVM compilation also needs the runtime on its classpath even
+                // though Compose UI code currently lives in wasmJsMain.
+                implementation(compose.runtime)
+
                 // YAML round-trip (existing PoC).
                 implementation("org.snakeyaml:snakeyaml-engine:2.9")
 
