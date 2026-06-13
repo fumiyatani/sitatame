@@ -25,6 +25,7 @@ install:
 	go install ./...
 
 build-all:
+	mkdir -p dist
 	GOOS=darwin  GOARCH=amd64 go build -o dist/$(BIN)-darwin-amd64 .
 	GOOS=darwin  GOARCH=arm64 go build -o dist/$(BIN)-darwin-arm64 .
 	GOOS=linux   GOARCH=amd64 go build -o dist/$(BIN)-linux-amd64 .
