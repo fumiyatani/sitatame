@@ -151,6 +151,17 @@ The diff base is hard-coded to `origin/main` for step 1. When the ref is not
 reachable (e.g. a fresh local repo without `origin/main` fetched) the server
 returns an empty `files` list instead of a 5xx.
 
+## Environment
+
+| variable          | effect                                                          |
+| ----------------- | --------------------------------------------------------------- |
+| `SITATAME_HOME`   | Output root override. Mirrors the Go CLI: whitespace-only is treated as unset, a leading `~/` (or bare `~`) is expanded to the user home, and a relative path is absolutised against the launching process's cwd with a one-line stderr warning. Falls back to `~/.sitatame` when unset, and to `<os.tmpdir>/sitatame` when even `user.home` is unknown. |
+
+Detached HEAD is normalised to `detached/<sha[:12]>` so each detached session
+gets its own branch slug, matching `cmd/root.go`. Two clients (TUI and Web) on
+the same repo in the same detached state therefore look at the same on-disk
+review directory.
+
 ## Known limitations
 
 - No write path. Resolve / Reopen buttons render but do nothing.
