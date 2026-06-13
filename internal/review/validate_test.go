@@ -1,6 +1,8 @@
 package review
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
@@ -139,5 +141,97 @@ func TestValidate_KindReview_Untouched(t *testing.T) {
 	Validate(&r, nil)
 	if r.Comments[0].State != StateOpen {
 		t.Errorf("kind=review should not be re-classified, got %q", r.Comments[0].State)
+	}
+}
+
+// TestValidateWithWarnings_LegacyHeadAnchor pins issue #36/#19's backward
+// compatibility path: a draft saved before the Side-derivation fix may carry a
+// Comment with Side=head AND a line number whose value only exists on the base
+// side (because the buggy openCommentModal stored BaseLine under Side=head).
+// The new validator must emit a one-line warning per offending anchor so the
+// user notices before re-saving — silent fixing would mask the data corruption.
+func TestValidateWithWarnings_LegacyHeadAnchor(t *testing.T) {
+	t.Parallel()
+	// File where line 5 only exists on the base side (e.g. a `-` row).
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "src/a.go",
+		PostPath: "src/a.go",
+		BlobBase: "old", BlobHead: "new",
+	}}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID: "legacy-1",
+			Kind:     KindLine,
+			Path:     "src/a.go",
+			Side:     SideHead, // ← legacy bug: head + base-only number
+			Blob:     "old",    // and it points at the base blob
+			Line:     5,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+
+	out := buf.String()
+	if !strings.Contains(out, "legacy-1") {
+		t.Errorf("warning should name the anchor_id, got %q", out)
+	}
+	if !strings.Contains(out, "legacy anchor") {
+		t.Errorf("warning should mention 'legacy anchor', got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_NoFalsePositives makes sure healthy anchors do not
+// trigger the legacy warning. A Side=head anchor with a matching head blob is
+// the canonical case and must produce no stderr noise.
+func TestValidateWithWarnings_NoFalsePositives(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "src/a.go",
+		PostPath: "src/a.go",
+		BlobBase: "old", BlobHead: "new",
+	}}
+	r := makeReview(
+		Comment{
+			Anchor: Anchor{AnchorID: "ok-1", Kind: KindLine, Path: "src/a.go", Side: SideHead, Blob: "new", Line: 5},
+			State:  StateOpen,
+		},
+		Comment{
+			Anchor: Anchor{AnchorID: "ok-2", Kind: KindLine, Path: "src/a.go", Side: SideBase, Blob: "old", Line: 3},
+			State:  StateOpen,
+		},
+		Comment{
+			Anchor: Anchor{AnchorID: "ok-3", Kind: KindFile, Path: "src/a.go", Side: SideHead, Blob: "new"},
+			State:  StateOpen,
+		},
+	)
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+	if out := buf.String(); out != "" {
+		t.Errorf("expected no warnings, got %q", out)
+	}
+}
+
+// TestValidate_StillWorksWithoutWriter pins the original Validate signature:
+// no behavior change for callers that don't care about warnings.
+func TestValidate_StillWorksWithoutWriter(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "src/a.go",
+		PostPath: "src/a.go",
+		BlobBase: "old", BlobHead: "new",
+	}}
+	r := makeReview(Comment{
+		Anchor: Anchor{Kind: KindLine, Path: "src/a.go", Side: SideHead, Blob: "new", Line: 5},
+		State:  StateStale,
+	})
+	Validate(&r, files)
+	if r.Comments[0].State != StateOpen {
+		t.Errorf("Validate must keep its original behavior: %q", r.Comments[0].State)
 	}
 }

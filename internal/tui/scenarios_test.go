@@ -1035,3 +1035,60 @@ func TestScenario_LeftClickMovesCursor(t *testing.T) {
 		},
 	})
 }
+
+// TestScenario_CommentOnDeletedLineUsesBaseSide is the end-to-end regression
+// for issues #36 + #19: navigate to a `-` row, open the comment modal, type a
+// body, save with Ctrl+S, then `s` to promote. The persisted Comment must
+// carry Side=base + Line=BaseLine so downstream consumers (sitatame replay,
+// AI review skill) interpret the anchor against the pre-image revision.
+func TestScenario_CommentOnDeletedLineUsesBaseSide(t *testing.T) {
+	t.Parallel()
+	// Hunk layout: ` x` (b=1,h=1), `+y` (h=2), `-z` (b=2).
+	f := diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "a.go", PostPath: "a.go",
+		BlobBase: "bb", BlobHead: "bh",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: ' ', Text: "x"},
+				{Prefix: '+', Text: "y"},
+				{Prefix: '-', Text: "z"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+
+	runScenario(t, Scenario{
+		Name:  "comment_on_deleted_line_uses_base_side",
+		Files: []diffmodel.File{f},
+		Steps: []Step{
+			// Walk to the `-z` row at index 4 (header, hunk, ctx, +, -).
+			{SendKey: "j"},
+			{SendKey: "j"},
+			{SendKey: "j"},
+			{SendKey: "j"},
+			{SendKey: "c"},
+			{SendText: "nope"},
+			{
+				SendKey: "ctrl+s",
+				Expect: Expectation{
+					CommentsLen: intPtr(1),
+					Comments: []*review.Comment{
+						{
+							Anchor: review.Anchor{
+								Kind: review.KindLine,
+								Path: "a.go",
+								Side: review.SideBase,
+								Blob: "bb",
+								Line: 2,
+							},
+							State: review.StateOpen,
+							Body:  "nope",
+						},
+					},
+				},
+			},
+		},
+	})
+}
