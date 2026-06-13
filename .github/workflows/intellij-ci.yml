@@ -1,0 +1,116 @@
+name: IntelliJ CI
+
+on:
+  push:
+    paths:
+      - "intellij/**"
+      - "web/fixtures/**"
+      - "internal/review/**"
+      - "cmd/yamlfixture/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/intellij-ci.yml"
+  pull_request:
+    paths:
+      - "intellij/**"
+      - "web/fixtures/**"
+      - "internal/review/**"
+      - "cmd/yamlfixture/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
+      - ".github/workflows/intellij-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: intellij-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (codec + storage)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      # The IntelliJ codec round-trip test consumes the same fixtures the Web
+      # UI test does. Regenerate them from the Go source so a stale fixture
+      # surface here as a failed bit-exact match rather than a flake.
+      - name: Regenerate YAML fixtures (Go side)
+        run: make web-fixtures
+
+      - name: Fail if fixtures drifted
+        run: git diff --exit-code -- web/fixtures
+
+      - name: Kotlin test
+        working-directory: intellij
+        run: ./gradlew --no-daemon :test
+
+  build:
+    name: Build plugin zip
+    runs-on: ubuntu-latest
+    needs: test
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Build plugin
+        working-directory: intellij
+        run: ./gradlew --no-daemon :buildPlugin
+
+      - name: Upload plugin zip
+        uses: actions/upload-artifact@v4
+        with:
+          name: sitatame-intellij-plugin
+          path: intellij/build/distributions/*.zip
+          if-no-files-found: error
+
+  verify:
+    name: Verify plugin (Platform Plugin Verifier)
+    runs-on: ubuntu-latest
+    needs: build
+    # Plugin Verifier downloads IDE distributions; allow it to fail without
+    # blocking the merge until we know which IDE versions are realistic
+    # targets. Required job is :test above.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup JDK 21
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Verify plugin
+        working-directory: intellij
+        run: ./gradlew --no-daemon :verifyPlugin
