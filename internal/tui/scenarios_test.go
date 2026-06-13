@@ -1,3 +1,5 @@
+//go:build tui_e2e
+
 package tui
 
 import (
