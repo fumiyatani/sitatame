@@ -215,6 +215,31 @@ func RunRoot(env Env, args []string) int {
 	store := review.NewStore(paths)
 	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
 		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
+		// Auto-load the previously-saved draft so a re-run on the same
+		// branch surfaces the user's prior comments instead of starting
+		// from an empty Review. Without this load step the overlay path
+		// looked correct (DetectDraft printed the file) yet the TUI was
+		// always handed a freshly constructed `r` — see issue #18.
+		//
+		// Failures here are best-effort: a corrupt or unreadable draft
+		// should not block a fresh session, so we surface the reason on
+		// stderr and continue with the empty Review. We deliberately
+		// keep the Base/Head/Branch fields from the just-built `r`
+		// because the diff `files` we hand to the TUI come from the
+		// *current* repo state, not the snapshot the draft was saved
+		// against.
+		if loaded, lerr := loadDraftForResume(existing); lerr != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: draft load failed: %v (starting empty)\n", lerr)
+		} else {
+			r.ID = loaded.ID
+			r.Comments = loaded.Comments
+			r.ReviewComment = loaded.ReviewComment
+			// Run validation with stderr warnings so the PR #61 legacy
+			// anchor detector flags drafts saved before issue #36 / #19
+			// were fixed. Validate also re-classifies comment state vs.
+			// the freshly-loaded diff (open / stale).
+			review.ValidateWithWarnings(&r, files, env.Stderr)
+		}
 	}
 	runner := env.RunTUI
 	if runner == nil {
@@ -228,6 +253,27 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	return finalizeReview(env, store, result)
+}
+
+// loadDraftForResume reads `path` and decodes it as a review.Review. Only the
+// fields that should be carried forward into the resumed TUI session are
+// consumed by the caller (ID, Comments, ReviewComment); Files is intentionally
+// re-derived from the current diff because the draft was saved against a
+// previous diff snapshot.
+//
+// Returned errors are surfaced on stderr by the caller and the session
+// continues with an empty Review — a corrupt or unreadable draft must not
+// block startup.
+func loadDraftForResume(path string) (review.Review, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return review.Review{}, fmt.Errorf("read draft: %w", err)
+	}
+	r, err := review.Decode(b)
+	if err != nil {
+		return review.Review{}, fmt.Errorf("decode draft: %w", err)
+	}
+	return r, nil
 }
 
 // resolveDiffSpec turns the parsed CLI options into a DiffSpec plus the
