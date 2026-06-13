@@ -148,9 +148,20 @@ func RunRoot(env Env, args []string) int {
 	// launching. We surface the parse error as a warning and fall through
 	// with the zero Config, which preserves the historical base auto-detect
 	// behavior.
-	cfg, cfgErr := config.LoadFromRepo(repo.Workdir, env.Stderr)
-	if cfgErr != nil {
-		fmt.Fprintf(env.Stderr, "sitatame: config: %v (ignoring file)\n", cfgErr)
+	//
+	// --staged / --working force the base to HEAD and never consult the
+	// config (see resolveDiffSpec and docs/config.md). Loading + warning on
+	// a malformed config in those modes would surface noise the user cannot
+	// act on for this invocation, so we skip the load entirely. The cfg ==
+	// nil path is the same one mergeBaseCandidates already takes when no
+	// file is present, so downstream code does not need a special case.
+	var cfg *config.Config
+	if !opts.Staged && !opts.Working {
+		var cfgErr error
+		cfg, cfgErr = config.LoadFromRepo(repo.Workdir, env.Stderr)
+		if cfgErr != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: config: %v (ignoring file)\n", cfgErr)
+		}
 	}
 
 	spec, base, err := resolveDiffSpec(repo, opts, cfg)

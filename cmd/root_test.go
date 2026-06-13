@@ -423,6 +423,72 @@ func TestRunRoot_MalformedConfig_DegradesToAutoDetect(t *testing.T) {
 	}
 }
 
+// TestRunRoot_StagedSkipsConfigLoad is the PR #60 round 4 [P3] regression
+// test. --staged forces base to HEAD and never reads .sitatame/config.yaml,
+// so a malformed config in the repo must not produce a stderr warning the
+// user cannot act on for this invocation. Pre-fix, RunRoot called
+// config.LoadFromRepo unconditionally and surfaced "sitatame: config: ..."
+// even though the parsed value was then thrown away.
+func TestRunRoot_StagedSkipsConfigLoad(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	// Stage something so --staged has a non-empty diff and reaches the TUI.
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "staged.txt")
+
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--staged"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("--staged must not emit config warning; stderr = %q", stderr.String())
+	}
+}
+
+// TestRunRoot_WorkingSkipsConfigLoad is the --working twin of
+// TestRunRoot_StagedSkipsConfigLoad. Same rationale: a config the mode is
+// about to ignore must not surface warnings.
+func TestRunRoot_WorkingSkipsConfigLoad(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	// Modify a tracked file so --working has a non-empty diff.
+	if err := os.WriteFile(filepath.Join(dir, "b"), []byte("b\nworking\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--working"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("--working must not emit config warning; stderr = %q", stderr.String())
+	}
+}
+
+// TestRunRoot_DefaultLoadsConfig is the symmetric guard: the default
+// range-diff mode must still load and validate the config, because
+// base.default / base.candidates only affect this mode. A malformed file in
+// this path is exactly when the user needs to see the warning.
+func TestRunRoot_DefaultLoadsConfig(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("default mode must emit config warning on malformed file; stderr = %q", stderr.String())
+	}
+}
+
 // TestRunRoot_ConfigOnlyDir_DoesNotTriggerLegacyWarning is the issue #24
 // allowlist case: a <repo>/.sitatame/ directory containing only config.yaml
 // is the new legitimate state, not the legacy review-storage layout, so the
