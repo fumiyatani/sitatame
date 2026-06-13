@@ -27,7 +27,33 @@ type Base struct {
 // ResolveBase returns the base ref to diff against. If explicit is non-empty
 // it takes precedence and must resolve to a commit. Otherwise the
 // BaseCandidates chain is tried in order.
+//
+// Callers that want to honor a per-repo config file (issue #24) should call
+// ResolveBaseWithCandidates instead; ResolveBase is preserved as a thin
+// wrapper for existing call sites and tests that have no config plumbed in.
 func ResolveBase(repo *Repo, explicit string) (Base, error) {
+	return ResolveBaseWithCandidates(repo, explicit, nil)
+}
+
+// ResolveBaseWithCandidates is the config-aware variant of ResolveBase.
+//
+// candidates, when non-nil, fully replaces the BaseCandidates fallback chain
+// for the auto-detect path. Passing nil (or an empty slice) preserves the
+// existing behavior — i.e. the built-in BaseCandidates are tried. The
+// explicit argument still wins over any config-supplied candidates, matching
+// the documented priority order:
+//
+//  1. CLI explicit base
+//  2. config.base.default (passed as the first entry of candidates)
+//  3. config.base.candidates
+//  4. built-in BaseCandidates (only appended by the caller; this function
+//     trusts whatever list it is handed)
+//
+// Keeping the priority layering in the caller (cmd/root.go) rather than this
+// function avoids re-deriving the merged list every place we want to resolve
+// a base, and keeps this package free of any knowledge about the config
+// package's shape.
+func ResolveBaseWithCandidates(repo *Repo, explicit string, candidates []string) (Base, error) {
 	if explicit != "" {
 		sha, err := repo.RevParse(explicit)
 		if err != nil {
@@ -36,9 +62,14 @@ func ResolveBase(repo *Repo, explicit string) (Base, error) {
 		return Base{Ref: explicit, SHA: sha}, nil
 	}
 
+	chain := candidates
+	if len(chain) == 0 {
+		chain = BaseCandidates
+	}
+
 	headSHA, _ := repo.HeadSHA()
 	var tried []string
-	for _, c := range BaseCandidates {
+	for _, c := range chain {
 		ref := normalizeCandidate(repo, c)
 		if ref == "" {
 			continue

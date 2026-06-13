@@ -161,6 +161,112 @@ func TestRunRoot_ExplicitBaseWins(t *testing.T) {
 	}
 }
 
+// writeRepoConfig writes <repo>/.sitatame/config.yaml with body. It mirrors
+// the path layout config.LoadFromRepo expects, so RunRoot can pick the file
+// up via the same code path users will hit.
+func writeRepoConfig(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".sitatame"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sitatame", "config.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunRoot_ConfigBaseDefault_AffectsAutoDetect covers the issue #24 path:
+// when no explicit base is given and base.default is set, the configured ref
+// wins over the built-in BaseCandidates. Renaming main to trunk would
+// normally cause auto-detect to fail; the config entry "trunk" must rescue
+// it.
+func TestRunRoot_ConfigBaseDefault_AffectsAutoDetect(t *testing.T) {
+	dir, _ := newRepo(t)
+	mustGit(t, dir, "branch", "-m", "main", "trunk")
+	writeRepoConfig(t, dir, `base:
+  default: "trunk"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "trunk" {
+		t.Errorf("base.Ref = %q, want trunk (from base.default)", captured.Base.Ref)
+	}
+}
+
+// TestRunRoot_ConfigBaseDefault_LosesToExplicit confirms the priority order:
+// the CLI argument still wins over the config-supplied default. Without this
+// the config would become an unwelcome override on every invocation.
+func TestRunRoot_ConfigBaseDefault_LosesToExplicit(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "feature"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"main"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (CLI overrides config)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
+// TestRunRoot_ConfigBaseCandidates_OverridesChain documents that
+// base.candidates fully replaces the built-in BaseCandidates fallback when
+// base.default is absent. Renaming main to trunk would normally drop the
+// auto-detect chain to empty refs; listing "trunk" in candidates must pick
+// it back up.
+func TestRunRoot_ConfigBaseCandidates_OverridesChain(t *testing.T) {
+	dir, _ := newRepo(t)
+	mustGit(t, dir, "branch", "-m", "main", "trunk")
+	writeRepoConfig(t, dir, `base:
+  candidates:
+    - "nonexistent-ref"
+    - "trunk"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "trunk" {
+		t.Errorf("base.Ref = %q, want trunk (from base.candidates)", captured.Base.Ref)
+	}
+}
+
+// TestRunRoot_MalformedConfig_DegradesToAutoDetect guards the graceful
+// degradation path: a config file that fails to parse must not block the TUI
+// — the built-in BaseCandidates chain still resolves and the user sees a
+// warning on stderr.
+func TestRunRoot_MalformedConfig_DegradesToAutoDetect(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (auto-detect fallback)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+	if !strings.Contains(stderr.String(), "sitatame:") {
+		t.Errorf("expected config warning on stderr; got %q", stderr.String())
+	}
+}
+
+
 func TestRunRoot_BaseAutoFails(t *testing.T) {
 	dir, _ := newRepo(t)
 	mustGit(t, dir, "branch", "-m", "main", "trunk")

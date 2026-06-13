@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/fumiyatani/sitatame/internal/config"
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
 	"github.com/fumiyatani/sitatame/internal/gitx"
 	"github.com/fumiyatani/sitatame/internal/review"
@@ -142,7 +143,17 @@ func RunRoot(env Env, args []string) int {
 		return 1
 	}
 
-	spec, base, err := resolveDiffSpec(repo, opts)
+	// Per-repo config (.sitatame/config.yaml) is best-effort: a missing file
+	// is the common case, and a malformed file must not block the TUI from
+	// launching. We surface the parse error as a warning and fall through
+	// with the zero Config, which preserves the historical base auto-detect
+	// behavior.
+	cfg, cfgErr := config.LoadFromRepo(repo.Workdir, env.Stderr)
+	if cfgErr != nil {
+		fmt.Fprintf(env.Stderr, "sitatame: config: %v (ignoring file)\n", cfgErr)
+	}
+
+	spec, base, err := resolveDiffSpec(repo, opts, cfg)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: %v\n", err)
 		return 1
@@ -237,7 +248,13 @@ func RunRoot(env Env, args []string) int {
 // review.Ref-shaped Base record that goes into the review YAML. For
 // --staged/--working the "base" is HEAD itself; for the default mode the base
 // goes through the auto-detect / explicit chain.
-func resolveDiffSpec(repo *gitx.Repo, opts rootOpts) (gitx.DiffSpec, gitx.Base, error) {
+//
+// cfg, when non-nil, contributes to the auto-detect path only: an explicit
+// CLI base argument still wins, and --staged / --working both ignore the
+// config because their "base" is HEAD by definition. See mergeBaseCandidates
+// for how cfg.Base.Default and cfg.Base.Candidates are layered on top of the
+// built-in fallback chain.
+func resolveDiffSpec(repo *gitx.Repo, opts rootOpts, cfg *config.Config) (gitx.DiffSpec, gitx.Base, error) {
 	switch {
 	case opts.Staged:
 		sha, err := repo.HeadSHA()
@@ -252,12 +269,57 @@ func resolveDiffSpec(repo *gitx.Repo, opts rootOpts) (gitx.DiffSpec, gitx.Base, 
 		}
 		return gitx.DiffSpec{Source: gitx.SourceWorking}, gitx.Base{Ref: "HEAD", SHA: sha}, nil
 	default:
-		base, err := gitx.ResolveBase(repo, opts.BaseArg)
+		candidates := mergeBaseCandidates(cfg)
+		base, err := gitx.ResolveBaseWithCandidates(repo, opts.BaseArg, candidates)
 		if err != nil {
 			return gitx.DiffSpec{}, gitx.Base{}, err
 		}
 		return gitx.DiffSpec{Source: gitx.SourceRange, Base: base.Ref}, base, nil
 	}
+}
+
+// mergeBaseCandidates layers the config-supplied base settings on top of the
+// built-in BaseCandidates fallback per the documented priority:
+//
+//  1. cfg.Base.Default — exactly one entry, placed first so it wins over the
+//     rest of the chain when it resolves.
+//  2. cfg.Base.Candidates — appended after Default, in the order the user
+//     listed them.
+//  3. gitx.BaseCandidates — appended last so the user's local main / master
+//     workflow keeps working even if their config only lists upstream refs.
+//
+// Returns nil when cfg contributes nothing; ResolveBaseWithCandidates treats
+// nil as "use built-in defaults" and we want to keep the existing test
+// surface (TestResolveBase_FallsBackToMain et al) hitting that path
+// unchanged.
+//
+// Duplicates are collapsed so the auto-detect failure message in
+// ResolveBaseWithCandidates does not list the same ref twice when the user
+// puts e.g. "main" in both Default and the built-in fallback.
+func mergeBaseCandidates(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	if cfg.Base.Default == "" && len(cfg.Base.Candidates) == 0 {
+		return nil
+	}
+	seen := make(map[string]bool)
+	out := make([]string, 0, 1+len(cfg.Base.Candidates)+len(gitx.BaseCandidates))
+	add := func(c string) {
+		if c == "" || seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	add(cfg.Base.Default)
+	for _, c := range cfg.Base.Candidates {
+		add(c)
+	}
+	for _, c := range gitx.BaseCandidates {
+		add(c)
+	}
+	return out
 }
 
 func emptyDiffMessage(spec gitx.DiffSpec) string {
