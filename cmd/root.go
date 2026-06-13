@@ -203,6 +203,10 @@ func RunRoot(env Env, args []string) int {
 		headRef = "WORKTREE"
 		headRefSHA = ""
 	}
+	// Start from a fresh Review and overlay any existing draft on top so
+	// that resuming a session preserves every field the draft owned
+	// (Extras / CreatedAt / Body / Files etc.) while still reflecting the
+	// *current* diff in Branch / Base / Head.
 	r := review.Review{
 		Schema: 1,
 		Branch: branch,
@@ -223,17 +227,45 @@ func RunRoot(env Env, args []string) int {
 		//
 		// Failures here are best-effort: a corrupt or unreadable draft
 		// should not block a fresh session, so we surface the reason on
-		// stderr and continue with the empty Review. We deliberately
-		// keep the Base/Head/Branch fields from the just-built `r`
-		// because the diff `files` we hand to the TUI come from the
-		// *current* repo state, not the snapshot the draft was saved
-		// against.
+		// stderr and continue with the empty Review.
+		//
+		// Why we start from `loaded` and only overwrite the
+		// diff-derived fields, rather than copying a handful of fields
+		// off the loaded draft onto a freshly-built Review:
+		//
+		//   * PR #65 introduced top-level / file / comment `Extras`
+		//     maps that hold YAML keys we don't model — AI agents lean
+		//     on this forward-compat hook. A field-by-field copy drops
+		//     those keys on the floor.
+		//   * `CreatedAt` (documented by PR #65 / PR #69) and the raw
+		//     Markdown `Body` are the same story: dropping them on
+		//     resume mutates the very file we then re-save.
+		//   * Branch / Base / Head must reflect the *current* diff
+		//     snapshot, not the one the draft was saved against, so we
+		//     unconditionally overwrite them after the value copy.
+		//
+		// Files is intentionally NOT preserved here: the diff `files`
+		// handed to the TUI already come from the live repo, and the
+		// downstream save path re-derives `r.Files` from that diff.
+		// Carrying the loaded `Files` forward would shadow the current
+		// snapshot. Per-FileMeta `Extras` are therefore lost on resume
+		// today; that's tracked as a follow-up rather than fixed here.
+		//
+		// Map sharing: `r = *loaded` is a value copy, so the Extras
+		// maps end up shared by reference with the on-disk-derived
+		// struct. That is fine because SaveDraft → Encode only reads
+		// from those maps; nothing in the TUI session mutates them.
 		if loaded, lerr := loadDraftForResume(existing); lerr != nil {
 			fmt.Fprintf(env.Stderr, "sitatame: draft load failed: %v (starting empty)\n", lerr)
 		} else {
-			r.ID = loaded.ID
-			r.Comments = loaded.Comments
-			r.ReviewComment = loaded.ReviewComment
+			r = loaded
+			r.Files = nil
+			r.Branch = branch
+			r.Base = review.Ref{Ref: base.Ref, SHA: base.SHA}
+			r.Head = review.Ref{Ref: headRef, SHA: headRefSHA}
+			if r.Schema == 0 {
+				r.Schema = 1
+			}
 			// Run validation with stderr warnings so the PR #61 legacy
 			// anchor detector flags drafts saved before issue #36 / #19
 			// were fixed. Validate also re-classifies comment state vs.
@@ -255,11 +287,11 @@ func RunRoot(env Env, args []string) int {
 	return finalizeReview(env, store, result)
 }
 
-// loadDraftForResume reads `path` and decodes it as a review.Review. Only the
-// fields that should be carried forward into the resumed TUI session are
-// consumed by the caller (ID, Comments, ReviewComment); Files is intentionally
-// re-derived from the current diff because the draft was saved against a
-// previous diff snapshot.
+// loadDraftForResume reads `path` and decodes it as a review.Review. The
+// caller adopts the returned value wholesale (preserving Extras / CreatedAt /
+// Body etc.) and only overwrites the fields tied to the *current* diff
+// snapshot (Branch / Base / Head) and discards Files (re-derived from the
+// live diff downstream).
 //
 // Returned errors are surfaced on stderr by the caller and the session
 // continues with an empty Review — a corrupt or unreadable draft must not
