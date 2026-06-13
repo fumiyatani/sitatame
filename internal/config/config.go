@@ -45,12 +45,20 @@ type Config struct {
 // BaseConfig models the [base] section.
 //
 // Default is the single ref that should be tried first when the user does not
-// pass an explicit base argument. It is effectively shorthand for putting one
-// entry at the front of Candidates.
+// pass an explicit base argument. It is additive: it is prepended to whichever
+// candidate chain follows (either Candidates or the built-in fallback).
 //
-// Candidates, when non-empty, fully replaces the built-in gitx.BaseCandidates
-// chain. When empty, the built-in chain is appended after Default so users
-// only setting Default still benefit from the auto-detect fallback.
+// Candidates, when non-empty, *fully replaces* the built-in
+// gitx.BaseCandidates chain — the built-in chain is NOT appended. A repo that
+// pins `candidates: [origin/develop]` must never silently fall back to
+// `origin/main` / `main`, because every review is anchored against the
+// resolved base and a silently mismatched base would produce a misleading
+// review with no warning. When Candidates is empty, the built-in chain
+// follows Default so users only setting Default still benefit from the
+// auto-detect fallback.
+//
+// See cmd.mergeBaseCandidates for the canonical layering rules and
+// docs/config.md for the user-facing documentation.
 type BaseConfig struct {
 	Default    string
 	Candidates []string

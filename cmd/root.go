@@ -278,33 +278,59 @@ func resolveDiffSpec(repo *gitx.Repo, opts rootOpts, cfg *config.Config) (gitx.D
 	}
 }
 
-// mergeBaseCandidates layers the config-supplied base settings on top of the
-// built-in BaseCandidates fallback per the documented priority:
+// mergeBaseCandidates assembles the candidate list that drives
+// ResolveBaseWithCandidates' auto-detect path. The two config fields have
+// deliberately asymmetric semantics:
 //
-//  1. cfg.Base.Default — exactly one entry, placed first so it wins over the
-//     rest of the chain when it resolves.
-//  2. cfg.Base.Candidates — appended after Default, in the order the user
-//     listed them.
-//  3. gitx.BaseCandidates — appended last so the user's local main / master
-//     workflow keeps working even if their config only lists upstream refs.
+//   - cfg.Base.Candidates is a *replacement* list. When non-empty it is the
+//     entire chain we try — gitx.BaseCandidates is NOT appended. This is the
+//     contract documented in docs/config.md: a repo that pins
+//     `candidates: [origin/develop]` must never silently fall back to
+//     `origin/main` / `main` if `origin/develop` is unreachable, because the
+//     auto-resolved base is what every review is anchored against and a
+//     mismatched base produces a misleading review with no warning.
+//   - cfg.Base.Default is *additive*. It is shorthand for "try this ref
+//     first" and is prepended to whichever chain follows — either the
+//     replacement Candidates list or the built-in BaseCandidates fallback.
 //
-// Returns nil when cfg contributes nothing; ResolveBaseWithCandidates treats
-// nil as "use built-in defaults" and we want to keep the existing test
-// surface (TestResolveBase_FallsBackToMain et al) hitting that path
+// Concretely:
+//
+//	default="", candidates=[]                  -> nil  (use gitx.BaseCandidates)
+//	default="X", candidates=[]                 -> [X, ...gitx.BaseCandidates]
+//	default="",  candidates=[A, B]             -> [A, B]
+//	default="X", candidates=[A, B]             -> [X, A, B]
+//
+// Returning nil for the empty case is load-bearing:
+// ResolveBaseWithCandidates falls back to gitx.BaseCandidates when its
+// candidates argument is nil/empty, so the existing
+// TestResolveBase_FallsBackToMain et al keep hitting the built-in chain
 // unchanged.
 //
-// Duplicates are collapsed so the auto-detect failure message in
-// ResolveBaseWithCandidates does not list the same ref twice when the user
-// puts e.g. "main" in both Default and the built-in fallback.
+// Duplicates are collapsed so the failure message in
+// ResolveBaseWithCandidates does not list the same ref twice (e.g. if the
+// user puts "main" in both Default and the built-in fallback path).
 func mergeBaseCandidates(cfg *config.Config) []string {
 	if cfg == nil {
 		return nil
 	}
-	if cfg.Base.Default == "" && len(cfg.Base.Candidates) == 0 {
+	hasDefault := cfg.Base.Default != ""
+	hasCandidates := len(cfg.Base.Candidates) > 0
+	if !hasDefault && !hasCandidates {
 		return nil
 	}
+
+	// Pick the tail chain: an explicit Candidates list replaces the
+	// built-in entirely; otherwise the built-in is the fallback so a
+	// default-only config still has somewhere to land.
+	var tail []string
+	if hasCandidates {
+		tail = cfg.Base.Candidates
+	} else {
+		tail = gitx.BaseCandidates
+	}
+
 	seen := make(map[string]bool)
-	out := make([]string, 0, 1+len(cfg.Base.Candidates)+len(gitx.BaseCandidates))
+	out := make([]string, 0, 1+len(tail))
 	add := func(c string) {
 		if c == "" || seen[c] {
 			return
@@ -313,10 +339,7 @@ func mergeBaseCandidates(cfg *config.Config) []string {
 		out = append(out, c)
 	}
 	add(cfg.Base.Default)
-	for _, c := range cfg.Base.Candidates {
-		add(c)
-	}
-	for _, c := range gitx.BaseCandidates {
+	for _, c := range tail {
 		add(c)
 	}
 	return out

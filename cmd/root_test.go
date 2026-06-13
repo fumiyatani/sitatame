@@ -242,6 +242,85 @@ func TestRunRoot_ConfigBaseCandidates_OverridesChain(t *testing.T) {
 	}
 }
 
+// TestResolveDiffSpec_CandidatesReplaceBuiltin guards the documented
+// contract that base.candidates is a *replacement* list, not an addition: a
+// repo pinning `candidates: [origin/develop, origin/staging]` must never
+// silently fall back to the built-in chain (which would resolve `main`)
+// when none of the configured candidates exist. The auto-detect path must
+// fail instead so the user notices and fixes their config — silently using
+// the wrong base anchors the review against the wrong commits.
+//
+// The setup deliberately keeps `main` available in the repo: pre-fix
+// (when builtins were appended to the user's candidates), this test would
+// have resolved `main` and the test would have passed by accident. With
+// the fix, builtins are no longer consulted, so RunRoot exits 1.
+func TestResolveDiffSpec_CandidatesReplaceBuiltin(t *testing.T) {
+	dir, _ := newRepo(t)
+	// `main` is still present from newRepo. If builtins were appended to
+	// the user's candidates, ResolveBaseWithCandidates would land on
+	// `main` here and the assertion below would fail.
+	writeRepoConfig(t, dir, `base:
+  candidates:
+    - "origin/develop"
+    - "origin/staging"
+`)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	tuiCalled := false
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			tuiCalled = true
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 1 {
+		t.Errorf("exit = %d, want 1 (auto-detect must fail when only nonexistent candidates are configured)", code)
+	}
+	if tuiCalled {
+		t.Errorf("RunTUI must not be called when base resolution fails")
+	}
+	// The error message should mention the user's candidates, not main.
+	// We don't pin the exact wording but we do guard against the symptom
+	// the bug produced: `main` being silently selected.
+	if strings.Contains(stderr.String(), "main") && !strings.Contains(stderr.String(), "base not found") {
+		t.Errorf("stderr mentions main without a 'base not found' diagnostic; built-in chain may have leaked in: %q", stderr.String())
+	}
+}
+
+// TestResolveDiffSpec_DefaultIsPrependedToBuiltinWhenCandidatesEmpty
+// asserts the second axis of the contract: when only base.default is set
+// (no candidates), the configured ref is *prepended* to the built-in
+// BaseCandidates rather than replacing it. This keeps "I just want to
+// default to origin/release, but please still find main if release isn't
+// here" working without forcing the user to spell out every fallback.
+//
+// We use a default that does not resolve (`origin/release` — no such
+// remote in the test repo) so the test isolates the "tail still runs"
+// behavior: if the built-in chain were dropped, RunRoot would exit 1; the
+// fact that it picks `main` proves the chain is intact.
+func TestResolveDiffSpec_DefaultIsPrependedToBuiltinWhenCandidatesEmpty(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (built-in fallback should still run after an unresolvable default)", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (built-in BaseCandidates should be appended after default)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
 // TestRunRoot_MalformedConfig_DegradesToAutoDetect guards the graceful
 // degradation path: a config file that fails to parse must not block the TUI
 // — the built-in BaseCandidates chain still resolves and the user sees a
