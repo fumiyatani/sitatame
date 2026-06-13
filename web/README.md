@@ -61,6 +61,19 @@ route is killed:
 | `unknown-comment.yaml` | Comment-level unknown keys survive |
 | `with-yaml-comments.yaml` | YAML `#` comments survive |
 | `array-order.yaml` | `comments[]` order is preserved |
+| `deleted-line-anchor.yaml` | Comment anchored at a deleted line (`side: base`, `blob: <base>`) — covers the sitatame#61 anchor fix |
+| `rename-file.yaml` | `files[].rename_from` / `rename_to` / `similarity` + line + range comments on the renamed path |
+| `stale-comment.yaml` | Comment marked `state: stale` with a drifted blob hash retained verbatim |
+| `review-level-comment.yaml` | Top-level `review_comment` as a multi-line block scalar with no `comments[]` |
+| `range-comment.yaml` | Three `kind: range` comments on the same anchor in distinct states (open / resolved / stale) |
+| `multi-file.yaml` | Three `files[]` entries (modified / modified / added) with comments interleaved across paths and kinds |
+| `extras-everywhere.yaml` | Unknown keys at top, file, and comment level (Extras maps at all three depths) |
+| `utf8-body.yaml` | Japanese front matter values + comment / `review_comment` bodies as literal block scalars |
+
+The fixture set is auto-discovered by `RoundtripTest.bitExactRoundtrip`; adding
+a new entry on the Go side (`cmd/yamlfixture/main.go`) automatically extends
+Kotlin coverage. A separate `fixtureCountSanity` test in the same file pins a
+minimum count so a future PR can't silently shrink coverage.
 
 When the gate fails, capture the diff from `Bytes.diff` and record the result
 in `tmp/spec-web-ui.md` so the architecture decision is traceable.
