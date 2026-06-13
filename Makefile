@@ -1,7 +1,8 @@
-.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean
+.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures
 
 BIN := sitatame
 PKG := ./...
+WEB_FIXTURE_DIR := web/fixtures
 
 build:
 	go build -o $(BIN) .
@@ -50,3 +51,9 @@ build-all:
 clean:
 	rm -f $(BIN)
 	rm -rf dist
+
+# Regenerate the YAML round-trip fixtures consumed by web/ (Kotlin Web UI PoC).
+# See cmd/yamlfixture/main.go for the input set and rationale.
+web-fixtures:
+	mkdir -p $(WEB_FIXTURE_DIR)
+	go run ./cmd/yamlfixture -out $(WEB_FIXTURE_DIR)
