@@ -50,19 +50,28 @@ Replaces the built-in `BaseCandidates` chain
 `master`) for the auto-detect path. The entries are tried in order; the
 first one that resolves to a commit *and* differs from `HEAD` wins.
 
+**When `base.candidates` is specified, the built-in fallback chain is NOT
+appended.** A repo that pins `candidates: [origin/develop]` will fail with
+"base not found" rather than silently falling back to `origin/main` /
+`main`. This is deliberate: every review is anchored against the resolved
+base, so a silently mismatched base would produce a misleading review.
+
 When `base.candidates` is omitted but `base.default` is set, `sitatame`
 keeps the built-in fallback after the configured default so common
 workflows (`origin/main`, `main`, …) continue to work without further
 configuration.
 
-When both are set, the effective order is:
+The effective auto-detect order is:
 
-1. `base.default`
-2. each entry of `base.candidates`, in order
-3. the built-in `BaseCandidates`, in order
+| `base.default` | `base.candidates` | Effective chain                                |
+| -------------- | ----------------- | ---------------------------------------------- |
+| unset          | unset             | built-in `BaseCandidates`                      |
+| set            | unset             | `[default, ...built-in BaseCandidates]`        |
+| unset          | set               | `candidates` (built-in NOT appended)           |
+| set            | set               | `[default, ...candidates]` (built-in NOT appended) |
 
-Duplicates between layers are collapsed so the auto-detect failure message
-stays readable.
+Duplicates between `default` and the chain that follows are collapsed so
+the auto-detect failure message stays readable.
 
 ## Priority order with the CLI
 
@@ -71,8 +80,12 @@ For the default (range-diff) mode, base resolution follows this priority:
 1. An explicit positional argument to `sitatame` (e.g. `sitatame
    origin/develop`).
 2. `base.default` from `.sitatame/config.yaml`.
-3. `base.candidates` from `.sitatame/config.yaml`.
-4. The built-in `BaseCandidates` fallback chain.
+3. `base.candidates` from `.sitatame/config.yaml` *if set*, otherwise the
+   built-in `BaseCandidates` fallback chain.
+
+Step 3 is exclusive: when `base.candidates` is set, the built-in fallback
+chain is not consulted. See the table in `base.candidates` above for the
+full matrix.
 
 `--staged` and `--working` ignore both the CLI base argument and the config
 file because their diff is always against `HEAD` by definition.
