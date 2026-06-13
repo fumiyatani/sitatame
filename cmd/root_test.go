@@ -161,6 +161,382 @@ func TestRunRoot_ExplicitBaseWins(t *testing.T) {
 	}
 }
 
+// writeRepoConfig writes <repo>/.sitatame/config.yaml with body. It mirrors
+// the path layout config.LoadFromRepo expects, so RunRoot can pick the file
+// up via the same code path users will hit.
+func writeRepoConfig(t *testing.T, dir, body string) {
+	t.Helper()
+	if err := os.MkdirAll(filepath.Join(dir, ".sitatame"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, ".sitatame", "config.yaml"), []byte(body), 0o644); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// TestRunRoot_ConfigBaseDefault_AffectsAutoDetect covers the issue #24 path:
+// when no explicit base is given and base.default is set, the configured ref
+// wins over the built-in BaseCandidates. Renaming main to trunk would
+// normally cause auto-detect to fail; the config entry "trunk" must rescue
+// it.
+func TestRunRoot_ConfigBaseDefault_AffectsAutoDetect(t *testing.T) {
+	dir, _ := newRepo(t)
+	mustGit(t, dir, "branch", "-m", "main", "trunk")
+	writeRepoConfig(t, dir, `base:
+  default: "trunk"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "trunk" {
+		t.Errorf("base.Ref = %q, want trunk (from base.default)", captured.Base.Ref)
+	}
+}
+
+// TestRunRoot_ConfigBaseDefault_LosesToExplicit confirms the priority order:
+// the CLI argument still wins over the config-supplied default. Without this
+// the config would become an unwelcome override on every invocation.
+func TestRunRoot_ConfigBaseDefault_LosesToExplicit(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "feature"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"main"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (CLI overrides config)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
+// TestRunRoot_ConfigBaseCandidates_OverridesChain documents that
+// base.candidates fully replaces the built-in BaseCandidates fallback when
+// base.default is absent. Renaming main to trunk would normally drop the
+// auto-detect chain to empty refs; listing "trunk" in candidates must pick
+// it back up.
+func TestRunRoot_ConfigBaseCandidates_OverridesChain(t *testing.T) {
+	dir, _ := newRepo(t)
+	mustGit(t, dir, "branch", "-m", "main", "trunk")
+	writeRepoConfig(t, dir, `base:
+  candidates:
+    - "nonexistent-ref"
+    - "trunk"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "trunk" {
+		t.Errorf("base.Ref = %q, want trunk (from base.candidates)", captured.Base.Ref)
+	}
+}
+
+// TestResolveDiffSpec_CandidatesReplaceBuiltin guards the documented
+// contract that base.candidates is a *replacement* list, not an addition: a
+// repo pinning `candidates: [origin/develop, origin/staging]` must never
+// silently fall back to the built-in chain (which would resolve `main`)
+// when none of the configured candidates exist. The auto-detect path must
+// fail instead so the user notices and fixes their config — silently using
+// the wrong base anchors the review against the wrong commits.
+//
+// The setup deliberately keeps `main` available in the repo: pre-fix
+// (when builtins were appended to the user's candidates), this test would
+// have resolved `main` and the test would have passed by accident. With
+// the fix, builtins are no longer consulted, so RunRoot exits 1.
+func TestResolveDiffSpec_CandidatesReplaceBuiltin(t *testing.T) {
+	dir, _ := newRepo(t)
+	// `main` is still present from newRepo. If builtins were appended to
+	// the user's candidates, ResolveBaseWithCandidates would land on
+	// `main` here and the assertion below would fail.
+	writeRepoConfig(t, dir, `base:
+  candidates:
+    - "origin/develop"
+    - "origin/staging"
+`)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	tuiCalled := false
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			tuiCalled = true
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 1 {
+		t.Errorf("exit = %d, want 1 (auto-detect must fail when only nonexistent candidates are configured)", code)
+	}
+	if tuiCalled {
+		t.Errorf("RunTUI must not be called when base resolution fails")
+	}
+	// The error message should mention the user's candidates, not main.
+	// We don't pin the exact wording but we do guard against the symptom
+	// the bug produced: `main` being silently selected.
+	if strings.Contains(stderr.String(), "main") && !strings.Contains(stderr.String(), "base not found") {
+		t.Errorf("stderr mentions main without a 'base not found' diagnostic; built-in chain may have leaked in: %q", stderr.String())
+	}
+}
+
+// TestResolveDiffSpec_DefaultIsPrependedToBuiltinWhenCandidatesEmpty
+// asserts the second axis of the contract: when only base.default is set
+// (no candidates), the configured ref is *prepended* to the built-in
+// BaseCandidates rather than replacing it. This keeps "I just want to
+// default to origin/release, but please still find main if release isn't
+// here" working without forcing the user to spell out every fallback.
+//
+// We use a default that does not resolve (`origin/release` — no such
+// remote in the test repo) so the test isolates the "tail still runs"
+// behavior: if the built-in chain were dropped, RunRoot would exit 1; the
+// fact that it picks `main` proves the chain is intact.
+func TestResolveDiffSpec_DefaultIsPrependedToBuiltinWhenCandidatesEmpty(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (built-in fallback should still run after an unresolvable default)", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (built-in BaseCandidates should be appended after default)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
+// TestResolveDiffSpec_EmptyCandidatesUsesOnlyDefault is the PR #60 round 3
+// regression test. An explicit `candidates: []` together with a configured
+// `default` must restrict the auto-detect chain to *only* the default — the
+// built-in fallback (origin/main / main / …) must not silently sneak in.
+//
+// Pre-fix, mergeBaseCandidates collapsed "key omitted" and "key set to []"
+// onto the same len(slice) == 0 branch, so an explicit empty list would
+// silently re-enable the built-in chain and `main` would resolve. The fix
+// adds CandidatesPresent to BaseConfig and routes the empty-list case
+// through the replacement branch. We pin that behavior by configuring a
+// default that does not resolve in the test repo (`origin/release`) while
+// leaving `main` reachable — pre-fix this would have landed on `main` and
+// returned 0; post-fix the auto-detect chain is `[origin/release]` only and
+// RunRoot exits 1.
+func TestResolveDiffSpec_EmptyCandidatesUsesOnlyDefault(t *testing.T) {
+	dir, _ := newRepo(t)
+	// `main` is still present from newRepo. Pre-fix this is the ref the
+	// built-in fallback would have silently selected.
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+  candidates: []
+`)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	tuiCalled := false
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			tuiCalled = true
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 1 {
+		t.Errorf("exit = %d, want 1 (auto-detect must fail when default is unreachable and candidates list is explicitly empty)", code)
+	}
+	if tuiCalled {
+		t.Errorf("RunTUI must not be called when base resolution fails")
+	}
+	// Guard the symptom of the pre-fix bug: `main` silently selected.
+	if strings.Contains(stderr.String(), "main") && !strings.Contains(stderr.String(), "base not found") {
+		t.Errorf("stderr mentions main without a 'base not found' diagnostic; built-in chain may have leaked in: %q", stderr.String())
+	}
+}
+
+// TestResolveDiffSpec_NoCandidatesKeyUsesBuiltin is the symmetric guard:
+// when `candidates:` is omitted entirely (only `default:` is set), the
+// built-in BaseCandidates chain must still follow the default. This is the
+// "default + built-in fallback" workflow documented in docs/config.md and
+// the case CandidatesPresent must keep working — collapsing all
+// len(slice) == 0 cases onto the replacement branch would regress it the
+// other way.
+//
+// We use a default that does not resolve (`origin/release` — no such
+// remote in the test repo) so the test isolates the "tail still runs"
+// behavior: if the built-in chain were dropped, RunRoot would exit 1; the
+// fact that it picks `main` proves the chain is intact.
+func TestResolveDiffSpec_NoCandidatesKeyUsesBuiltin(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (built-in fallback should still run when candidates key is omitted)", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (built-in BaseCandidates should follow default)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
+// TestRunRoot_MalformedConfig_DegradesToAutoDetect guards the graceful
+// degradation path: a config file that fails to parse must not block the TUI
+// — the built-in BaseCandidates chain still resolves and the user sees a
+// warning on stderr.
+func TestRunRoot_MalformedConfig_DegradesToAutoDetect(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (auto-detect fallback)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+	if !strings.Contains(stderr.String(), "sitatame:") {
+		t.Errorf("expected config warning on stderr; got %q", stderr.String())
+	}
+}
+
+// TestRunRoot_StagedSkipsConfigLoad is the PR #60 round 4 [P3] regression
+// test. --staged forces base to HEAD and never reads .sitatame/config.yaml,
+// so a malformed config in the repo must not produce a stderr warning the
+// user cannot act on for this invocation. Pre-fix, RunRoot called
+// config.LoadFromRepo unconditionally and surfaced "sitatame: config: ..."
+// even though the parsed value was then thrown away.
+func TestRunRoot_StagedSkipsConfigLoad(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	// Stage something so --staged has a non-empty diff and reaches the TUI.
+	if err := os.WriteFile(filepath.Join(dir, "staged.txt"), []byte("hello\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	mustGit(t, dir, "add", "staged.txt")
+
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--staged"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("--staged must not emit config warning; stderr = %q", stderr.String())
+	}
+}
+
+// TestRunRoot_WorkingSkipsConfigLoad is the --working twin of
+// TestRunRoot_StagedSkipsConfigLoad. Same rationale: a config the mode is
+// about to ignore must not surface warnings.
+func TestRunRoot_WorkingSkipsConfigLoad(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	// Modify a tracked file so --working has a non-empty diff.
+	if err := os.WriteFile(filepath.Join(dir, "b"), []byte("b\nworking\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, []string{"--working"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("--working must not emit config warning; stderr = %q", stderr.String())
+	}
+}
+
+// TestRunRoot_DefaultLoadsConfig is the symmetric guard: the default
+// range-diff mode must still load and validate the config, because
+// base.default / base.candidates only affect this mode. A malformed file in
+// this path is exactly when the user needs to see the warning.
+func TestRunRoot_DefaultLoadsConfig(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, "base: [unterminated\n")
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "sitatame: config:") {
+		t.Errorf("default mode must emit config warning on malformed file; stderr = %q", stderr.String())
+	}
+}
+
+// TestRunRoot_ConfigOnlyDir_DoesNotTriggerLegacyWarning is the issue #24
+// allowlist case: a <repo>/.sitatame/ directory containing only config.yaml
+// is the new legitimate state, not the legacy review-storage layout, so the
+// warning must stay silent.
+func TestRunRoot_ConfigOnlyDir_DoesNotTriggerLegacyWarning(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "main"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	got := stderr.String()
+	if strings.Contains(got, "legacy") {
+		t.Errorf("config-only .sitatame/ must not trigger legacy warning; got %q", got)
+	}
+	if strings.Contains(got, "To migrate drafts:") {
+		t.Errorf("config-only .sitatame/ must not print migration hint; got %q", got)
+	}
+}
+
+// TestRunRoot_ConfigPlusLegacyContents_StillWarns confirms that the
+// allowlist is "strictly equal to" rather than "contains": if the directory
+// has config.yaml *plus* leftover drafts/, the user still needs the legacy
+// notice.
+func TestRunRoot_ConfigPlusLegacyContents_StillWarns(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "main"
+`)
+	// Pretend there are still legacy drafts on disk.
+	if err := os.MkdirAll(filepath.Join(dir, ".sitatame", "drafts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "legacy") {
+		t.Errorf("expected legacy warning with leftover drafts/; got %q", stderr.String())
+	}
+}
+
 func TestRunRoot_BaseAutoFails(t *testing.T) {
 	dir, _ := newRepo(t)
 	mustGit(t, dir, "branch", "-m", "main", "trunk")

@@ -72,3 +72,50 @@ func TestResolveBase_SkipsHEADItself(t *testing.T) {
 		t.Fatal("expected error since main == HEAD")
 	}
 }
+
+// TestResolveBaseWithCandidates_OverridesChain documents the config-aware
+// path: when the caller supplies a non-empty candidate list, it fully
+// replaces the built-in BaseCandidates. This is what cmd/root.go relies on
+// to honor `base.candidates` from <repo>/.sitatame/config.yaml.
+func TestResolveBaseWithCandidates_OverridesChain(t *testing.T) {
+	dir, mainSHA, _ := repoWithBranches(t)
+	r, _ := Discover(dir)
+	// Only `main` resolves — drop everything else so the test fails loudly
+	// if the override is ignored and the built-in chain is used.
+	b, err := ResolveBaseWithCandidates(r, "", []string{"missing-ref", "main"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Ref != "main" || b.SHA != mainSHA {
+		t.Errorf("got %+v, want ref=main sha=%s", b, mainSHA)
+	}
+}
+
+// TestResolveBaseWithCandidates_NilFallsBackToDefault confirms that passing
+// nil keeps the existing auto-detect behavior intact — important so callers
+// without a config file see no regression.
+func TestResolveBaseWithCandidates_NilFallsBackToDefault(t *testing.T) {
+	dir, mainSHA, _ := repoWithBranches(t)
+	r, _ := Discover(dir)
+	b, err := ResolveBaseWithCandidates(r, "", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Ref != "main" || b.SHA != mainSHA {
+		t.Errorf("got %+v, want main", b)
+	}
+}
+
+// TestResolveBaseWithCandidates_ExplicitWinsOverList confirms the CLI
+// argument continues to take precedence over the supplied candidate list.
+func TestResolveBaseWithCandidates_ExplicitWinsOverList(t *testing.T) {
+	dir, mainSHA, _ := repoWithBranches(t)
+	r, _ := Discover(dir)
+	b, err := ResolveBaseWithCandidates(r, "main", []string{"origin/develop"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Ref != "main" || b.SHA != mainSHA {
+		t.Errorf("got %+v, want main", b)
+	}
+}
