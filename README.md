@@ -192,6 +192,10 @@ untrusted sources.
 session, or feed it to an agent that knows to look at drafts before starting
 work.
 
+Re-launching `sitatame` on the same branch auto-loads the most recent draft
+so prior comments reappear in the TUI; saving again writes back to the same
+draft file.
+
 ### Storage location
 
 Reviews and drafts live outside the repository tree so you don't have to add
