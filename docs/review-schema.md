@@ -59,8 +59,15 @@ reader 用のフィールドを落とさないこと、が schema 全体の不�
 <safe-basename> + "__" + sha1(<repo absolute path>)[:8]
 ```
 
-- `<safe-basename>` は repo root の basename を `[a-zA-Z0-9._-]` 以外を
-  `_` に置換したもの (`internal/review/slug.go` の `safePrefix`)
+- `<safe-basename>` は repo root の basename を `safePrefix` に通したもの
+  (`internal/review/slug.go`)。具体的には:
+  - 先頭から **32 byte** までを切り出し (`branchPrefixMax`、byte 単位の
+    truncate なので非 ASCII basename では multi-byte rune が途中で
+    切られる)
+  - その範囲内で `[a-zA-Z0-9._-]` 以外の各 byte を `_` に置換
+  - 範囲内に safe byte が 1 つも無いときは `safePrefix` が `"branch"`
+    を返すが、`ProjectSlug` 側でさらに `"project"` に差し替える
+    (project 用の fallback)
 - sha1 を 8 文字付けるのは、同名の別 checkout (worktree / 別 clone) が
   衝突しないようにするため
 - ルート解決前に `EvalSymlinks` + `filepath.Abs` で正規化しているので
@@ -91,8 +98,13 @@ yyyyMMddTHHmmss + "-" + slug(review_comment の先頭行)
 
 - タイムスタンプは保存時の UTC、`20060102T150405` フォーマット
 - slug は `review_comment` の先頭 1 行から `[a-zA-Z0-9._-]` 以外を `_`
-  に置換し、最大 32 文字に切ったもの。前後の `_` / 先頭の `.` は除去。
+  に置換し、最大 32 byte に切ったもの。前後の `_` / 先頭の `.` は除去。
   空または unsafe しか無いときは `review` にフォールバック
+- 置換は **rune 単位の iter** で行ない、unsafe な rune (非 ASCII 含む)
+  は `_` **1 byte** に置換される。日本語のように非 ASCII で始まる先頭行
+  だと、先頭が `____...` で埋まった slug になり、本文の意味が id から
+  読み取れないケースがある。32 文字 / 32 byte の truncate は最終出力に
+  対して **byte 単位** で適用される (`slugifyReviewComment`)
 - 同じ (timestamp, slug) のファイルが既に存在する場合は `-1`, `-2`, ...
   サフィックスが追加される (`internal/review/store.go` の `GenerateID`)
 
