@@ -1,5 +1,11 @@
+import org.jetbrains.kotlin.gradle.ExperimentalWasmDsl
+import org.jetbrains.kotlin.gradle.dsl.JvmTarget
+
 plugins {
-    kotlin("jvm") version "2.1.10"
+    kotlin("multiplatform") version "2.1.10"
+    kotlin("plugin.serialization") version "2.1.10"
+    id("org.jetbrains.compose") version "1.7.3"
+    id("org.jetbrains.kotlin.plugin.compose") version "2.1.10"
 }
 
 group = "dev.sitatame.web"
@@ -7,30 +13,117 @@ version = "0.0.1-SNAPSHOT"
 
 repositories {
     mavenCentral()
+    google()
+    maven("https://maven.pkg.jetbrains.space/public/p/compose/dev")
 }
 
-dependencies {
-    // snakeyaml-engine 2.x — Node tree API needed for comment / order
-    // preservation. Plain snakeyaml's YamlReader/Writer drops comments.
-    implementation("org.snakeyaml:snakeyaml-engine:2.9")
+// Pin Ktor / serialization versions in one place so jvmMain (server) and
+// wasmJsMain (client) stay aligned.
+val ktorVersion = "3.0.3"
+val kotlinxSerializationVersion = "1.7.3"
+val kotlinxCoroutinesVersion = "1.9.0"
 
-    testImplementation(platform("org.junit:junit-bom:5.11.4"))
-    testImplementation("org.junit.jupiter:junit-jupiter")
-    testRuntimeOnly("org.junit.platform:junit-platform-launcher")
-}
-
-// JDK 21 matches what CI provisions via actions/setup-java (Temurin 21). If
-// the local environment only has JDK 17, Gradle's toolchain auto-provisioning
-// will try to download Temurin 21 — set `org.gradle.java.installations.auto-detect`
-// or install JDK 21 locally to avoid that.
 kotlin {
     jvmToolchain(21)
+
+    jvm {
+        compilations.all {
+            compileTaskProvider.configure {
+                compilerOptions {
+                    jvmTarget.set(JvmTarget.JVM_21)
+                }
+            }
+        }
+    }
+
+    @OptIn(ExperimentalWasmDsl::class)
+    wasmJs {
+        moduleName = "sitatame-web"
+        browser {
+            commonWebpackConfig {
+                outputFileName = "sitatame-web.js"
+            }
+        }
+        binaries.executable()
+    }
+
+    sourceSets {
+        val commonMain by getting {
+            dependencies {
+                implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:$kotlinxSerializationVersion")
+                implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:$kotlinxCoroutinesVersion")
+            }
+        }
+        val commonTest by getting {
+            dependencies {
+                implementation(kotlin("test"))
+            }
+        }
+
+        val jvmMain by getting {
+            dependencies {
+                // YAML round-trip (existing PoC).
+                implementation("org.snakeyaml:snakeyaml-engine:2.9")
+
+                // Ktor server.
+                implementation("io.ktor:ktor-server-core:$ktorVersion")
+                implementation("io.ktor:ktor-server-netty:$ktorVersion")
+                implementation("io.ktor:ktor-server-content-negotiation:$ktorVersion")
+                implementation("io.ktor:ktor-server-status-pages:$ktorVersion")
+                implementation("io.ktor:ktor-server-cors:$ktorVersion")
+                implementation("io.ktor:ktor-server-call-logging:$ktorVersion")
+                implementation("io.ktor:ktor-serialization-kotlinx-json:$ktorVersion")
+
+                // Logging backend for Ktor's slf4j calls — keep it minimal.
+                implementation("org.slf4j:slf4j-simple:2.0.16")
+            }
+        }
+        val jvmTest by getting {
+            dependencies {
+                implementation(platform("org.junit:junit-bom:5.11.4"))
+                implementation("org.junit.jupiter:junit-jupiter")
+                runtimeOnly("org.junit.platform:junit-platform-launcher")
+                implementation("io.ktor:ktor-server-test-host:$ktorVersion")
+                implementation("io.ktor:ktor-client-content-negotiation:$ktorVersion")
+            }
+        }
+
+        val wasmJsMain by getting {
+            dependencies {
+                implementation(compose.runtime)
+                implementation(compose.foundation)
+                implementation(compose.material3)
+                implementation(compose.ui)
+                // No HTTP client dependency: the wasmJs target consumes
+                // `window.fetch` directly via JS interop (see ApiClient.kt).
+                // ktor-client-js does not have a wasmJs variant in 3.0.x; the
+                // browser fetch call is small enough that pulling the client in
+                // is not worth the friction.
+            }
+        }
+    }
 }
 
-tasks.test {
+// The JUnit Platform engine has to be enabled explicitly for the JVM target's
+// test task; the Multiplatform DSL doesn't wire that up automatically.
+tasks.named<Test>("jvmTest") {
     useJUnitPlatform()
     testLogging {
         events("passed", "skipped", "failed")
         showStandardStreams = true
     }
+}
+
+// `./gradlew :web:run` runs the Ktor backend. The Kotlin Multiplatform plugin
+// does not register the `application` plugin automatically; we wire a JavaExec
+// task directly against the JVM compilation outputs to avoid the friction.
+tasks.register<JavaExec>("run") {
+    group = "application"
+    description = "Run the Ktor backend on a random localhost port."
+    mainClass.set("dev.sitatame.web.server.ServerKt")
+    val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
+    classpath = files(
+        jvmMainCompilation.output.allOutputs,
+        jvmMainCompilation.runtimeDependencyFiles,
+    )
 }
