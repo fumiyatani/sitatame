@@ -90,12 +90,12 @@ func (m *Model) openCommentModal() bool {
 		anchor.LineEnd = endLine
 		anchor.Blob = blobForSide(f, anchor.Side)
 	case f.Binary, r.kind == rowFileHeader:
-		// A fully-deleted file has no head blob and only the base content
-		// is meaningful — pin the file-level anchor to the base side so the
-		// blob lookup in Validate hits BlobBase.
-		if f.Status == diffmodel.StatusDeleted {
-			anchor.Side = review.SideBase
-		}
+		// File-scope: derive Side from the file's Status so deleted files
+		// land on SideBase (BlobHead is empty for them — validate would
+		// stale the anchor otherwise). PR61 reintroduced this regression
+		// for non-rowLine cursor positions; this guard reinstates the
+		// pre-PR61 behavior for file-scope fallbacks.
+		anchor.Side = fileScopeSide(f)
 		kind = review.KindFile
 		anchor.Kind = review.KindFile
 		anchor.Blob = blobForSide(f, anchor.Side)
@@ -107,7 +107,11 @@ func (m *Model) openCommentModal() bool {
 		anchor.Line = ln
 		anchor.Blob = blobForSide(f, anchor.Side)
 	default:
-		// Hunk header etc. — fall back to file scope.
+		// Hunk header etc. — fall back to file scope. Mirror the
+		// rowFileHeader branch's Status-aware Side derivation so a `c`
+		// pressed on a hunk header inside a deleted file still anchors
+		// to BlobBase instead of the empty BlobHead.
+		anchor.Side = fileScopeSide(f)
 		kind = review.KindFile
 		anchor.Kind = review.KindFile
 		anchor.Blob = blobForSide(f, anchor.Side)
@@ -121,6 +125,19 @@ func (m *Model) openCommentModal() bool {
 	mm := newModal(kind, anchor, f, "")
 	m.modal = &mm
 	return true
+}
+
+// fileScopeSide picks the side a file-scope anchor should live on, derived
+// from the file's overall Status. Deleted files have no head blob, so the
+// anchor must live on SideBase or Validate / overlay re-resolution stale it
+// out. Added / modified / renamed files keep SideHead since the head blob is
+// what the reviewer is reviewing. Used by both the rowFileHeader / binary
+// branch and the rowHunkHeader fallback in openCommentModal.
+func fileScopeSide(f diffmodel.File) review.Side {
+	if f.Status == diffmodel.StatusDeleted {
+		return review.SideBase
+	}
+	return review.SideHead
 }
 
 // lineSideForRow returns the side a line comment should anchor to, derived
