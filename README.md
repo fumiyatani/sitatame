@@ -177,7 +177,10 @@ can consume the human reviewer's notes without screen scraping:
    `kind: review|file|line|range`, `path`, `side`, optional `line` /
    `line_start` / `line_end`, blob hashes for staleness detection, and a
    `body`. Anything not modeled by `sitatame` is preserved verbatim, so an
-   agent can extend the schema without losing data on the next save.
+   agent can extend the schema without losing data on the next save. The
+   full field-by-field reference, side decision rules, state transitions,
+   and forward-compat strategy live in
+   [docs/review-schema.md](docs/review-schema.md).
 5. `sitatame search <pattern>` is the read path for past reviews.
 
 A minimal handoff in shell looks like:
