@@ -9,15 +9,13 @@ import java.nio.file.Paths as NioPaths
  * side or the Web UI will silently look at different directories than the
  * CLI / TUI.
  *
- *  1. $SITATAME_HOME (trimmed; empty after trim is treated as unset)
+ *  1. $SITATAME_HOME (trimmed; empty after trim is treated as unset;
+ *     leading `~/` expanded; relative paths absolutised with a stderr warning)
  *  2. <user home>/.sitatame
  *  3. <tmp>/sitatame  (best-effort fallback; stderr warning)
  *
- * The Web backend only reads from this tree, so we skip the symlink-canonical
- * step for $SITATAME_HOME and the tilde expansion that production code on the
- * Go side does — those edge cases are rare for the PoC and can be ported in a
- * follow-up if a user hits them. Repo root canonicalisation still happens
- * because that affects ProjectSlug stability across worktrees.
+ * Repo root canonicalisation also happens here because that affects
+ * ProjectSlug stability across worktrees.
  */
 data class SitatamePaths(
     val outputRoot: Path,
@@ -58,17 +56,62 @@ data class SitatamePaths(
             )
         }
 
-        private fun resolveOutputRoot(envLookup: (String) -> String?, homeDir: Path?): Path {
-            val env = envLookup(ENV_OUTPUT_ROOT)?.trim().orEmpty()
-            if (env.isNotEmpty()) {
-                return NioPaths.get(env)
+        /**
+         * Kotlin port of `resolveOutputRoot` + `normaliseEnvOutputRoot` from
+         * `internal/review/paths.go`. The validation pipeline must stay in
+         * sync with Go:
+         *
+         *   - leading/trailing whitespace trimmed; all-whitespace is unset
+         *     (so a stray `export SITATAME_HOME=" "` does not silently land
+         *     everything under "  /<project-slug>/...").
+         *   - a leading `~/` or bare `~` is expanded via [homeDir] so users
+         *     can write `SITATAME_HOME=~/work` without relying on shell
+         *     expansion.
+         *   - relative paths are absolutised, with a one-line stderr warning
+         *     so callers know which directory was actually picked.
+         *
+         * Exposed as `internal` for [resolveOutputRoot] tests.
+         */
+        internal fun resolveOutputRoot(envLookup: (String) -> String?, homeDir: Path?): Path {
+            val raw = envLookup(ENV_OUTPUT_ROOT)?.trim().orEmpty()
+            if (raw.isNotEmpty()) {
+                return normaliseEnvOutputRoot(raw, homeDir)
             }
             if (homeDir != null) {
                 return homeDir.resolve(".sitatame")
             }
             val tmp = System.getProperty("java.io.tmpdir") ?: "/tmp"
-            System.err.println("sitatame: could not resolve user home; falling back to $tmp/sitatame")
-            return NioPaths.get(tmp, "sitatame")
+            val fallback = NioPaths.get(tmp, "sitatame")
+            System.err.println("sitatame: could not resolve user home; falling back to $fallback")
+            return fallback
+        }
+
+        private fun normaliseEnvOutputRoot(value: String, homeDir: Path?): Path {
+            var v = value
+            if (v == "~" || v.startsWith("~/")) {
+                val home = homeDir?.toString()
+                if (!home.isNullOrEmpty()) {
+                    v = if (v == "~") home else home + v.substring(1)
+                }
+                // If homeDir is unknown, fall through with the literal value;
+                // matches Go where UserHomeDir() failure leaves "~/..."
+                // untouched and the next step (Abs) absolutises it.
+            }
+            val path = NioPaths.get(v)
+            if (path.isAbsolute) {
+                return path
+            }
+            // Relative: absolutise and warn so callers see which directory we
+            // picked. Best-effort: if toAbsolutePath() throws or returns the
+            // input unchanged we still emit the warning but use the literal
+            // value, matching Go's filepath.Abs failure mode.
+            val abs = try {
+                path.toAbsolutePath().normalize()
+            } catch (_: Exception) {
+                path
+            }
+            System.err.println("sitatame: $ENV_OUTPUT_ROOT was relative; using $abs")
+            return abs
         }
 
         private fun canonicaliseRepoRoot(repoRoot: Path): Path {
