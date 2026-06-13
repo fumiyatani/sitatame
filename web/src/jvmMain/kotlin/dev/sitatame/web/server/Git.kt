@@ -54,6 +54,20 @@ class Git(private val workdir: Path) {
     }
 
     /**
+     * Returns the SHA of HEAD as a hex string, or an empty string when HEAD
+     * cannot be resolved (unborn / pathological repos). Used by
+     * [normalizeBranch] to give detached HEAD sessions a per-SHA branch slug
+     * matching the Go CLI behaviour in `cmd/root.go`.
+     */
+    fun headSHA(): String {
+        return try {
+            run("rev-parse", "HEAD").trim()
+        } catch (_: Exception) {
+            ""
+        }
+    }
+
+    /**
      * Unified diff for `<base>..HEAD`. The result is the literal `git diff`
      * output; parse with [DiffParser.parse].
      */

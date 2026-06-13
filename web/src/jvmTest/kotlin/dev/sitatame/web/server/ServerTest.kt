@@ -118,6 +118,47 @@ class ServerTest {
 }
 
 /**
+ * Parity tests for [normalizeBranch] against the Go CLI behaviour in
+ * `cmd/root.go`. The CLI folds detached HEAD into `detached/<sha[:12]>`; the
+ * Web UI must do the same or the two clients will silently look at different
+ * `~/.sitatame/<slug>/reviews/<branch-slug>/` directories for the same repo.
+ */
+class NormalizeBranchTest {
+
+    @Test
+    fun `detached HEAD with sha becomes detached prefix`() {
+        val got = normalizeBranch("HEAD", "abcdef0123456789abcdef0123456789abcdef01")
+        assertEquals("detached/abcdef012345", got)
+        // The slug derived from this must match what BranchSlug("detached/abcdef012345")
+        // produces — i.e. the same value the Go CLI's NewPaths(...) would store under.
+        val slug = Slug.branchSlug(got)
+        assertEquals(Slug.branchSlug("detached/abcdef012345"), slug)
+    }
+
+    @Test
+    fun `regular branch passes through unchanged`() {
+        assertEquals("feature/web", normalizeBranch("feature/web", "abcdef0123456789"))
+        assertEquals("main", normalizeBranch("main", "abcdef0123456789"))
+    }
+
+    @Test
+    fun `HEAD with short sha falls back to raw HEAD`() {
+        // Matches Go: when HeadSHA returns "" (unborn / pathological HEAD) the
+        // CLI leaves branch == "" and BranchSlug("") absorbs the case. We don't
+        // get the "" branch (rev-parse --abbrev-ref returns "HEAD") so the
+        // fallback here is the literal "HEAD". The Go side's empty-branch path
+        // is reached when `--abbrev-ref` itself errors, which we don't model.
+        assertEquals("HEAD", normalizeBranch("HEAD", ""))
+        assertEquals("HEAD", normalizeBranch("HEAD", "abc"))
+    }
+
+    @Test
+    fun `empty branch passes through`() {
+        assertEquals("", normalizeBranch("", "abcdef0123456789abcdef01"))
+    }
+}
+
+/**
  * Verifies the ReviewLoader picks up a planted .md file via the
  * SitatamePaths.reviewsDir() layout. Doesn't need git at all.
  */
