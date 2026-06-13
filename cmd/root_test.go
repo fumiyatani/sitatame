@@ -266,6 +266,53 @@ func TestRunRoot_MalformedConfig_DegradesToAutoDetect(t *testing.T) {
 	}
 }
 
+// TestRunRoot_ConfigOnlyDir_DoesNotTriggerLegacyWarning is the issue #24
+// allowlist case: a <repo>/.sitatame/ directory containing only config.yaml
+// is the new legitimate state, not the legacy review-storage layout, so the
+// warning must stay silent.
+func TestRunRoot_ConfigOnlyDir_DoesNotTriggerLegacyWarning(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "main"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	got := stderr.String()
+	if strings.Contains(got, "legacy") {
+		t.Errorf("config-only .sitatame/ must not trigger legacy warning; got %q", got)
+	}
+	if strings.Contains(got, "To migrate drafts:") {
+		t.Errorf("config-only .sitatame/ must not print migration hint; got %q", got)
+	}
+}
+
+// TestRunRoot_ConfigPlusLegacyContents_StillWarns confirms that the
+// allowlist is "strictly equal to" rather than "contains": if the directory
+// has config.yaml *plus* leftover drafts/, the user still needs the legacy
+// notice.
+func TestRunRoot_ConfigPlusLegacyContents_StillWarns(t *testing.T) {
+	dir, _ := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "main"
+`)
+	// Pretend there are still legacy drafts on disk.
+	if err := os.MkdirAll(filepath.Join(dir, ".sitatame", "drafts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(stderr.String(), "legacy") {
+		t.Errorf("expected legacy warning with leftover drafts/; got %q", stderr.String())
+	}
+}
 
 func TestRunRoot_BaseAutoFails(t *testing.T) {
 	dir, _ := newRepo(t)
