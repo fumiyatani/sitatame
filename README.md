@@ -2,6 +2,11 @@
 
 [日本語版 README](README.ja.md)
 
+> **Project status (2026-06)**: the terminal UI is in maintenance mode.
+> Active development has moved to the Kotlin Web UI under [`web/`](web/).
+> TUI bug fixes are still welcome; new feature work targets the Web UI.
+> See [docs/tui-status.md](docs/tui-status.md) for the policy in detail.
+
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
 attach 4 grains of comments (review-level, file, line, range), and saves the
