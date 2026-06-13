@@ -113,6 +113,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		cmd := m.updateModal(msg)
 		return m, cmd
 	}
+	cmd := m.updateMain(msg)
+	return m, cmd
+}
+
+// updateMain handles the main diff-view branch of Update — every message
+// path that runs when neither the file picker nor a textarea modal is open.
+// Mutates the receiver and returns the tea.Cmd to forward; callers in Update
+// wrap it back into the (tea.Model, tea.Cmd) shape bubbletea expects.
+//
+// Extracted from Update so the dispatcher at the top stays a flat read of
+// "picker → modal → main", matching the other two updateXxx helpers
+// (updateFilePicker, updateModal) that already follow this split.
+func (m *Model) updateMain(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
@@ -121,18 +134,18 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.layout == LayoutSplit {
 			m.scrollSplitToCursor()
 		}
-		return m, nil
+		return nil
 	case tea.MouseMsg:
 		// Help is rendered as a full-screen overlay, so silently scrolling
 		// the diff behind it would be invisible until the user closes help —
 		// a stealth state change. Drop wheel events while help is up.
 		if m.showHelp {
-			return m, nil
+			return nil
 		}
 		// Only wheel-press events scroll; releases, drags, and other buttons
 		// are ignored so we don't fight the natural single-tick model.
 		if msg.Action != tea.MouseActionPress {
-			return m, nil
+			return nil
 		}
 		switch msg.Button {
 		case tea.MouseButtonWheelUp:
@@ -150,7 +163,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.MouseButtonLeft:
 			m.handleLeftClick(msg.Y)
 		}
-		return m, nil
+		return nil
 	case tea.KeyMsg:
 		// Any key clears the previous transient message; guards below re-set
 		// it for the keys we intercept in split mode.
@@ -159,23 +172,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case KeyQuit, KeyQuitCtrl:
 			m.quitting = true
 			m.quitReason = QuitDraft
-			return m, tea.Quit
+			return tea.Quit
 		case KeySave:
 			m.quitting = true
 			m.quitReason = QuitPromote
-			return m, tea.Quit
+			return tea.Quit
 		case KeyHelp:
 			m.showHelp = !m.showHelp
-			return m, nil
+			return nil
 		case KeyEsc:
 			if m.showHelp {
 				m.showHelp = false
 			}
 			m.clearSelection()
-			return m, nil
+			return nil
 		case KeyToggleLayout:
 			m.toggleLayout()
-			return m, nil
+			return nil
 		case KeyDown, KeyDownArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(1)
@@ -183,7 +196,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveCursorBy(1)
 				m.extendSelection()
 			}
-			return m, nil
+			return nil
 		case KeyUp, KeyUpArrow:
 			if m.layout == LayoutSplit {
 				m.moveSplitCursorBy(-1)
@@ -191,7 +204,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.moveCursorBy(-1)
 				m.extendSelection()
 			}
-			return m, nil
+			return nil
 		case KeyNextFile, KeyRightArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(1)
@@ -199,7 +212,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.jumpFile(1)
 				m.clearSelection()
 			}
-			return m, nil
+			return nil
 		case KeyPrevFile, KeyLeftArrow:
 			if m.layout == LayoutSplit {
 				m.jumpSplitFile(-1)
@@ -207,42 +220,42 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.jumpFile(-1)
 				m.clearSelection()
 			}
-			return m, nil
+			return nil
 		case KeySelectKey:
 			if m.layout == LayoutSplit {
 				m.statusMsg = previewOnlyMsg
-				return m, nil
+				return nil
 			}
 			m.startSelection()
-			return m, nil
+			return nil
 		case "c":
 			if m.layout == LayoutSplit {
 				m.statusMsg = previewOnlyMsg
-				return m, nil
+				return nil
 			}
 			m.openCommentModal()
-			return m, nil
+			return nil
 		case "R":
 			if m.layout == LayoutSplit {
 				m.statusMsg = previewOnlyMsg
-				return m, nil
+				return nil
 			}
 			m.openReviewModal()
-			return m, nil
+			return nil
 		case KeyResolveToggle:
 			if m.layout == LayoutSplit {
 				m.statusMsg = previewOnlyMsg
-				return m, nil
+				return nil
 			}
 			m.toggleResolvedAtCursor()
-			return m, nil
+			return nil
 		case KeyFilePicker:
 			if m.showHelp {
 				// Help is a full-screen overlay; popping a second modal on top
 				// would compete for the same cells and leave the user without
 				// any signal that help is still "behind" the picker. Ignore
 				// the key — the user can press `?` to dismiss help first.
-				return m, nil
+				return nil
 			}
 			if m.layout == LayoutSplit {
 				// File picker would land on a unified row index that the
@@ -250,13 +263,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				// behind the same preview-only banner as the other unified
 				// actions until split learns its own jump path.
 				m.statusMsg = previewOnlyMsg
-				return m, nil
+				return nil
 			}
 			m.openFilePicker()
-			return m, nil
+			return nil
 		}
 	}
-	return m, nil
+	return nil
 }
 
 // resolveTarget picks which comment on `row` the next `x` press would flip,
