@@ -24,7 +24,9 @@ jobs:
         run: go mod verify
 
       - name: Build cross-platform binaries
-        run: make build-all
+        run: |
+          mkdir -p dist
+          make build-all
 
       - name: Generate SHA256 checksums
         working-directory: dist
