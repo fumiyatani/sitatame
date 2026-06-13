@@ -6,12 +6,18 @@ on:
       - "web/**"
       - "cmd/yamlfixture/**"
       - "internal/review/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/web-ci.yml"
   pull_request:
     paths:
       - "web/**"
       - "cmd/yamlfixture/**"
       - "internal/review/**"
+      - "Makefile"
+      - "go.mod"
+      - "go.sum"
       - ".github/workflows/web-ci.yml"
 
 permissions:
