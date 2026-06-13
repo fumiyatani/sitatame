@@ -44,8 +44,9 @@ make web-fixtures              # regenerate fixtures
 cd web && ./gradlew test       # run the bit-exact round-trip test
 ```
 
-Requirements: JDK 17+ (CI uses Temurin 21). The Gradle wrapper downloads
-Gradle 8.11.1 and the dependencies on first run; network access to
+Requirements: JDK 21 (CI uses Temurin 21, and `build.gradle.kts` pins
+`jvmToolchain(21)` to keep local dev aligned with CI). The Gradle wrapper
+downloads Gradle 8.11.1 and the dependencies on first run; network access to
 `services.gradle.org` and Maven Central is required for the first invocation.
 
 ## Kill criteria
