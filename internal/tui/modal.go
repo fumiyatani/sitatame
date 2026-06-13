@@ -36,8 +36,29 @@ func newModal(kind review.Kind, anchor review.Anchor, file diffmodel.File, initi
 	return modal{kind: kind, anchor: anchor, file: file, ta: ta}
 }
 
+// mixedRangeMsg is shown in the status bar when a range selection spans both
+// `-` (base-only) and `+` (head-only) rows. The anchor falls back to head so
+// it stays internally consistent, and the user is told why.
+const mixedRangeMsg = "range spans add+delete — anchored to head side"
+
 // openCommentModal seeds a modal based on the current cursor / selection.
 // Returns false when no anchor location can be derived (e.g. empty diff).
+//
+// Side derivation (issues #36 + #19):
+//
+//   - For a line comment on a `-` row, Side=base + Line=BaseLine + Blob=BlobBase
+//     so the anchor is self-consistent. The previous implementation only
+//     special-cased fully-deleted files (Status=Deleted) and left modified-file
+//     `-` rows storing Side=head with a base-side line number — an anchor the
+//     overlay re-resolver and AI replay skill cannot interpret.
+//   - For `+` rows, Side=head + Line=HeadLine + Blob=BlobHead (the natural case
+//     and matches the previous behavior).
+//   - Context rows keep Side=head so cursor-on-context comments anchor to the
+//     current revision.
+//
+// Range derivation: all-`-` selections collapse to Side=base; any selection
+// containing a `+` row stays on Side=head. Mixed `-` + `+` ranges record a
+// status-bar warning explaining the fallback.
 func (m *Model) openCommentModal() bool {
 	if len(m.rows) == 0 || m.cursor >= len(m.rows) {
 		return false
@@ -54,12 +75,14 @@ func (m *Model) openCommentModal() bool {
 		Path:     f.DisplayPath(),
 		Side:     review.SideHead,
 	}
-	if f.Status == diffmodel.StatusDeleted {
-		anchor.Side = review.SideBase
-	}
 
 	switch {
 	case m.selection != nil && r.fileIdx == m.selection.FileIdx:
+		side, mixed := selectionSide(m.rows, *m.selection, f)
+		anchor.Side = side
+		if mixed {
+			m.statusMsg = mixedRangeMsg
+		}
 		kind = review.KindRange
 		startLine, endLine := selectionLines(m.rows, *m.selection, f, anchor.Side)
 		anchor.Kind = review.KindRange
@@ -67,13 +90,19 @@ func (m *Model) openCommentModal() bool {
 		anchor.LineEnd = endLine
 		anchor.Blob = blobForSide(f, anchor.Side)
 	case f.Binary, r.kind == rowFileHeader:
+		// A fully-deleted file has no head blob and only the base content
+		// is meaningful — pin the file-level anchor to the base side so the
+		// blob lookup in Validate hits BlobBase.
+		if f.Status == diffmodel.StatusDeleted {
+			anchor.Side = review.SideBase
+		}
 		kind = review.KindFile
 		anchor.Kind = review.KindFile
 		anchor.Blob = blobForSide(f, anchor.Side)
 	case r.kind == rowLine:
+		anchor.Side = lineSideForRow(f, r.hunkIdx, r.lineIdx)
 		kind = review.KindLine
 		anchor.Kind = review.KindLine
-		// Use the corresponding side's line number when available.
 		ln := lineNumberAt(f, r.hunkIdx, r.lineIdx, anchor.Side)
 		anchor.Line = ln
 		anchor.Blob = blobForSide(f, anchor.Side)
@@ -92,6 +121,67 @@ func (m *Model) openCommentModal() bool {
 	mm := newModal(kind, anchor, f, "")
 	m.modal = &mm
 	return true
+}
+
+// lineSideForRow returns the side a line comment should anchor to, derived
+// from the underlying hunk Line's prefix. Falls back to SideHead for unknown
+// rows so callers stay total — bad indices are already filtered out by
+// openCommentModal before this is reached.
+func lineSideForRow(f diffmodel.File, hunkIdx, lineIdx int) review.Side {
+	if hunkIdx < 0 || hunkIdx >= len(f.Hunks) {
+		return review.SideHead
+	}
+	h := f.Hunks[hunkIdx]
+	if lineIdx < 0 || lineIdx >= len(h.Lines) {
+		return review.SideHead
+	}
+	if diffmodel.SideFromPrefix(h.Lines[lineIdx].Prefix) == diffmodel.SideBase {
+		return review.SideBase
+	}
+	return review.SideHead
+}
+
+// selectionSide classifies a range selection by the prefixes of its rows. The
+// classification rules (mirrored in openCommentModal's GoDoc) are:
+//
+//   - every selected row has prefix `-` → SideBase
+//   - at least one `+`/context row, no `-` row → SideHead
+//   - both `-` and `+`/context rows are present → SideHead and mixed=true so
+//     the caller can surface a warning
+//
+// Context rows count as head-side neighbors: a selection of pure `-` + context
+// is treated as mixed because the context row already exists on the head side
+// and the user almost certainly meant to highlight the deletion only.
+func selectionSide(rows []row, sel Selection, f diffmodel.File) (side review.Side, mixed bool) {
+	lo, hi := sel.Range()
+	hasMinus, hasPlusOrCtx := false, false
+	for i := lo; i <= hi && i < len(rows); i++ {
+		r := rows[i]
+		if r.kind != rowLine || r.fileIdx != sel.FileIdx || r.hunkIdx != sel.HunkIdx {
+			continue
+		}
+		if r.hunkIdx < 0 || r.hunkIdx >= len(f.Hunks) {
+			continue
+		}
+		h := f.Hunks[r.hunkIdx]
+		if r.lineIdx < 0 || r.lineIdx >= len(h.Lines) {
+			continue
+		}
+		switch h.Lines[r.lineIdx].Prefix {
+		case '-':
+			hasMinus = true
+		case '+', ' ':
+			hasPlusOrCtx = true
+		}
+	}
+	switch {
+	case hasMinus && !hasPlusOrCtx:
+		return review.SideBase, false
+	case hasMinus && hasPlusOrCtx:
+		return review.SideHead, true
+	default:
+		return review.SideHead, false
+	}
 }
 
 // openReviewModal opens the Shift+R review-level comment editor and pre-loads the
@@ -202,10 +292,12 @@ func commentExcerpt(f diffmodel.File, a review.Anchor) []excerptLine {
 	if out := collectExcerpt(f, a.Side, lo, hi); len(out) > 0 {
 		return out
 	}
-	// Fall back to the opposite side: a line comment on a deleted-only row
-	// stores anchor.Side=head with anchor.Line=base_line because lineNumberAt
-	// borrows the available number. Without this, the excerpt would be empty
-	// even though the user pointed at a real row.
+	// Back-compat fallback for legacy drafts (issues #36 + #19): older
+	// versions stored line comments on `-` rows as Side=head + Line=BaseLine
+	// because lineNumberAt borrowed whichever side had a number. Validate now
+	// emits a warning for those, but the excerpt still renders against the
+	// opposite side so the user can see what the comment actually points at
+	// while editing the draft.
 	other := review.SideBase
 	if a.Side == review.SideBase {
 		other = review.SideHead
