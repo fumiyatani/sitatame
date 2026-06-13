@@ -1,6 +1,8 @@
 tmp/
 .sitatame/
-sitatame
+# Anchor to repo root so directories named "sitatame" inside web/src don't
+# get swept up (the build binary lives only at repo root).
+/sitatame
 dist/
 .gocache/
 .gomodcache/
