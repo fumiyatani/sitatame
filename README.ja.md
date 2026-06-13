@@ -1,5 +1,10 @@
 # sitatame
 
+> **プロジェクトステータス (2026-06)**: TUI はメンテナンスモードに入りました。
+> 新規機能の開発は Kotlin Web UI ([`web/`](web/)) に移行しました。
+> TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI 側で実装します。
+> 詳細は [docs/tui-status.md](docs/tui-status.md) を参照してください。
+
 PR を出す前に、自分の git diff を端末上でレビューするための TUI ツール。
 `sitatame` は `git diff <base>..HEAD` を bubbletea ベースの TUI で表示し、
 4 粒度（review 全体 / file / line / range）でコメントを残せます。
