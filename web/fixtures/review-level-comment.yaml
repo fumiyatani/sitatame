@@ -1,0 +1,23 @@
+---
+schema: 1
+id: 20260501T100800-review-level-comment
+created_at: 2026-05-01T10:08:00Z
+branch: feature/review-level-comment
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+review_comment: |
+  overall direction is fine.
+  let's defer the argon2 migration to a separate PR.
+  the diff itself is small enough to merge today.
+---
+
+# Review: review-level-comment
