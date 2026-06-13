@@ -407,6 +407,95 @@ func TestValidateWithWarnings_MixedRange_NoWarning(t *testing.T) {
 	}
 }
 
+// TestValidateWithWarnings_LegacyAnchorWithOverlappingHeadLine covers the
+// PR #61 round-4 [P2]: deleting a base line shifts subsequent rows so that the
+// same integer can appear as a HeadLine elsewhere in the file (here, the `+`
+// row's HeadLine == 5, the same as the deleted BaseLine 5). The legacy buggy
+// modal still saved Side=head + Line=5 (BaseLine) + Blob=BlobHead, which
+// silently overlays the comment onto the unrelated `+` row. The detector must
+// fire — HeadLine overlap is NOT a clean signal.
+func TestValidateWithWarnings_LegacyAnchorWithOverlappingHeadLine(t *testing.T) {
+	t.Parallel()
+	// `-` row at BaseLine=5, `+` row at HeadLine=5. Same integer on both
+	// sides, but they refer to different rows.
+	files := []diffmodel.File{makeFileWithDeletedLine("src/a.go", "oldblob", "newblob", 5, 5)}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID: "overlap-line",
+			Kind:     KindLine,
+			Path:     "src/a.go",
+			Side:     SideHead,
+			Blob:     "newblob",
+			Line:     5,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+
+	out := buf.String()
+	if !strings.Contains(out, "overlap-line") {
+		t.Errorf("warning should name the anchor_id even when HeadLine overlaps, got %q", out)
+	}
+	if !strings.Contains(out, "legacy head-side anchor") {
+		t.Errorf("warning should mention 'legacy head-side anchor', got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_LegacyRangeWithOverlappingHeadLines is the range
+// analogue of the overlap case. BaseLines 5,6,7 are all `-` rows; HeadLines
+// 5,6,7 also exist as `+`/context rows in the same file. The buggy modal still
+// saved the all-deleted span under Side=head + Blob=BlobHead, and the detector
+// must warn.
+func TestValidateWithWarnings_LegacyRangeWithOverlappingHeadLines(t *testing.T) {
+	t.Parallel()
+	// `-` rows at BaseLine 5,6,7 and `+` rows at HeadLine 5,6,7 — same
+	// integers reused on the head side for unrelated rows.
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "src/a.go",
+		PostPath: "src/a.go",
+		BlobBase: "oldblob",
+		BlobHead: "newblob",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 5, BaseLines: 3,
+			HeadStart: 5, HeadLines: 3,
+			Lines: []diffmodel.Line{
+				{Prefix: '-', BaseLine: 5, HeadLine: 0, Text: "old1"},
+				{Prefix: '-', BaseLine: 6, HeadLine: 0, Text: "old2"},
+				{Prefix: '-', BaseLine: 7, HeadLine: 0, Text: "old3"},
+				{Prefix: '+', BaseLine: 0, HeadLine: 5, Text: "new1"},
+				{Prefix: '+', BaseLine: 0, HeadLine: 6, Text: "new2"},
+				{Prefix: '+', BaseLine: 0, HeadLine: 7, Text: "new3"},
+			},
+		}},
+	}}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID:  "overlap-range",
+			Kind:      KindRange,
+			Path:      "src/a.go",
+			Side:      SideHead,
+			Blob:      "newblob",
+			LineStart: 5,
+			LineEnd:   7,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+
+	out := buf.String()
+	if !strings.Contains(out, "overlap-range") {
+		t.Errorf("warning should name the anchor_id even when HeadLines overlap, got %q", out)
+	}
+	if !strings.Contains(out, "legacy head-side anchor") {
+		t.Errorf("warning should mention 'legacy head-side anchor', got %q", out)
+	}
+}
+
 // TestValidate_StillWorksWithoutWriter pins the original Validate signature:
 // no behavior change for callers that don't care about warnings.
 func TestValidate_StillWorksWithoutWriter(t *testing.T) {
