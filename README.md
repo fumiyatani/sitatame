@@ -37,7 +37,43 @@ result as a Markdown + YAML front-matter file under
 
 ## Build / install
 
-`sitatame` requires Go 1.26 or later and `git` on `$PATH`.
+`sitatame` requires Go 1.26 or later and `git` on `$PATH`. `git` is the only
+runtime dependency — Go is only needed if you build from source or use
+`go install`.
+
+### Prebuilt binaries
+
+Download an unsigned binary for your platform from the
+[releases page](https://github.com/fumiyatani/sitatame/releases) — four
+targets are published per tag: `sitatame-{darwin,linux}-{amd64,arm64}` plus
+a `checksums.txt` with SHA-256 hashes.
+
+```sh
+# macOS arm64 example — adjust the asset name for your OS/arch.
+curl -L https://github.com/fumiyatani/sitatame/releases/latest/download/sitatame-darwin-arm64 \
+  -o /usr/local/bin/sitatame
+chmod +x /usr/local/bin/sitatame
+```
+
+The macOS binaries are not yet code-signed or notarized, so Gatekeeper will
+quarantine them on first launch. Clear the attribute manually if you trust
+the download:
+
+```sh
+xattr -d com.apple.quarantine /usr/local/bin/sitatame
+```
+
+Signing / notarization and a Homebrew tap are planned for Phase 2.
+
+### `go install`
+
+```sh
+go install github.com/fumiyatani/sitatame@latest
+# or pin to a tagged release:
+go install github.com/fumiyatani/sitatame@v0.1.0
+```
+
+### From source
 
 ```sh
 git clone https://github.com/fumiyatani/sitatame
@@ -46,14 +82,12 @@ make build      # produces ./sitatame
 make install    # go install ./... — places sitatame on $GOBIN
 ```
 
-Cross-build for the four supported targets:
+Cross-build for the four supported targets (same matrix the release
+workflow ships):
 
 ```sh
 make build-all  # writes dist/sitatame-{darwin,linux}-{amd64,arm64}
 ```
-
-> Phase 2 will publish prebuilt artifacts via GitHub Releases and enable
-> `go install github.com/fumiyatani/sitatame@<version>` for one-shot setup.
 
 ## Usage
 
@@ -261,7 +295,7 @@ runner the tests execute the real binary end to end.
 
 ## Phase 2 (not in this MVP)
 
-- GitHub Release / goreleaser-driven distribution; `go install <module>@<version>`
+- Code-signing / notarization of the darwin binaries (currently shipped unsigned)
 - Homebrew tap / aqua / mise integration
 - delta pipe integration for syntax-highlighted diffs
 - side-by-side and tree-pane layouts

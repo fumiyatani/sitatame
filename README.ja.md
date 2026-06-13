@@ -36,7 +36,42 @@ Markdown 形式で書き出され、後段のエージェントがそのまま�
 
 ## ビルド / インストール
 
-`sitatame` は Go 1.26 以降と `git` コマンドが必要です。
+`sitatame` の実行には `git` のみが必要です。Go 1.26 以降は、ソースからの
+ビルドまたは `go install` を使う場合のみ必要になります。
+
+### プリビルドバイナリ
+
+[releases ページ](https://github.com/fumiyatani/sitatame/releases) から
+プラットフォームに合わせた未署名バイナリをダウンロードできます。タグごとに
+`sitatame-{darwin,linux}-{amd64,arm64}` の 4 種類と、SHA-256 ハッシュを記録
+した `checksums.txt` が添付されます。
+
+```sh
+# macOS arm64 の例 — OS/arch に合わせてアセット名を差し替えてください。
+curl -L https://github.com/fumiyatani/sitatame/releases/latest/download/sitatame-darwin-arm64 \
+  -o /usr/local/bin/sitatame
+chmod +x /usr/local/bin/sitatame
+```
+
+macOS バイナリはまだ codesign / notarization をしていないため、初回起動時に
+Gatekeeper が隔離します。ダウンロード元を信頼している場合は手動で属性を
+解除してください:
+
+```sh
+xattr -d com.apple.quarantine /usr/local/bin/sitatame
+```
+
+署名 / notarization と Homebrew tap は Phase 2 で対応予定です。
+
+### `go install`
+
+```sh
+go install github.com/fumiyatani/sitatame@latest
+# タグを固定する場合:
+go install github.com/fumiyatani/sitatame@v0.1.0
+```
+
+### ソースからのビルド
 
 ```sh
 git clone https://github.com/fumiyatani/sitatame
@@ -45,14 +80,11 @@ make build      # ./sitatame を生成
 make install    # go install ./... — $GOBIN に配置
 ```
 
-サポート対象 4 種のクロスビルド:
+リリースワークフローと同じ 4 ターゲットのクロスビルド:
 
 ```sh
 make build-all  # dist/sitatame-{darwin,linux}-{amd64,arm64} を生成
 ```
-
-> Phase 2 では GitHub Releases によるバイナリ配布、
-> `go install github.com/fumiyatani/sitatame@<version>` 形式での導入を予定。
 
 ## 使い方
 
@@ -216,7 +248,7 @@ TUI テストは `internal/tui/testdata/` のスナップショットを使い�
 
 ## Phase 2（MVP 範囲外）
 
-- GitHub Release / goreleaser による配布、`go install <module>@<version>` 経由の導入
+- darwin バイナリの codesign / notarization（現状は未署名で配布）
 - Homebrew tap / aqua / mise 連携
 - delta パイプ統合によるシンタックスハイライト diff
 - 左ペインツリー / side-by-side レイアウト
