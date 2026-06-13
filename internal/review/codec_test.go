@@ -1,6 +1,8 @@
 package review
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -238,6 +240,167 @@ body
 	if r2.Files[0].Extras["file_extension_extra"] == nil ||
 		r2.Comments[0].Extras["custom_meta"] == nil {
 		t.Errorf("extras dropped on second round-trip")
+	}
+}
+
+// TestEncode_RoundtripWebFixtures is the Go-side counterpart of the Kotlin
+// RoundtripTest. It walks every YAML fixture under web/fixtures/ and asserts
+// that Decode + Encode is a fixed point on each one. If any fixture ever stops
+// being a fixed point on the Go side (e.g. because the encoder learned a new
+// canonical form), the generator self-check at cmd/yamlfixture would catch it
+// — but only when someone remembers to run it. This test keeps the property
+// honest under `go test ./...` so regular CI catches the same regression.
+func TestEncode_RoundtripWebFixtures(t *testing.T) {
+	t.Parallel()
+	// The test binary runs with cwd = package dir (internal/review). The
+	// fixtures live at <repo>/web/fixtures.
+	dir := filepath.Join("..", "..", "web", "fixtures")
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatalf("read fixture dir %s: %v", dir, err)
+	}
+
+	// with-yaml-comments.yaml is hand-written verbatim because gopkg.in/yaml.v3
+	// does not preserve inline YAML comments through a struct round-trip. It is
+	// part of the Kotlin gate only; the Go encoder is not expected to reproduce
+	// it bit-for-bit, so skip it here. See cmd/yamlfixture/main.go for context.
+	skip := map[string]bool{
+		"with-yaml-comments.yaml": true,
+	}
+
+	count := 0
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".yaml") {
+			continue
+		}
+		if skip[e.Name()] {
+			continue
+		}
+		name := e.Name()
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+			path := filepath.Join(dir, name)
+			in, err := os.ReadFile(path)
+			if err != nil {
+				t.Fatalf("read %s: %v", path, err)
+			}
+			r, err := Decode(in)
+			if err != nil {
+				t.Fatalf("decode %s: %v", name, err)
+			}
+			out, err := Encode(r)
+			if err != nil {
+				t.Fatalf("encode %s: %v", name, err)
+			}
+			if string(out) != string(in) {
+				t.Fatalf("round-trip not idempotent for %s\n--- input ---\n%s\n--- output ---\n%s",
+					name, in, out)
+			}
+		})
+		count++
+	}
+
+	// Coverage floor: if a future PR removes fixtures the round-trip test
+	// becomes meaningless. Mirror Kotlin's MIN_FIXTURE_COUNT.
+	const minFixtures = 11 // 12 total minus with-yaml-comments
+	if count < minFixtures {
+		t.Errorf("fixture count regression: found %d eligible fixtures under %s, want >= %d",
+			count, dir, minFixtures)
+	}
+}
+
+// TestEncode_DeletedLineAnchor exercises the Side=base / Blob=BlobBase shape
+// introduced by sitatame#61: a comment on a line that exists only on the base
+// side of the diff. The fixture documents the canonical form; this test
+// asserts the struct-level fields decode the way the rest of the codebase
+// expects.
+func TestEncode_DeletedLineAnchor(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "..", "web", "fixtures", "deleted-line-anchor.yaml")
+	in, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("fixture missing (run `make web-fixtures`): %v", err)
+	}
+	r, err := Decode(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Comments) != 1 {
+		t.Fatalf("comments = %d, want 1", len(r.Comments))
+	}
+	c := r.Comments[0]
+	if c.Side != SideBase {
+		t.Errorf("side = %q, want %q", c.Side, SideBase)
+	}
+	if c.Blob == "" {
+		t.Errorf("blob unexpectedly empty for a base-side anchor")
+	}
+	if c.Line == 0 {
+		t.Errorf("line unexpectedly zero for a base-side anchor")
+	}
+}
+
+// TestEncode_RangeCommentMultiState asserts the range-comment fixture decodes
+// three comments sharing the same anchor range with distinct states. This is
+// the real-world shape after a reviewer leaves multiple notes on the same
+// block over time (open -> resolved -> stale).
+func TestEncode_RangeCommentMultiState(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "..", "web", "fixtures", "range-comment.yaml")
+	in, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("fixture missing (run `make web-fixtures`): %v", err)
+	}
+	r, err := Decode(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(r.Comments) != 3 {
+		t.Fatalf("comments = %d, want 3", len(r.Comments))
+	}
+	wantStates := []State{StateOpen, StateResolved, StateStale}
+	for i, want := range wantStates {
+		c := r.Comments[i]
+		if c.Kind != KindRange {
+			t.Errorf("comments[%d].kind = %q, want range", i, c.Kind)
+		}
+		if c.LineStart != 10 || c.LineEnd != 14 {
+			t.Errorf("comments[%d] range = %d..%d, want 10..14", i, c.LineStart, c.LineEnd)
+		}
+		if c.State != want {
+			t.Errorf("comments[%d].state = %q, want %q", i, c.State, want)
+		}
+	}
+}
+
+// TestEncode_ExtrasEverywherePreserved decodes the extras-everywhere fixture
+// and asserts that unknown keys at top / file / comment level all land in the
+// corresponding Extras maps. This is the structured assertion behind the
+// bit-exact round-trip: if Extras drop a key, the round-trip would still pass
+// but downstream consumers would lose the data.
+func TestEncode_ExtrasEverywherePreserved(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join("..", "..", "web", "fixtures", "extras-everywhere.yaml")
+	in, err := os.ReadFile(path)
+	if err != nil {
+		t.Skipf("fixture missing (run `make web-fixtures`): %v", err)
+	}
+	r, err := Decode(in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.Extras["experimental_metadata"] == nil {
+		t.Errorf("top-level extras missing experimental_metadata: %+v", r.Extras)
+	}
+	if len(r.Files) == 0 || r.Files[0].Extras["file_owner"] == nil {
+		t.Errorf("file extras missing file_owner: %+v", r.Files[0].Extras)
+	}
+	if len(r.Comments) == 0 {
+		t.Fatal("no comments decoded")
+	}
+	cx := r.Comments[0].Extras
+	if cx["reviewer_tag"] == nil || cx["due_date"] == nil {
+		t.Errorf("comment extras missing reviewer_tag/due_date: %+v", cx)
 	}
 }
 
