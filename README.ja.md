@@ -1,9 +1,15 @@
 # sitatame
 
 > **プロジェクトステータス (2026-06)**: TUI はメンテナンスモードに入りました。
-> 新規機能の開発は Kotlin Web UI ([`web/`](web/)) に移行しました。
-> TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI 側で実装します。
-> 詳細は [docs/tui-status.md](docs/tui-status.md) を参照してください。
+> 新規機能の開発は Kotlin Web UI（[`web/`](web/) 配下に Phase 0 PoC のみ
+> マージ済み。Phase 1 の read-only viewer は
+> [#66](https://github.com/fumiyatani/sitatame/issues/66) で進行中）と
+> IntelliJ Plugin（[#68](https://github.com/fumiyatani/sitatame/issues/68)
+> で進行中。`main` にはまだコード未マージ）の 2 ラインに移行しています。
+> TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI または
+> IntelliJ Plugin 側で実装します。詳細・全 TUI キーバインドの棚卸し・
+> 3 サーフェスでの機能対比表は
+> [docs/tui-status.md](docs/tui-status.md) を参照してください。
 
 PR を出す前に、自分の git diff を端末上でレビューするための TUI ツール。
 `sitatame` は `git diff <base>..HEAD` を bubbletea ベースの TUI で表示し、
@@ -163,7 +169,9 @@ sitatame → Shift+R → 本文を入力 → Ctrl+S → s
    `side`、必要に応じて `line` / `line_start` / `line_end`、staleness 判定用の
    blob ハッシュ、`body` を含む）が並びます。`sitatame` がモデル化していない
    キーは round-trip で温存されるため、エージェント側でスキーマを拡張しても
-   次回保存時に失われません。
+   次回保存時に失われません。全フィールドの定義・Side 決定ルール・state
+   遷移・forward-compat 戦略は
+   [docs/review-schema.md](docs/review-schema.md) にまとめています。
 5. 過去レビューの読み戻しは `sitatame search <pattern>` を使います。
 
 シェルでの最小受け渡しはこの形:
@@ -200,6 +208,10 @@ sitatame --working   # worktree を HEAD と比較（staged + unstaged の両方
 `~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md` に残ります。
 次回セッションで拾い直すか、draft 段階を意識するエージェントに先に渡しても
 良い設計です。
+
+同じブランチで再度 `sitatame` を起動すると最新の draft が自動的に読み込まれ、
+前回のコメントが TUI に復元されます（再保存時は同じ draft ファイルに上書き
+されます）。
 
 ### 保存先
 
@@ -257,6 +269,16 @@ TUI テストは `internal/tui/testdata/` のスナップショットを使い�
 - Homebrew tap / aqua / mise 連携
 - delta パイプ統合によるシンタックスハイライト diff
 - 左ペインツリー / side-by-side レイアウト
+
+## 関連ドキュメント
+
+- [`docs/tui-status.md`](docs/tui-status.md) — TUI メンテナンス方針 /
+  キーバインド・機能棚卸し / TUI ・ Web UI ・ IntelliJ Plugin の機能対比表。
+  TUI に対する feature request・bug fix の前にまず読む。
+- [`docs/config.md`](docs/config.md) — リポジトリ単位の
+  `<repo>/.sitatame/config.yaml` スキーマ。
+- [`web/README.md`](web/README.md) — Web UI のスコープ / ビルド手順 /
+  YAML round-trip Kill criteria。
 
 ---
 

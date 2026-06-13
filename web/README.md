@@ -56,6 +56,12 @@ web/
         └── resources/index.html
 ```
 
+The Go fixture generator lives at `../cmd/yamlfixture/main.go`. It feeds
+hand-written inputs through `review.Decode` + `review.Encode` and writes the
+encoder output here. `RoundtripTest` auto-discovers every `*.yaml` in
+`web/fixtures/`, and its `fixtureCountSanity` guard prevents silent coverage
+shrinkage when new edge cases have already been committed.
+
 ## Versions
 
 | component                  | version |

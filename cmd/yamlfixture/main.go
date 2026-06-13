@@ -198,6 +198,371 @@ comments:
 # Review: array-order
 `,
 	},
+	{
+		// deleted-line-anchor exercises the PR #61 fix: a comment that points to
+		// a line that only exists on the base side of the diff (a `-` line in
+		// unified-diff terms). The anchor uses Side=base + Blob=BlobBase + the
+		// pre-deletion Line number. Round-tripping must keep all three fields.
+		name: "deleted-line-anchor.yaml",
+		in: `---
+schema: 1
+id: 20260501T100500-deleted-line-anchor
+created_at: 2026-05-01T10:05:00Z
+branch: feature/deleted-line-anchor
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+comments:
+  - anchor_id: 55555555-5555-5555-5555-555555555555
+    kind: line
+    path: src/app.go
+    side: base
+    blob: aa
+    line: 42
+    state: open
+    body: this deleted line was load-bearing; restore it or document why it went away.
+---
+
+# Review: deleted-line-anchor
+`,
+	},
+	{
+		// rename-file pairs a file rename (rename_from / rename_to / similarity)
+		// with one line comment on the renamed file and one range comment, so
+		// the rename metadata and per-comment kinds both round-trip.
+		name: "rename-file.yaml",
+		in: `---
+schema: 1
+id: 20260501T100600-rename-file
+created_at: 2026-05-01T10:06:00Z
+branch: feature/rename-file
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/new.go
+    blob_base: aa
+    blob_head: bb
+    status: renamed
+    rename_from: src/old.go
+    rename_to: src/new.go
+    similarity: 95
+comments:
+  - anchor_id: 66666666-6666-6666-6666-666666666666
+    kind: line
+    path: src/new.go
+    side: head
+    blob: bb
+    line: 5
+    state: open
+    body: rename looks fine, but please update the package doc.
+  - anchor_id: 77777777-7777-7777-7777-777777777777
+    kind: range
+    path: src/new.go
+    side: head
+    blob: bb
+    line_start: 20
+    line_end: 24
+    state: open
+    body: this block is a verbatim copy from the old file; consider extracting.
+---
+
+# Review: rename-file
+`,
+	},
+	{
+		// stale-comment captures a real review state: the head blob hash on the
+		// anchor no longer matches any current blob, so the comment is marked
+		// stale. Round-tripping must keep the drifted blob hash verbatim so a
+		// later "reattach" pass can compare against the original.
+		name: "stale-comment.yaml",
+		in: `---
+schema: 1
+id: 20260501T100700-stale-comment
+created_at: 2026-05-01T10:07:00Z
+branch: feature/stale-comment
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+comments:
+  - anchor_id: 88888888-8888-8888-8888-888888888888
+    kind: line
+    path: src/app.go
+    side: head
+    blob: bbold
+    line: 42
+    state: stale
+    body: anchor drifted after a rebase; reattach before resolving.
+---
+
+# Review: stale-comment
+`,
+	},
+	{
+		// review-level-comment exercises the top-level review_comment field with
+		// a multi-line block scalar and an empty comments[] list (omitted from
+		// the encoder output because Comments has omitempty).
+		name: "review-level-comment.yaml",
+		in: `---
+schema: 1
+id: 20260501T100800-review-level-comment
+created_at: 2026-05-01T10:08:00Z
+branch: feature/review-level-comment
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+review_comment: |
+  overall direction is fine.
+  let's defer the argon2 migration to a separate PR.
+  the diff itself is small enough to merge today.
+---
+
+# Review: review-level-comment
+`,
+	},
+	{
+		// range-comment puts three comments (open / resolved / stale) on the
+		// same range anchor. The encoder must keep the per-comment order stable
+		// even when several comments share kind=range and line_start/line_end.
+		name: "range-comment.yaml",
+		in: `---
+schema: 1
+id: 20260501T100900-range-comment
+created_at: 2026-05-01T10:09:00Z
+branch: feature/range-comment
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+comments:
+  - anchor_id: 99999999-9999-9999-9999-000000000001
+    kind: range
+    path: src/app.go
+    side: head
+    blob: bb
+    line_start: 10
+    line_end: 14
+    state: open
+    body: this block needs a comment explaining the invariant.
+  - anchor_id: 99999999-9999-9999-9999-000000000002
+    kind: range
+    path: src/app.go
+    side: head
+    blob: bb
+    line_start: 10
+    line_end: 14
+    state: resolved
+    body: invariant documented in commit abcdef0; closing this thread.
+  - anchor_id: 99999999-9999-9999-9999-000000000003
+    kind: range
+    path: src/app.go
+    side: head
+    blob: bb
+    line_start: 10
+    line_end: 14
+    state: stale
+    body: original concern no longer applies after the refactor.
+---
+
+# Review: range-comment
+`,
+	},
+	{
+		// multi-file covers three files: a modified file with two comments, a
+		// modified file with one line + one range comment, and an added file
+		// (no blob_base) with one file-level (kind=file) comment. Comments are
+		// interleaved across files to lock in array ordering across paths.
+		name: "multi-file.yaml",
+		in: `---
+schema: 1
+id: 20260501T101000-multi-file
+created_at: 2026-05-01T10:10:00Z
+branch: feature/multi-file
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/a.go
+    blob_base: a1
+    blob_head: a2
+    status: modified
+  - path: src/b.go
+    blob_base: b1
+    blob_head: b2
+    status: modified
+  - path: src/c.go
+    blob_head: c2
+    status: added
+comments:
+  - anchor_id: aaaaaaaa-aaaa-aaaa-aaaa-000000000001
+    kind: line
+    path: src/a.go
+    side: head
+    blob: a2
+    line: 1
+    state: open
+    body: a-file comment 1
+  - anchor_id: bbbbbbbb-bbbb-bbbb-bbbb-000000000001
+    kind: line
+    path: src/b.go
+    side: head
+    blob: b2
+    line: 3
+    state: open
+    body: b-file comment 1
+  - anchor_id: aaaaaaaa-aaaa-aaaa-aaaa-000000000002
+    kind: line
+    path: src/a.go
+    side: head
+    blob: a2
+    line: 2
+    state: resolved
+    body: a-file comment 2 (resolved)
+  - anchor_id: bbbbbbbb-bbbb-bbbb-bbbb-000000000002
+    kind: range
+    path: src/b.go
+    side: head
+    blob: b2
+    line_start: 10
+    line_end: 12
+    state: open
+    body: b-file range comment
+  - anchor_id: cccccccc-cccc-cccc-cccc-000000000001
+    kind: file
+    path: src/c.go
+    state: open
+    body: new file looks fine overall; one nit below.
+---
+
+# Review: multi-file
+`,
+	},
+	{
+		// extras-everywhere places unknown keys at every level: top-level
+		// (experimental_metadata), files[0] (file_owner), comments[0]
+		// (reviewer_tag + due_date map). All three must survive round-trip
+		// in their respective Extras maps.
+		name: "extras-everywhere.yaml",
+		in: `---
+schema: 1
+id: 20260501T101100-extras-everywhere
+created_at: 2026-05-01T10:11:00Z
+branch: feature/extras-everywhere
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+    file_owner: alice
+comments:
+  - anchor_id: dddddddd-dddd-dddd-dddd-dddddddddddd
+    kind: line
+    path: src/app.go
+    side: head
+    blob: bb
+    line: 5
+    state: open
+    body: unknown keys live at every level.
+    reviewer_tag: nitpick
+    due_date:
+      iso: 2026-05-31
+      timezone: Asia/Tokyo
+experimental_metadata:
+  campaign: x42
+  priority: high
+  tags:
+    - poc
+    - schema-drift
+---
+
+# Review: extras-everywhere
+`,
+	},
+	{
+		// utf8-body keeps the front matter ASCII and pushes Japanese text into
+		// the comment / review_comment bodies via a literal block scalar (|).
+		// Block style avoids emitter-specific quoting differences for non-ASCII
+		// scalars and exercises the UTF-8 transport path end-to-end.
+		name: "utf8-body.yaml",
+		in: `---
+schema: 1
+id: 20260501T101200-utf8-body
+created_at: 2026-05-01T10:12:00Z
+branch: feature/utf8-body
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+review_comment: |
+  全体の方向性は良い。
+  詳細は別 PR で詰めたい。
+comments:
+  - anchor_id: eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee
+    kind: line
+    path: src/app.go
+    side: head
+    blob: bb
+    line: 5
+    state: open
+    body: |
+      日本語コメント。
+      この行は CJK 文字と全角記号「」を含む。
+      末尾改行ありで block scalar に倒す。
+---
+
+# Review: utf8-body
+`,
+	},
 }
 
 // withYamlCommentsFixture is written verbatim because gopkg.in/yaml.v3 does
