@@ -108,7 +108,7 @@ yyyyMMddTHHmmss + "-" + slug(review_comment の先頭行)
 ---
 schema: 1
 id: 20260501T152300-fix_auth
-created_at: 2026-05-01T15:23:00+09:00
+created_at: 2026-05-01T15:23:00Z
 branch: feature/auth-refactor
 base:
   ref: origin/main
@@ -157,7 +157,7 @@ comments:
 |------------------|-----------------------------|------|------|
 | `schema`         | int                         | 必須 | スキーマバージョン。現行は `1` 固定。reader は値を見て分岐する |
 | `id`             | string                      | 必須 | ファイル名 (拡張子無し) と同一の id |
-| `created_at`     | RFC 3339 timestamp          | 必須 | 最初に保存した時刻 (UTC)。再保存時は維持される |
+| `created_at`     | RFC 3339 timestamp          | 必須 | 最初に保存した時刻 (UTC)。再保存時は維持される。writer は常に `Z` suffix (UTC) で出力する。decoder は RFC 3339 互換で `+09:00` 等の他オフセットも受理する |
 | `branch`         | string                      | 必須 | レビュー対象のブランチ名。`branch-slug` の元 |
 | `base`           | `{ref, sha}`                | 必須 | 比較元 (`git diff base..head` の base) |
 | `head`           | `{ref, sha}`                | 必須 | 比較先 (`git diff base..head` の head) |
@@ -201,7 +201,7 @@ comments:
 | `kind`        | enum   | 必須 | `review` / `file` / `line` / `range` のいずれか |
 | `path`        | string | kind≠review | 対象ファイルパス |
 | `side`        | enum   | 任意 | `head` / `base`。決定ロジックは 6 節 |
-| `blob`        | string | 任意 | 対象ファイルの blob SHA (`side` 側) |
+| `blob`        | string | 任意 | 対象ファイルの blob SHA (`side` 側)。空文字 / 省略時は `validateAnchor` の blob 突き合わせがスキップされ、path 一致でも常に `stale` 判定になる (7 節参照) |
 | `line`        | int    | kind=line | 行番号 (1-origin) |
 | `line_start`  | int    | kind=range | 範囲開始行 |
 | `line_end`    | int    | kind=range | 範囲終了行 |
@@ -361,6 +361,12 @@ context 行 (` ` 行) は head 側の既存行として扱うため、`-` 行と
 2. blob は一致しないが同 path が同 side に存在する → `stale`
 3. blob も path も一致しない → `stale`
 
+なお `blob` が **空文字 (or 未指定)** のコメントは 1 の blob lookup が
+スキップされるため、path が一致していても `open` には復帰せず必ず 2
+の path-only 経路に流れて `stale` 判定になります (`validateAnchor` の
+`if a.Blob != ""` ガード)。新規 writer が anchor を発行する際は、対象
+revision 側の blob SHA を必ず埋めてください。
+
 実装の一次情報は `internal/review/validate.go` の `validateAnchor` を
 参照してください。
 
@@ -396,6 +402,30 @@ merge し、決定的な順序 (struct 順 → extras はキー昇順) で書き
    変えるのではなく `state_v2` を新設する) — 旧 reader は無視するだけ
    で済む
 
+### Extras がカバーする階層 (現状の制約)
+
+`Extras` による unknown key の round-trip 保持は、現状以下の **3 階層
+のみ** で動作します:
+
+- top-level (`Review.Extras`)
+- `files[]` の各要素 (`FileMeta.Extras`)
+- `comments[]` の各要素 (`Comment.Extras`、Anchor 直下のキーも含む)
+
+それ以外のネストした mapping、特に:
+
+- `base.{ref,sha}` / `head.{ref,sha}` (`Ref` 構造体)
+- `comments[].anchor` 直下の独立 mapping を新設した場合 (現状はフラット
+  化されているが将来別 mapping にした場合)
+
+には Extras が **無い** ため、未知キーは Decode 時にそのまま落ちます。
+例えば `base.note: "..."` のようなフィールドを外部 writer が足しても、
+sitatame で Decode → Encode すると round-trip で消えます。
+
+将来こうしたネスト位置に未知キーを温存する必要が出た場合は、対応する
+struct (`Ref` 等) に `Extras map[string]*yaml.Node` を追加して codec の
+encode/decode を拡張する必要があります。それまでは「Extras が効くのは
+3 階層のみ」という前提で外部ツールを設計してください。
+
 ## 9. Examples
 
 ### 例 1: kind=review (全体コメントのみ)
@@ -404,7 +434,7 @@ merge し、決定的な順序 (struct 順 → extras はキー昇順) で書き
 ---
 schema: 1
 id: 20260501T100000-overall
-created_at: 2026-05-01T10:00:00+09:00
+created_at: 2026-05-01T10:00:00Z
 branch: feature/x
 base:
   ref: origin/main
@@ -429,7 +459,7 @@ comments:
 ---
 schema: 1
 id: 20260501T100100-rename
-created_at: 2026-05-01T10:01:00+09:00
+created_at: 2026-05-01T10:01:00Z
 branch: feature/x
 base:
   ref: origin/main
@@ -465,7 +495,7 @@ comments:
 ---
 schema: 1
 id: 20260501T100200-deleted-line
-created_at: 2026-05-01T10:02:00+09:00
+created_at: 2026-05-01T10:02:00Z
 branch: feature/x
 base:
   ref: origin/main
@@ -502,7 +532,7 @@ Encode しても落ちずに温存されます。
 ---
 schema: 1
 id: 20260501T100300-range-extras
-created_at: 2026-05-01T10:03:00+09:00
+created_at: 2026-05-01T10:03:00Z
 branch: feature/x
 base:
   ref: origin/main
@@ -554,7 +584,7 @@ tui/modal.go`) のルールに従い `side: head` で記録されます。contex
 ---
 schema: 1
 id: 20260501T100400-range-mixed
-created_at: 2026-05-01T10:04:00+09:00
+created_at: 2026-05-01T10:04:00Z
 branch: feature/x
 base:
   ref: origin/main
