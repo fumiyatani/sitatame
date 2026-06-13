@@ -244,12 +244,15 @@ func RunRoot(env Env, args []string) int {
 		//     snapshot, not the one the draft was saved against, so we
 		//     unconditionally overwrite them after the value copy.
 		//
-		// Files is intentionally NOT preserved here: the diff `files`
-		// handed to the TUI already come from the live repo, and the
-		// downstream save path re-derives `r.Files` from that diff.
-		// Carrying the loaded `Files` forward would shadow the current
-		// snapshot. Per-FileMeta `Extras` are therefore lost on resume
-		// today; that's tracked as a follow-up rather than fixed here.
+		// Files is preserved as-loaded by design (PR #70 round-2 P2
+		// fix): the on-disk draft is the only source of per-FileMeta
+		// `Extras` (forward-compat keys AI agents stash there) and of
+		// the original diff snapshot. Wiping `r.Files = nil` and
+		// letting SaveDraft/Encode re-serialise an empty `files:` list
+		// silently dropped those Extras on every resume -> save cycle.
+		// Tracked as a follow-up: refreshing `r.Files` against the
+		// *current* diff (merging Extras by path) so the saved draft
+		// matches the diff the user is actively reviewing.
 		//
 		// Map sharing: `r = *loaded` is a value copy, so the Extras
 		// maps end up shared by reference with the on-disk-derived
@@ -259,7 +262,6 @@ func RunRoot(env Env, args []string) int {
 			fmt.Fprintf(env.Stderr, "sitatame: draft load failed: %v (starting empty)\n", lerr)
 		} else {
 			r = loaded
-			r.Files = nil
 			r.Branch = branch
 			r.Base = review.Ref{Ref: base.Ref, SHA: base.SHA}
 			r.Head = review.Ref{Ref: headRef, SHA: headRefSHA}
@@ -289,9 +291,10 @@ func RunRoot(env Env, args []string) int {
 
 // loadDraftForResume reads `path` and decodes it as a review.Review. The
 // caller adopts the returned value wholesale (preserving Extras / CreatedAt /
-// Body etc.) and only overwrites the fields tied to the *current* diff
-// snapshot (Branch / Base / Head) and discards Files (re-derived from the
-// live diff downstream).
+// Body / Files etc.) and only overwrites the fields tied to the *current*
+// diff snapshot (Branch / Base / Head). Files is kept as-loaded so per-
+// FileMeta Extras survive resume -> save; refreshing Files against the live
+// diff is left as a follow-up.
 //
 // Returned errors are surfaced on stderr by the caller and the session
 // continues with an empty Review — a corrupt or unreadable draft must not
