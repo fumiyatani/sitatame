@@ -1,0 +1,28 @@
+---
+schema: 1
+id: 20260501T100700-stale-comment
+created_at: 2026-05-01T10:07:00Z
+branch: feature/stale-comment
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/app.go
+    blob_base: aa
+    blob_head: bb
+    status: modified
+comments:
+  - anchor_id: 88888888-8888-8888-8888-888888888888
+    kind: line
+    path: src/app.go
+    side: head
+    blob: bbold
+    line: 42
+    state: stale
+    body: anchor drifted after a rebase; reattach before resolving.
+---
+
+# Review: stale-comment
