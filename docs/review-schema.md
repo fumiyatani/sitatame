@@ -309,10 +309,23 @@ context 行はどちらの revision でも同じ内容ですが、レビュア�
 
 ### 範囲 (kind=range)
 
-- 全行が `-` のみ → `side: base`
-- 1 つでも `+` 行を含む → `side: head` (mixed range)
-- mixed range のときはステータスバーに `range spans add+delete —
-  anchored to head side` という警告を出します
+context 行 (` ` 行) は head 側の既存行として扱うため、`-` 行と同列
+には数えません (`internal/tui/modal.go` の `selectionSide`)。
+
+| 範囲に含まれる行 | `side` | mixed |
+|------------------|--------|-------|
+| 全行が `-` のみ                          | `base` | no  |
+| 全行が `+` のみ                          | `head` | no  |
+| 全行が context (` `) のみ                | `head` | no  |
+| `+` と context のみ (`-` を含まない)     | `head` | no  |
+| `-` と `+` の混在                        | `head` | yes |
+| `-` と context の混在 (`+` 無し)         | `head` | yes |
+| `-` と `+` と context の混在             | `head` | yes |
+
+要点は「`-` 単独 → base、それ以外はすべて head。`-` と head 側 (=`+`
+/ context) が混ざったら mixed=yes」です。mixed=yes のとき、ステータス
+バーに `range spans add+delete — anchored to head side` という警告を
+出します。
 
 ## 7. State と遷移
 
@@ -515,6 +528,46 @@ comments:
 の `TestEncode_PreservesUnknownTopKey` /
 `TestEncode_PreservesUnknownFileAndCommentKey` がこの契約を担保して
 います。
+
+### 例 5: kind=range (mixed: `-` と `+` の混在で side: head)
+
+`-` 行と `+` 行をまたぐ範囲選択を行うと、`selectionSide` (`internal/
+tui/modal.go`) のルールに従い `side: head` で記録されます。context 行
+(` ` 行) も head 側として扱うため、`-` + context の選択でも同じく
+`side: head` です。
+
+```yaml
+---
+schema: 1
+id: 20260501T100400-range-mixed
+created_at: 2026-05-01T10:04:00+09:00
+branch: feature/x
+base:
+  ref: origin/main
+  sha: 1111
+head:
+  ref: HEAD
+  sha: 2222
+files:
+  - path: src/auth.ts
+    blob_base: aaaa
+    blob_head: bbbb
+    status: modified
+comments:
+  - anchor_id: 55555555-5555-5555-5555-555555555555
+    kind: range
+    path: src/auth.ts
+    side: head                 # ← `-` と `+` が混ざるので head 側に固定
+    blob: bbbb                 # ← head 側 blob
+    line_start: 18             # ← head 側の行番号
+    line_end: 24
+    state: open
+    body: |
+      この差し替えブロック全体、別関数に切り出したい。
+---
+
+# Review: feature/x
+```
 
 ## 10. 将来の schema v2 bump 時のガイドライン
 
