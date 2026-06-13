@@ -108,12 +108,21 @@ private fun LoadedView(workspace: WorkspaceResponse) {
     }
     val colors = LocalSitatameColors.current
 
+    val allComments = workspace.review?.comments.orEmpty()
+    // "review"-kind anchorless comments and the overall review_comment live
+    // on the review document itself, not on any single file; without this
+    // panel the read-only viewer would silently drop them.
+    val reviewLevelComments = allComments.filter { it.kind == "review" }
     Column(modifier = Modifier.fillMaxSize()) {
         TopBar(workspace)
+        ReviewSummaryPanel(
+            reviewComment = workspace.review?.reviewComment,
+            reviewLevelComments = reviewLevelComments,
+        )
         Row(modifier = Modifier.fillMaxSize().weight(1f)) {
             Sidebar(
                 files = workspace.files,
-                comments = workspace.review?.comments.orEmpty(),
+                comments = allComments,
                 selectedPath = selectedPath,
                 onSelect = { selectedPath = it },
                 modifier = Modifier
@@ -130,7 +139,7 @@ private fun LoadedView(workspace: WorkspaceResponse) {
             )
             MainPane(
                 file = workspace.files.firstOrNull { it.path == selectedPath },
-                comments = workspace.review?.comments.orEmpty(),
+                comments = allComments,
                 modifier = Modifier.weight(1f).fillMaxSize(),
             )
         }
