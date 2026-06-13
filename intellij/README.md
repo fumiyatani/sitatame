@@ -1,0 +1,103 @@
+# sitatame IntelliJ plugin (Phase 1)
+
+A first-class IDE surface for sitatame code reviews. Authors and consumers
+can add comments, browse a tool window of all open / resolved / stale
+comments, promote a draft to the reviews/ directory, and copy an AI-ready
+prompt to the clipboard — all without leaving the editor.
+
+**Status**: experimental. Not on JetBrains Marketplace yet; install from
+disk.
+
+## Requirements
+
+- JDK 21 (IntelliJ 2024.3 bundles JBR 21)
+- IntelliJ IDEA Community / Ultimate 2024.3 or newer
+- Android Studio 2024.3.x (Jellyfish) — best-effort; not in CI matrix yet
+
+## Build
+
+```bash
+cd intellij
+./gradlew :buildPlugin
+```
+
+The plugin zip is produced under `intellij/build/distributions/`:
+
+```
+intellij/build/distributions/sitatame-intellij-0.1.0.zip
+```
+
+## Install from disk
+
+1. Build the zip as above.
+2. In your IDE: **Settings → Plugins → ⚙ → Install Plugin from Disk…**
+3. Point at the generated zip and restart.
+
+## Run in a sandbox IDE
+
+```bash
+cd intellij
+./gradlew :runIde
+```
+
+This launches a clean IntelliJ Community instance with the plugin loaded.
+The sandbox config and logs live under `intellij/build/idea-sandbox/`.
+
+## Test
+
+```bash
+cd intellij
+./gradlew :test
+```
+
+The `CodecTest` cases round-trip the `web/fixtures/*.yaml` files — same
+fixtures the Web UI PoC (PR #65) uses — so a change to the Go-side YAML
+emitter immediately fails one or both routes.
+
+## Features (Phase 1)
+
+| Action                        | Where                            | Shortcut             |
+| ----------------------------- | -------------------------------- | -------------------- |
+| Add comment                   | Editor right-click               | Cmd+Shift+C / Ctrl+Shift+C |
+| Toggle resolved/open          | Editor right-click               | Cmd+Shift+R / Ctrl+Shift+R |
+| List comments + jump to line  | Tool window "sitatame review"    | —                    |
+| Copy AI prompt                | Tool window toolbar              | —                    |
+| Promote draft → review        | Tool window toolbar              | —                    |
+| Configure `SITATAME_HOME`     | Settings → Tools → sitatame review | —                  |
+
+## Storage
+
+The plugin reads and writes:
+
+```
+$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+```
+
+…which is exactly what the Go CLI and the Web UI PoC use. The slug
+algorithms are byte-for-byte ports of `internal/review/slug.go` so
+multiple tools see the same files for the same repo + branch.
+
+The Settings panel exposes a `SITATAME_HOME` override that takes precedence
+over the environment variable; leave it blank to honour the shell.
+
+## Known limitations
+
+- Phase 1 does no concurrency control on drafts. If the CLI and the IDE
+  both append to the same draft simultaneously, last-write-wins. Phase 2
+  will add an inode-based mtime check and conflict prompt.
+- The "copy AI prompt" body's `関連 diff (要約)` section is a placeholder;
+  Phase 2 wires it up to `git diff --stat` via Git4Idea.
+- Plugin Verifier is configured but only runs against the primary target
+  (IntelliJ 2024.3). Android Studio support is unverified — try it and
+  file an issue.
+
+## Phase 2 backlog
+
+- Inline gutter markers in the editor (`EditorMarkupModel`) instead of
+  having to open the tool window to see comments.
+- Compose Multiplatform UI for the comment list so the Web UI and IntelliJ
+  plugin can share render code.
+- JetBrains Marketplace submission with a screenshot set and changelog.
+- Concurrent edit conflict prompt + retry.
+- LSP-style integration so non-JetBrains IDEs can call the same store via
+  a localhost transport.
