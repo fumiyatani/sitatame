@@ -61,14 +61,31 @@ keeps the built-in fallback after the configured default so common
 workflows (`origin/main`, `main`, …) continue to work without further
 configuration.
 
+Writing `candidates: []` explicitly is **not** the same as omitting the
+key. The empty list is treated as "I want auto-detect restricted to
+`base.default` only — do not fall back to the built-in chain." This is the
+idiomatic way to pin auto-detect to a single ref:
+
+```yaml
+base:
+  default: "origin/release"
+  candidates: []   # auto-detect uses only origin/release; no built-in fallback
+```
+
+When both `base.default` and `base.candidates` are omitted (or
+`base.candidates: []` is written with no `base.default`), the built-in
+chain is still used as a safety net so the TUI can launch.
+
 The effective auto-detect order is:
 
 | `base.default` | `base.candidates` | Effective chain                                |
 | -------------- | ----------------- | ---------------------------------------------- |
 | unset          | unset             | built-in `BaseCandidates`                      |
 | set            | unset             | `[default, ...built-in BaseCandidates]`        |
-| unset          | set               | `candidates` (built-in NOT appended)           |
-| set            | set               | `[default, ...candidates]` (built-in NOT appended) |
+| unset          | `[]`              | built-in `BaseCandidates` (safety net)         |
+| set            | `[]`              | `[default]` only (built-in NOT appended)       |
+| unset          | non-empty         | `candidates` (built-in NOT appended)           |
+| set            | non-empty         | `[default, ...candidates]` (built-in NOT appended) |
 
 Duplicates between `default` and the chain that follows are collapsed so
 the auto-detect failure message stays readable.
