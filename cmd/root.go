@@ -359,6 +359,14 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 	if _, err := os.Stat(legacyDir); err != nil {
 		return
 	}
+	// Issue #24 introduced <repo>/.sitatame/config.yaml as a legitimate
+	// in-repo file. If the directory contains nothing but config-file
+	// entries from the allowlist, treat it as a pure config directory and
+	// stay silent — the legacy warning is meant to flag stale review
+	// artifacts (drafts/, reviews/), not the new config file.
+	if onlyConfigEntries(legacyDir) {
+		return
+	}
 	fmt.Fprintf(env.Stderr,
 		"sitatame: legacy %s/ detected — ignored.\n",
 		legacyDir,
@@ -373,6 +381,46 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 			shellQuote(abs), shellQuote(legacyDir), shellQuote(abs),
 		)
 	}
+}
+
+// configEntryAllowlist names the files inside <repo>/.sitatame/ that are
+// considered legitimate config artifacts as of issue #24, not legacy review
+// state. When the directory contains nothing outside this set,
+// warnLegacySitatameDir suppresses the legacy notice.
+//
+// Kept tight on purpose: only files Sitatame itself owns belong here. If a
+// future release adds another in-repo config file (e.g. a per-repo schema
+// version marker), extend this set in the same commit so users do not see
+// the legacy warning regress.
+var configEntryAllowlist = map[string]bool{
+	config.FileName: true,
+}
+
+// onlyConfigEntries reports whether dir exists and contains *only*
+// allowlisted config files (no subdirectories, no unknown files, at least
+// one allowlisted file present). Empty directories return false because
+// pre-#24 sitatame installs left .sitatame/ on disk even after the user
+// cleared drafts/reviews, and that is still a legitimate signal that the
+// legacy notice should fire. Read errors also fall through to false so the
+// warning still triggers on permission denials rather than silently
+// swallowing a real legacy directory.
+func onlyConfigEntries(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	if len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return false
+		}
+		if !configEntryAllowlist[e.Name()] {
+			return false
+		}
+	}
+	return true
 }
 
 // shellQuote wraps s in POSIX single quotes, escaping embedded single quotes
