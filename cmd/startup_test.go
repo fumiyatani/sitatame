@@ -315,6 +315,159 @@ head:
 	}
 }
 
+// TestRunRoot_AutoLoad_PreservesFiles pins the PR #70 round-2 codex P2 fix:
+// the auto-load → re-save cycle must round-trip the loaded draft's `files:`
+// list (FileMeta entries). The pre-fix RunRoot wiped `r.Files = nil` before
+// handing the Review to the TUI, and `SaveDraft → Encode` then serialised an
+// empty `files:` list, so every resume → save silently dropped the original
+// diff-snapshot metadata recorded at draft creation time.
+//
+// We assert on both the captured TUI Review (the in-memory carry) and the
+// promoted file on disk (the encode round-trip), mirroring the structure of
+// TestRunRoot_AutoLoad_PreservesExtras.
+func TestRunRoot_AutoLoad_PreservesFiles(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+
+	paths := review.NewPaths(resolved, "feature")
+	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// The path here ("src/auth.ts") deliberately does NOT exist in the live
+	// diff (newRepo only commits `a` / `b`). That is the point: the loaded
+	// Files snapshot is *historical* metadata from when the draft was first
+	// saved, and we want to prove it survives resume even when the current
+	// diff has nothing to say about it. A diff refresh / merge is tracked as
+	// a follow-up.
+	draftBody := `---
+schema: 1
+id: 20260101T000000-files
+branch: feature
+base:
+  ref: main
+  sha: ""
+head:
+  ref: HEAD
+  sha: ""
+files:
+  - path: src/auth.ts
+    blob_base: 4e5f6a7b
+    blob_head: 9c8d7e6f
+    status: modified
+---
+`
+	draftPath := filepath.Join(paths.DraftsDir(), "20260101T000000-files.md")
+	if err := os.WriteFile(draftPath, []byte(draftBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		captured = opts
+		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if len(captured.Review.Files) != 1 {
+		t.Fatalf("captured Review.Files = %d, want 1 (loaded from draft)", len(captured.Review.Files))
+	}
+	got := captured.Review.Files[0]
+	if got.Path != "src/auth.ts" || got.BlobBase != "4e5f6a7b" || got.BlobHead != "9c8d7e6f" || got.Status != "modified" {
+		t.Errorf("captured Review.Files[0] = %+v, want path/blobs/status preserved", got)
+	}
+
+	// Confirm the promoted file on disk still carries the files block.
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if !strings.HasPrefix(pathLine, filepath.Join(projectRoot, "reviews")) {
+		t.Fatalf("review file not under reviews/: %q", pathLine)
+	}
+	b, err := os.ReadFile(pathLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	content := string(b)
+	for _, frag := range []string{"path: src/auth.ts", "blob_base: 4e5f6a7b", "blob_head: 9c8d7e6f", "status: modified"} {
+		if !strings.Contains(content, frag) {
+			t.Errorf("promoted review missing %q; got:\n%s", frag, content)
+		}
+	}
+}
+
+// TestRunRoot_AutoLoad_PreservesFileExtras is the per-FileMeta Extras analogue
+// of TestRunRoot_AutoLoad_PreservesExtras. AI agents stash forward-compat
+// keys on individual file entries (PR #65 FileMeta.Extras). Wiping Files on
+// resume silently dropped those keys; this test pins that they now survive
+// the resume → save round-trip both in memory and on disk.
+func TestRunRoot_AutoLoad_PreservesFileExtras(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+
+	paths := review.NewPaths(resolved, "feature")
+	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	draftBody := `---
+schema: 1
+id: 20260101T000000-fileextras
+branch: feature
+base:
+  ref: main
+  sha: ""
+head:
+  ref: HEAD
+  sha: ""
+files:
+  - path: src/auth.ts
+    blob_base: 4e5f6a7b
+    blob_head: 9c8d7e6f
+    status: modified
+    agent_annotation: needs-second-look
+---
+`
+	draftPath := filepath.Join(paths.DraftsDir(), "20260101T000000-fileextras.md")
+	if err := os.WriteFile(draftPath, []byte(draftBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		captured = opts
+		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if len(captured.Review.Files) != 1 {
+		t.Fatalf("captured Review.Files = %d, want 1 (loaded from draft)", len(captured.Review.Files))
+	}
+	if _, ok := captured.Review.Files[0].Extras["agent_annotation"]; !ok {
+		t.Errorf("captured Review.Files[0].Extras missing agent_annotation key: %v", captured.Review.Files[0].Extras)
+	}
+
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if !strings.HasPrefix(pathLine, filepath.Join(projectRoot, "reviews")) {
+		t.Fatalf("review file not under reviews/: %q", pathLine)
+	}
+	b, err := os.ReadFile(pathLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "agent_annotation: needs-second-look") {
+		t.Errorf("promoted review must keep per-file agent_annotation; got:\n%s", string(b))
+	}
+}
+
 // TestRunRoot_NoDraftStartsEmpty is the negative companion: when no draft
 // exists for the branch the TUI must receive an empty Comments slice.
 // Without this guard a regression where the auto-load path ran on a missing
