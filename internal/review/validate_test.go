@@ -280,6 +280,133 @@ func TestValidateWithWarnings_HeadBlobMismatch_NoWarning(t *testing.T) {
 	}
 }
 
+// makeFileWithDeletedRange returns a modified file whose hunk contains a run of
+// `-` rows for BaseLines [baseStart, baseEnd] and one `+` row at headLine, so
+// range-anchor tests can target the all-deleted span unambiguously.
+func makeFileWithDeletedRange(path, baseBlob, headBlob string, baseStart, baseEnd, headLine int) diffmodel.File {
+	lines := make([]diffmodel.Line, 0, (baseEnd-baseStart+1)+1)
+	for n := baseStart; n <= baseEnd; n++ {
+		lines = append(lines, diffmodel.Line{Prefix: '-', BaseLine: n, HeadLine: 0, Text: "old"})
+	}
+	lines = append(lines, diffmodel.Line{Prefix: '+', BaseLine: 0, HeadLine: headLine, Text: "new"})
+	return diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  path,
+		PostPath: path,
+		BlobBase: baseBlob,
+		BlobHead: headBlob,
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: baseStart, BaseLines: baseEnd - baseStart + 1,
+			HeadStart: headLine, HeadLines: 1,
+			Lines: lines,
+		}},
+	}
+}
+
+// TestValidateWithWarnings_LegacyRangeAllDeleted pins the range-anchor analogue
+// of the issue #36 bug: a KindRange comment with Side=head whose [LineStart,
+// LineEnd] is composed entirely of `-` rows (BaseLines), recorded under
+// Blob=BlobHead. The validator must warn — the side metadata contradicts the
+// span identity.
+func TestValidateWithWarnings_LegacyRangeAllDeleted(t *testing.T) {
+	t.Parallel()
+	// `-` rows at BaseLine 5,6,7; `+` row at HeadLine 8.
+	files := []diffmodel.File{makeFileWithDeletedRange("src/a.go", "oldblob", "newblob", 5, 7, 8)}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID:  "legacy-range",
+			Kind:      KindRange,
+			Path:      "src/a.go",
+			Side:      SideHead,
+			Blob:      "newblob",
+			LineStart: 5,
+			LineEnd:   7,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+
+	out := buf.String()
+	if !strings.Contains(out, "legacy-range") {
+		t.Errorf("warning should name the anchor_id, got %q", out)
+	}
+	if !strings.Contains(out, "legacy head-side anchor") {
+		t.Errorf("warning should mention 'legacy head-side anchor', got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_CorrectRangeAllDeleted_NoWarning covers the
+// post-fix shape for the same all-deleted span: Side=base, Blob=BlobBase. Must
+// produce no warning.
+func TestValidateWithWarnings_CorrectRangeAllDeleted_NoWarning(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFileWithDeletedRange("src/a.go", "oldblob", "newblob", 5, 7, 8)}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID:  "ok-range-base",
+			Kind:      KindRange,
+			Path:      "src/a.go",
+			Side:      SideBase,
+			Blob:      "oldblob",
+			LineStart: 5,
+			LineEnd:   7,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+	if out := buf.String(); out != "" {
+		t.Errorf("expected no warnings for properly-saved base-side range anchor, got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_MixedRange_NoWarning covers a range that mixes `-`
+// and `+` rows. The new logic intentionally keeps such ranges on Head, so the
+// legacy detector must stay silent (no double-warning noise).
+func TestValidateWithWarnings_MixedRange_NoWarning(t *testing.T) {
+	t.Parallel()
+	// Build a file where BaseLines 5,6 are `-` rows and HeadLine 7 is a `+` row.
+	// The range anchor spans BaseLine 5..HeadLine 7 — mixed in the row sense
+	// because line 7 has a HeadLine match (consistent with Side=head).
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "src/a.go",
+		PostPath: "src/a.go",
+		BlobBase: "oldblob",
+		BlobHead: "newblob",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 5, BaseLines: 2,
+			HeadStart: 7, HeadLines: 1,
+			Lines: []diffmodel.Line{
+				{Prefix: '-', BaseLine: 5, HeadLine: 0, Text: "old1"},
+				{Prefix: '-', BaseLine: 6, HeadLine: 0, Text: "old2"},
+				{Prefix: '+', BaseLine: 0, HeadLine: 7, Text: "new"},
+			},
+		}},
+	}}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID:  "mixed-range",
+			Kind:      KindRange,
+			Path:      "src/a.go",
+			Side:      SideHead,
+			Blob:      "newblob",
+			LineStart: 5,
+			LineEnd:   7,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+	if out := buf.String(); out != "" {
+		t.Errorf("expected no warning for mixed range (Head retained by design), got %q", out)
+	}
+}
+
 // TestValidate_StillWorksWithoutWriter pins the original Validate signature:
 // no behavior change for callers that don't care about warnings.
 func TestValidate_StillWorksWithoutWriter(t *testing.T) {
