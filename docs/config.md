@@ -1,0 +1,118 @@
+# Per-repository config: `.sitatame/config.yaml`
+
+`sitatame` can be configured per-repository via a YAML file at
+`<repo>/.sitatame/config.yaml`. The file is optional — when it is absent,
+`sitatame` falls back to its built-in defaults.
+
+This page documents the Phase 1 schema (issue #24). Sections marked
+*reserved* are accepted (and warned about on stderr) but otherwise ignored;
+they exist so the file format can be extended in later releases without
+breaking older binaries.
+
+## Location and discovery
+
+- Path: `<repo-root>/.sitatame/config.yaml`
+- Discovery: `sitatame` looks at the working directory of the current repo
+  (the root reported by `git rev-parse --show-toplevel`). Worktrees of the
+  same repository each get their own config file because each worktree has
+  its own root.
+- The directory `<repo>/.sitatame/` was historically the on-disk location
+  for review drafts and is now flagged as legacy on startup. The legacy
+  warning is automatically suppressed when the directory contains nothing
+  except `config.yaml`, so adding the new config file does not regress the
+  startup output.
+
+## Current schema
+
+```yaml
+base:
+  default: "origin/develop"     # optional; tried first when no CLI base is given
+  candidates:                    # optional; replaces the built-in fallback chain
+    - "origin/develop"
+    - "origin/main"
+    - "main"
+
+# Reserved for future use — parsed and ignored with a warning today.
+# display: ...
+# keybinds: ...
+```
+
+### `base.default` (string, optional)
+
+The ref `sitatame` should try first when the user does not pass an explicit
+base on the command line. Equivalent to placing one entry at the front of
+the candidate chain.
+
+### `base.candidates` (list of strings, optional)
+
+Replaces the built-in `BaseCandidates` chain
+(`origin/HEAD`, `@{upstream}`, `origin/main`, `origin/master`, `main`,
+`master`) for the auto-detect path. The entries are tried in order; the
+first one that resolves to a commit *and* differs from `HEAD` wins.
+
+When `base.candidates` is omitted but `base.default` is set, `sitatame`
+keeps the built-in fallback after the configured default so common
+workflows (`origin/main`, `main`, …) continue to work without further
+configuration.
+
+When both are set, the effective order is:
+
+1. `base.default`
+2. each entry of `base.candidates`, in order
+3. the built-in `BaseCandidates`, in order
+
+Duplicates between layers are collapsed so the auto-detect failure message
+stays readable.
+
+## Priority order with the CLI
+
+For the default (range-diff) mode, base resolution follows this priority:
+
+1. An explicit positional argument to `sitatame` (e.g. `sitatame
+   origin/develop`).
+2. `base.default` from `.sitatame/config.yaml`.
+3. `base.candidates` from `.sitatame/config.yaml`.
+4. The built-in `BaseCandidates` fallback chain.
+
+`--staged` and `--working` ignore both the CLI base argument and the config
+file because their diff is always against `HEAD` by definition.
+
+## Environment variables
+
+`SITATAME_HOME` (output root for reviews and drafts) is unrelated to this
+file and is **not** overridable from `.sitatame/config.yaml`. Environment
+variables always win over config; config wins over built-in defaults.
+
+## Error handling
+
+`sitatame` is intentionally permissive about config errors so a broken file
+never blocks the TUI from launching:
+
+- **File missing**: silently treated as an empty config; built-in defaults
+  apply.
+- **File present but unparseable** (malformed YAML): one stderr warning,
+  config is dropped, and `sitatame` proceeds with built-in defaults.
+- **Unknown top-level key** (e.g. a typo, or an old binary seeing a new
+  section): one stderr warning, that key is ignored, the rest of the file
+  is honored.
+- **Reserved section** (`display`, `keybinds`): one stderr warning that the
+  section is reserved, contents ignored.
+- **Field with the wrong type** (e.g. `base.candidates: "main"` instead of
+  a list): one stderr warning, the offending field is dropped, other
+  fields in the same section are still applied.
+
+Warnings are prefixed with `sitatame: config:` so they are easy to grep for
+when wiring `sitatame` into agent pipelines.
+
+## Reserved for future releases
+
+The following keys are accepted today only to reserve their names; they
+have no behavioral effect and emit a warning when present.
+
+- `display` — placeholder for theme / layout / width tuning.
+- `keybinds` — placeholder for keymap customization. (Issue #29 is
+  currently deferred; the schema for this section will be designed
+  alongside that work.)
+
+If you are configuring `sitatame` for a team today, stick to the `base`
+section. Anything else may change shape before it ships.
