@@ -127,7 +127,10 @@ class NormalizeBranchTest {
 
     @Test
     fun `detached HEAD with sha becomes detached prefix`() {
-        val got = normalizeBranch("HEAD", "abcdef0123456789abcdef0123456789abcdef01")
+        // Detached HEAD is represented as an empty rawBranch (symbolic-ref
+        // exited non-zero and Git.currentBranch returned ""), matching the Go
+        // CLI behaviour in gitx.Repo.CurrentBranch.
+        val got = normalizeBranch("", "abcdef0123456789abcdef0123456789abcdef01")
         assertEquals("detached/abcdef012345", got)
         // The slug derived from this must match what BranchSlug("detached/abcdef012345")
         // produces — i.e. the same value the Go CLI's NewPaths(...) would store under.
@@ -142,19 +145,105 @@ class NormalizeBranchTest {
     }
 
     @Test
-    fun `HEAD with short sha falls back to raw HEAD`() {
-        // Matches Go: when HeadSHA returns "" (unborn / pathological HEAD) the
-        // CLI leaves branch == "" and BranchSlug("") absorbs the case. We don't
-        // get the "" branch (rev-parse --abbrev-ref returns "HEAD") so the
-        // fallback here is the literal "HEAD". The Go side's empty-branch path
-        // is reached when `--abbrev-ref` itself errors, which we don't model.
-        assertEquals("HEAD", normalizeBranch("HEAD", ""))
-        assertEquals("HEAD", normalizeBranch("HEAD", "abc"))
+    fun `empty branch with short sha falls back to empty`() {
+        // Matches Go: when both branch and sha resolution fail the CLI leaves
+        // branch == "" and BranchSlug("") absorbs the case.
+        assertEquals("", normalizeBranch("", ""))
+        assertEquals("", normalizeBranch("", "abc"))
+    }
+}
+
+/**
+ * Parity tests for [Git.currentBranch] against `gitx.Repo.CurrentBranch`. The
+ * Go side returns "" for detached HEAD; this Kotlin port must do the same
+ * (using `symbolic-ref --quiet --short HEAD`) so the downstream review-slug
+ * derivation lines up across TUI and Web. We materialise a real git repo per
+ * test because the only way to exercise the detached path is to actually
+ * detach HEAD.
+ */
+class CurrentBranchTest {
+
+    @Test
+    fun `detached HEAD returns empty string`() {
+        val gitAvailable = try {
+            val p = ProcessBuilder("git", "--version").redirectErrorStream(true).start()
+            p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0
+        } catch (_: Exception) {
+            false
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(gitAvailable, "git not available; skipping")
+
+        val repo = Files.createTempDirectory("sitatame-web-detached")
+        try {
+            initRepo(repo)
+            repo.resolve("a.txt").writeText("a\n")
+            runGit(repo, "add", "a.txt")
+            runGit(repo, "commit", "-m", "first")
+            // Move HEAD to the commit SHA — detaches HEAD.
+            val sha = readGit(repo, "rev-parse", "HEAD").trim()
+            runGit(repo, "checkout", "--detach", sha)
+            val branch = Git(repo).currentBranch()
+            assertEquals("", branch, "detached HEAD should yield empty branch, matching Go CLI")
+        } finally {
+            runCatching { rmrf(repo) }
+        }
     }
 
     @Test
-    fun `empty branch passes through`() {
-        assertEquals("", normalizeBranch("", "abcdef0123456789abcdef01"))
+    fun `on a real branch returns the branch name`() {
+        val gitAvailable = try {
+            val p = ProcessBuilder("git", "--version").redirectErrorStream(true).start()
+            p.waitFor(5, TimeUnit.SECONDS) && p.exitValue() == 0
+        } catch (_: Exception) {
+            false
+        }
+        org.junit.jupiter.api.Assumptions.assumeTrue(gitAvailable, "git not available; skipping")
+
+        val repo = Files.createTempDirectory("sitatame-web-branch")
+        try {
+            initRepo(repo)
+            repo.resolve("a.txt").writeText("a\n")
+            runGit(repo, "add", "a.txt")
+            runGit(repo, "commit", "-m", "first")
+            runGit(repo, "checkout", "-b", "feature/x")
+            val branch = Git(repo).currentBranch()
+            assertEquals("feature/x", branch)
+        } finally {
+            runCatching { rmrf(repo) }
+        }
+    }
+
+    private fun initRepo(repo: Path) {
+        runGit(repo, "init", "--initial-branch=base")
+        runGit(repo, "config", "user.email", "test@example.com")
+        runGit(repo, "config", "user.name", "Test User")
+        runGit(repo, "config", "commit.gpgsign", "false")
+    }
+
+    private fun runGit(repo: Path, vararg args: String) {
+        val cmd = mutableListOf("git").apply { addAll(args) }
+        val p = ProcessBuilder(cmd).directory(repo.toFile()).redirectErrorStream(true).start()
+        val ok = p.waitFor(20, TimeUnit.SECONDS)
+        check(ok) { "git ${args.joinToString(" ")} timed out" }
+        val out = p.inputStream.readAllBytes().toString(Charsets.UTF_8)
+        check(p.exitValue() == 0) { "git ${args.joinToString(" ")} failed: $out" }
+    }
+
+    private fun readGit(repo: Path, vararg args: String): String {
+        val cmd = mutableListOf("git").apply { addAll(args) }
+        val p = ProcessBuilder(cmd).directory(repo.toFile()).redirectErrorStream(false).start()
+        val ok = p.waitFor(20, TimeUnit.SECONDS)
+        check(ok) { "git ${args.joinToString(" ")} timed out" }
+        val out = p.inputStream.readAllBytes().toString(Charsets.UTF_8)
+        check(p.exitValue() == 0) { "git ${args.joinToString(" ")} failed" }
+        return out
+    }
+
+    private fun rmrf(p: Path) {
+        if (!Files.exists(p)) return
+        Files.walk(p).use { walk ->
+            walk.sorted(Comparator.reverseOrder()).forEach { Files.deleteIfExists(it) }
+        }
     }
 }
 

@@ -12,7 +12,7 @@ import java.util.concurrent.TimeUnit
  * for Phase 1 step 1:
  *
  *   git rev-parse --show-toplevel
- *   git rev-parse --abbrev-ref HEAD
+ *   git symbolic-ref --quiet --short HEAD
  *   git diff <base>..HEAD --no-color --find-renames --find-copies
  *
  * The Go side (`internal/gitx`) is the source of truth for diff parsing in the
@@ -23,8 +23,31 @@ import java.util.concurrent.TimeUnit
  */
 class Git(private val workdir: Path) {
 
-    /** Run `git <args>` in [workdir]; return stdout decoded as UTF-8. */
+    /** Outcome of running git: stdout + stderr + exit code, regardless of success. */
+    data class Result(val stdout: String, val stderr: String, val exitCode: Int)
+
+    /**
+     * Run `git <args>` in [workdir]; throws on non-zero exit.
+     *
+     * Callers that need to take a ref or other untrusted token as an argument
+     * MUST place it after `--end-of-options` (git 2.24+) so a flag-shaped
+     * value like `--upload-pack=...` cannot be misinterpreted. Mirrors the
+     * Go-side discipline in `internal/gitx/repo.go`'s `RevParse`.
+     */
     fun run(vararg args: String): String {
+        val res = runRaw(*args)
+        if (res.exitCode != 0) {
+            throw IOException("git ${args.joinToString(" ")} exited ${res.exitCode}: ${res.stderr}")
+        }
+        return res.stdout
+    }
+
+    /**
+     * Like [run] but returns the full [Result] without throwing on non-zero
+     * exit. Used by [currentBranch] so the detached-HEAD case (exit 1 from
+     * `symbolic-ref`) can be distinguished from real failures.
+     */
+    fun runRaw(vararg args: String): Result {
         val cmd = mutableListOf("git").apply { addAll(args) }
         val proc = ProcessBuilder(cmd)
             .directory(workdir.toFile())
@@ -37,11 +60,7 @@ class Git(private val workdir: Path) {
         }
         val stdout = proc.inputStream.readAllBytes().toString(Charsets.UTF_8)
         val stderr = proc.errorStream.readAllBytes().toString(Charsets.UTF_8)
-        val code = proc.exitValue()
-        if (code != 0) {
-            throw IOException("git ${args.joinToString(" ")} exited $code: $stderr")
-        }
-        return stdout
+        return Result(stdout, stderr, proc.exitValue())
     }
 
     fun repoRoot(): Path {
@@ -49,8 +68,28 @@ class Git(private val workdir: Path) {
         return Path.of(out)
     }
 
+    /**
+     * Returns the symbolic name of HEAD (e.g. "feature/x"). Returns an empty
+     * string when HEAD is detached.
+     *
+     * Mirrors `gitx.Repo.CurrentBranch`: `symbolic-ref --quiet --short HEAD`
+     * exits 1 with empty stdout in detached state, which we explicitly map to
+     * "". This is intentionally NOT `rev-parse --abbrev-ref HEAD`, because
+     * that variant returns the literal string "HEAD" on detached, forcing the
+     * caller to parity-check by string-comparison — fragile across git
+     * versions and edge cases like submodule HEADs.
+     */
     fun currentBranch(): String {
-        return run("rev-parse", "--abbrev-ref", "HEAD").trim()
+        val res = runRaw("symbolic-ref", "--quiet", "--short", "HEAD")
+        return when (res.exitCode) {
+            0 -> res.stdout.trim()
+            // symbolic-ref exits 1 with empty stdout when HEAD is detached;
+            // any other non-zero exit is a real failure we propagate.
+            1 -> ""
+            else -> throw IOException(
+                "git symbolic-ref --quiet --short HEAD exited ${res.exitCode}: ${res.stderr}"
+            )
+        }
     }
 
     /**
@@ -70,6 +109,11 @@ class Git(private val workdir: Path) {
     /**
      * Unified diff for `<base>..HEAD`. The result is the literal `git diff`
      * output; parse with [DiffParser.parse].
+     *
+     * `--end-of-options` (git 2.24+) ensures [base] cannot be misinterpreted
+     * as a flag — important once per-repo configuration starts to feed
+     * untrusted strings here (Phase 1 step 2 / #67). Mirrors Go's
+     * `gitx.RevParse`.
      */
     fun unifiedDiff(base: String): String {
         return run(
@@ -77,6 +121,7 @@ class Git(private val workdir: Path) {
             "--no-color",
             "--find-renames",
             "--find-copies",
+            "--end-of-options",
             "$base..HEAD",
         )
     }
