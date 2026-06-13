@@ -1,9 +1,15 @@
 # sitatame
 
 > **プロジェクトステータス (2026-06)**: TUI はメンテナンスモードに入りました。
-> 新規機能の開発は Kotlin Web UI ([`web/`](web/)) に移行しました。
-> TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI 側で実装します。
-> 詳細は [docs/tui-status.md](docs/tui-status.md) を参照してください。
+> 新規機能の開発は Kotlin Web UI（[`web/`](web/) 配下に Phase 0 PoC のみ
+> マージ済み。Phase 1 の read-only viewer は
+> [#66](https://github.com/fumiyatani/sitatame/issues/66) で進行中）と
+> IntelliJ Plugin（[#68](https://github.com/fumiyatani/sitatame/issues/68)
+> で進行中。`main` にはまだコード未マージ）の 2 ラインに移行しています。
+> TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI または
+> IntelliJ Plugin 側で実装します。詳細・全 TUI キーバインドの棚卸し・
+> 3 サーフェスでの機能対比表は
+> [docs/tui-status.md](docs/tui-status.md) を参照してください。
 
 PR を出す前に、自分の git diff を端末上でレビューするための TUI ツール。
 `sitatame` は `git diff <base>..HEAD` を bubbletea ベースの TUI で表示し、
@@ -261,6 +267,16 @@ TUI テストは `internal/tui/testdata/` のスナップショットを使い�
 - Homebrew tap / aqua / mise 連携
 - delta パイプ統合によるシンタックスハイライト diff
 - 左ペインツリー / side-by-side レイアウト
+
+## 関連ドキュメント
+
+- [`docs/tui-status.md`](docs/tui-status.md) — TUI メンテナンス方針 /
+  キーバインド・機能棚卸し / TUI ・ Web UI ・ IntelliJ Plugin の機能対比表。
+  TUI に対する feature request・bug fix の前にまず読む。
+- [`docs/config.md`](docs/config.md) — リポジトリ単位の
+  `<repo>/.sitatame/config.yaml` スキーマ。
+- [`web/README.md`](web/README.md) — Web UI のスコープ / ビルド手順 /
+  YAML round-trip Kill criteria。
 
 ---
 
