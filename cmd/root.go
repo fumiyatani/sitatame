@@ -205,32 +205,7 @@ func RunRoot(env Env, args []string) int {
 		return 1
 	}
 
-	switch result.Reason {
-	case tui.QuitPromote:
-		draftPath, err := store.SaveDraft(&result.Review)
-		if err != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
-			return 1
-		}
-		finalPath, err := store.Promote(draftPath)
-		if err != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: promote: %v\n", err)
-			return 1
-		}
-		abs, _ := filepath.Abs(finalPath)
-		fmt.Fprintf(env.Stdout, "SITATAME_REVIEW=%s\n", abs)
-		return 0
-	case tui.QuitDraft:
-		if _, err := store.SaveDraft(&result.Review); err != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
-			return 1
-		}
-		return 1
-	}
-	// QuitNone or any other value: runner returned without a save signal — exit
-	// cleanly without touching the filesystem. In production this only happens
-	// if the TUI is short-circuited (e.g. test stubs).
-	return 0
+	return finalizeReview(env, store, result)
 }
 
 // resolveDiffSpec turns the parsed CLI options into a DiffSpec plus the
