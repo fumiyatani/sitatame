@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 
+	"github.com/fumiyatani/sitatame/internal/config"
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
 	"github.com/fumiyatani/sitatame/internal/gitx"
 	"github.com/fumiyatani/sitatame/internal/review"
@@ -142,7 +143,28 @@ func RunRoot(env Env, args []string) int {
 		return 1
 	}
 
-	spec, base, err := resolveDiffSpec(repo, opts)
+	// Per-repo config (.sitatame/config.yaml) is best-effort: a missing file
+	// is the common case, and a malformed file must not block the TUI from
+	// launching. We surface the parse error as a warning and fall through
+	// with the zero Config, which preserves the historical base auto-detect
+	// behavior.
+	//
+	// --staged / --working force the base to HEAD and never consult the
+	// config (see resolveDiffSpec and docs/config.md). Loading + warning on
+	// a malformed config in those modes would surface noise the user cannot
+	// act on for this invocation, so we skip the load entirely. The cfg ==
+	// nil path is the same one mergeBaseCandidates already takes when no
+	// file is present, so downstream code does not need a special case.
+	var cfg *config.Config
+	if !opts.Staged && !opts.Working {
+		var cfgErr error
+		cfg, cfgErr = config.LoadFromRepo(repo.Workdir, env.Stderr)
+		if cfgErr != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: config: %v (ignoring file)\n", cfgErr)
+		}
+	}
+
+	spec, base, err := resolveDiffSpec(repo, opts, cfg)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: %v\n", err)
 		return 1
@@ -212,7 +234,13 @@ func RunRoot(env Env, args []string) int {
 // review.Ref-shaped Base record that goes into the review YAML. For
 // --staged/--working the "base" is HEAD itself; for the default mode the base
 // goes through the auto-detect / explicit chain.
-func resolveDiffSpec(repo *gitx.Repo, opts rootOpts) (gitx.DiffSpec, gitx.Base, error) {
+//
+// cfg, when non-nil, contributes to the auto-detect path only: an explicit
+// CLI base argument still wins, and --staged / --working both ignore the
+// config because their "base" is HEAD by definition. See mergeBaseCandidates
+// for how cfg.Base.Default and cfg.Base.Candidates are layered on top of the
+// built-in fallback chain.
+func resolveDiffSpec(repo *gitx.Repo, opts rootOpts, cfg *config.Config) (gitx.DiffSpec, gitx.Base, error) {
 	switch {
 	case opts.Staged:
 		sha, err := repo.HeadSHA()
@@ -227,12 +255,105 @@ func resolveDiffSpec(repo *gitx.Repo, opts rootOpts) (gitx.DiffSpec, gitx.Base, 
 		}
 		return gitx.DiffSpec{Source: gitx.SourceWorking}, gitx.Base{Ref: "HEAD", SHA: sha}, nil
 	default:
-		base, err := gitx.ResolveBase(repo, opts.BaseArg)
+		candidates := mergeBaseCandidates(cfg)
+		base, err := gitx.ResolveBaseWithCandidates(repo, opts.BaseArg, candidates)
 		if err != nil {
 			return gitx.DiffSpec{}, gitx.Base{}, err
 		}
 		return gitx.DiffSpec{Source: gitx.SourceRange, Base: base.Ref}, base, nil
 	}
+}
+
+// mergeBaseCandidates assembles the candidate list that drives
+// ResolveBaseWithCandidates' auto-detect path. The two config fields have
+// deliberately asymmetric semantics:
+//
+//   - cfg.Base.Candidates is a *replacement* list. When the YAML
+//     `candidates:` key is present (cfg.Base.CandidatesPresent == true) it is
+//     the entire chain we try — gitx.BaseCandidates is NOT appended, even if
+//     the user wrote `candidates: []`. This is the contract documented in
+//     docs/config.md: a repo that pins `candidates: [origin/develop]` (or
+//     `candidates: []` with a default) must never silently fall back to
+//     `origin/main` / `main`, because the auto-resolved base is what every
+//     review is anchored against and a mismatched base produces a misleading
+//     review with no warning. The CandidatesPresent flag is what
+//     distinguishes "key omitted" (use built-in fallback) from "key set to
+//     []" (refuse to fall back); collapsing them on len(slice) == 0 would
+//     silently re-enable the chain users were trying to opt out of.
+//   - cfg.Base.Default is *additive*. It is shorthand for "try this ref
+//     first" and is prepended to whichever chain follows — either the
+//     replacement Candidates list or the built-in BaseCandidates fallback.
+//
+// Concretely:
+//
+//	default="", candidates omitted             -> nil  (use gitx.BaseCandidates)
+//	default="X", candidates omitted            -> [X, ...gitx.BaseCandidates]
+//	default="", candidates=[]                  -> nil  (no candidates configured;
+//	                                              safety net: fall back to built-in
+//	                                              with a stderr note via the caller)
+//	default="X", candidates=[]                 -> [X]  (only the configured default;
+//	                                              built-in chain stays out)
+//	default="",  candidates=[A, B]             -> [A, B]
+//	default="X", candidates=[A, B]             -> [X, A, B]
+//
+// Returning nil for the no-config and "empty list with no default" cases is
+// load-bearing: ResolveBaseWithCandidates falls back to gitx.BaseCandidates
+// when its candidates argument is nil/empty, so the existing
+// TestResolveBase_FallsBackToMain et al keep hitting the built-in chain
+// unchanged. The "empty list with no default" case is a misconfiguration —
+// the user opted out of the built-in chain without providing any
+// replacement — so we fall back to the built-in as a safety net rather than
+// guaranteeing an auto-detect failure. The CandidatesPresent + len(Default)
+// path is the one that actually enforces the opt-out.
+//
+// Duplicates are collapsed so the failure message in
+// ResolveBaseWithCandidates does not list the same ref twice (e.g. if the
+// user puts "main" in both Default and the built-in fallback path).
+func mergeBaseCandidates(cfg *config.Config) []string {
+	if cfg == nil {
+		return nil
+	}
+	hasDefault := cfg.Base.Default != ""
+	candidatesPresent := cfg.Base.CandidatesPresent
+
+	// Pick the tail chain.
+	//   - candidates key explicitly present -> use its contents (even if
+	//     empty) as the replacement list. Built-in chain stays out.
+	//   - candidates key omitted -> built-in is the fallback so a
+	//     default-only (or no-config) invocation still has somewhere to
+	//     land.
+	var tail []string
+	switch {
+	case candidatesPresent:
+		tail = cfg.Base.Candidates
+		// If both candidates and default are absent in this branch
+		// (candidates: [] with no default), there is nothing to try.
+		// Returning nil lets ResolveBaseWithCandidates apply its
+		// built-in fallback as a safety net rather than guaranteeing a
+		// failure for a likely-misconfigured file.
+		if !hasDefault && len(tail) == 0 {
+			return nil
+		}
+	case hasDefault:
+		tail = gitx.BaseCandidates
+	default:
+		return nil
+	}
+
+	seen := make(map[string]bool)
+	out := make([]string, 0, 1+len(tail))
+	add := func(c string) {
+		if c == "" || seen[c] {
+			return
+		}
+		seen[c] = true
+		out = append(out, c)
+	}
+	add(cfg.Base.Default)
+	for _, c := range tail {
+		add(c)
+	}
+	return out
 }
 
 func emptyDiffMessage(spec gitx.DiffSpec) string {
@@ -272,6 +393,14 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 	if _, err := os.Stat(legacyDir); err != nil {
 		return
 	}
+	// Issue #24 introduced <repo>/.sitatame/config.yaml as a legitimate
+	// in-repo file. If the directory contains nothing but config-file
+	// entries from the allowlist, treat it as a pure config directory and
+	// stay silent — the legacy warning is meant to flag stale review
+	// artifacts (drafts/, reviews/), not the new config file.
+	if onlyConfigEntries(legacyDir) {
+		return
+	}
 	fmt.Fprintf(env.Stderr,
 		"sitatame: legacy %s/ detected — ignored.\n",
 		legacyDir,
@@ -286,6 +415,46 @@ func warnLegacySitatameDir(env Env, legacyDir, newDraftsRoot string) {
 			shellQuote(abs), shellQuote(legacyDir), shellQuote(abs),
 		)
 	}
+}
+
+// configEntryAllowlist names the files inside <repo>/.sitatame/ that are
+// considered legitimate config artifacts as of issue #24, not legacy review
+// state. When the directory contains nothing outside this set,
+// warnLegacySitatameDir suppresses the legacy notice.
+//
+// Kept tight on purpose: only files Sitatame itself owns belong here. If a
+// future release adds another in-repo config file (e.g. a per-repo schema
+// version marker), extend this set in the same commit so users do not see
+// the legacy warning regress.
+var configEntryAllowlist = map[string]bool{
+	config.FileName: true,
+}
+
+// onlyConfigEntries reports whether dir exists and contains *only*
+// allowlisted config files (no subdirectories, no unknown files, at least
+// one allowlisted file present). Empty directories return false because
+// pre-#24 sitatame installs left .sitatame/ on disk even after the user
+// cleared drafts/reviews, and that is still a legitimate signal that the
+// legacy notice should fire. Read errors also fall through to false so the
+// warning still triggers on permission denials rather than silently
+// swallowing a real legacy directory.
+func onlyConfigEntries(dir string) bool {
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return false
+	}
+	if len(entries) == 0 {
+		return false
+	}
+	for _, e := range entries {
+		if e.IsDir() {
+			return false
+		}
+		if !configEntryAllowlist[e.Name()] {
+			return false
+		}
+	}
+	return true
 }
 
 // shellQuote wraps s in POSIX single quotes, escaping embedded single quotes
