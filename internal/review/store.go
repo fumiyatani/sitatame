@@ -61,6 +61,11 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 		}
 		r.ID = id
 	}
+	// Stamp first-save time so external tools can sort/filter by created_at.
+	// Existing drafts (e.g. auto-loaded) keep their original value.
+	if r.CreatedAt.IsZero() {
+		r.CreatedAt = s.Now().UTC()
+	}
 	// 0o700 keeps drafts owner-private: reviews can contain unreleased
 	// implementation notes the user does not want world- or group-readable
 	// on shared machines. os.CreateTemp below produces 0o600 files, so the

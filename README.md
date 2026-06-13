@@ -3,9 +3,16 @@
 [日本語版 README](README.ja.md)
 
 > **Project status (2026-06)**: the terminal UI is in maintenance mode.
-> Active development has moved to the Kotlin Web UI under [`web/`](web/).
-> TUI bug fixes are still welcome; new feature work targets the Web UI.
-> See [docs/tui-status.md](docs/tui-status.md) for the policy in detail.
+> Active development has moved to the Kotlin Web UI (Phase 0 PoC under
+> [`web/`](web/); Phase 1 read-only viewer tracked in
+> [#66](https://github.com/fumiyatani/sitatame/issues/66)) and the
+> IntelliJ Plugin (tracked in
+> [#68](https://github.com/fumiyatani/sitatame/issues/68); no code
+> merged yet). TUI bug fixes are still welcome; new feature work
+> targets the Web UI or the IntelliJ Plugin. See
+> [docs/tui-status.md](docs/tui-status.md) for the maintenance policy,
+> the full TUI feature inventory, and the parity table that tracks
+> each capability across all three surfaces.
 
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
@@ -170,7 +177,10 @@ can consume the human reviewer's notes without screen scraping:
    `kind: review|file|line|range`, `path`, `side`, optional `line` /
    `line_start` / `line_end`, blob hashes for staleness detection, and a
    `body`. Anything not modeled by `sitatame` is preserved verbatim, so an
-   agent can extend the schema without losing data on the next save.
+   agent can extend the schema without losing data on the next save. The
+   full field-by-field reference, side decision rules, state transitions,
+   and forward-compat strategy live in
+   [docs/review-schema.md](docs/review-schema.md).
 5. `sitatame search <pattern>` is the read path for past reviews.
 
 A minimal handoff in shell looks like:
@@ -191,6 +201,10 @@ untrusted sources.
 `~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md` — pick it up next
 session, or feed it to an agent that knows to look at drafts before starting
 work.
+
+Re-launching `sitatame` on the same branch auto-loads the most recent draft
+so prior comments reappear in the TUI; saving again writes back to the same
+draft file.
 
 ### Storage location
 
@@ -318,3 +332,15 @@ runner the tests execute the real binary end to end.
 - Homebrew tap / aqua / mise integration
 - delta pipe integration for syntax-highlighted diffs
 - side-by-side and tree-pane layouts
+
+## See also
+
+- [`docs/tui-status.md`](docs/tui-status.md) — TUI maintenance policy,
+  full keybinding / feature inventory, and the parity table comparing
+  the TUI against the Web UI (Compose Multiplatform Web) and the
+  IntelliJ Plugin. Read this before filing a TUI feature request or
+  scoping a fix.
+- [`docs/config.md`](docs/config.md) — per-repo
+  `<repo>/.sitatame/config.yaml` schema.
+- [`web/README.md`](web/README.md) — Web UI scope, build, and the
+  bit-exact YAML round-trip Kill criteria.

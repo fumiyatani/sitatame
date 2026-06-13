@@ -203,6 +203,10 @@ func RunRoot(env Env, args []string) int {
 		headRef = "WORKTREE"
 		headRefSHA = ""
 	}
+	// Start from a fresh Review and overlay any existing draft on top so
+	// that resuming a session preserves every field the draft owned
+	// (Extras / CreatedAt / Body / Files etc.) while still reflecting the
+	// *current* diff in Branch / Base / Head.
 	r := review.Review{
 		Schema: 1,
 		Branch: branch,
@@ -215,6 +219,61 @@ func RunRoot(env Env, args []string) int {
 	store := review.NewStore(paths)
 	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
 		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
+		// Auto-load the previously-saved draft so a re-run on the same
+		// branch surfaces the user's prior comments instead of starting
+		// from an empty Review. Without this load step the overlay path
+		// looked correct (DetectDraft printed the file) yet the TUI was
+		// always handed a freshly constructed `r` — see issue #18.
+		//
+		// Failures here are best-effort: a corrupt or unreadable draft
+		// should not block a fresh session, so we surface the reason on
+		// stderr and continue with the empty Review.
+		//
+		// Why we start from `loaded` and only overwrite the
+		// diff-derived fields, rather than copying a handful of fields
+		// off the loaded draft onto a freshly-built Review:
+		//
+		//   * PR #65 introduced top-level / file / comment `Extras`
+		//     maps that hold YAML keys we don't model — AI agents lean
+		//     on this forward-compat hook. A field-by-field copy drops
+		//     those keys on the floor.
+		//   * `CreatedAt` (documented by PR #65 / PR #69) and the raw
+		//     Markdown `Body` are the same story: dropping them on
+		//     resume mutates the very file we then re-save.
+		//   * Branch / Base / Head must reflect the *current* diff
+		//     snapshot, not the one the draft was saved against, so we
+		//     unconditionally overwrite them after the value copy.
+		//
+		// Files is preserved as-loaded by design (PR #70 round-2 P2
+		// fix): the on-disk draft is the only source of per-FileMeta
+		// `Extras` (forward-compat keys AI agents stash there) and of
+		// the original diff snapshot. Wiping `r.Files = nil` and
+		// letting SaveDraft/Encode re-serialise an empty `files:` list
+		// silently dropped those Extras on every resume -> save cycle.
+		// Tracked as a follow-up: refreshing `r.Files` against the
+		// *current* diff (merging Extras by path) so the saved draft
+		// matches the diff the user is actively reviewing.
+		//
+		// Map sharing: `r = *loaded` is a value copy, so the Extras
+		// maps end up shared by reference with the on-disk-derived
+		// struct. That is fine because SaveDraft → Encode only reads
+		// from those maps; nothing in the TUI session mutates them.
+		if loaded, lerr := loadDraftForResume(existing); lerr != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: draft load failed: %v (starting empty)\n", lerr)
+		} else {
+			r = loaded
+			r.Branch = branch
+			r.Base = review.Ref{Ref: base.Ref, SHA: base.SHA}
+			r.Head = review.Ref{Ref: headRef, SHA: headRefSHA}
+			if r.Schema == 0 {
+				r.Schema = 1
+			}
+			// Run validation with stderr warnings so the PR #61 legacy
+			// anchor detector flags drafts saved before issue #36 / #19
+			// were fixed. Validate also re-classifies comment state vs.
+			// the freshly-loaded diff (open / stale).
+			review.ValidateWithWarnings(&r, files, env.Stderr)
+		}
 	}
 	runner := env.RunTUI
 	if runner == nil {
@@ -228,6 +287,28 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	return finalizeReview(env, store, result)
+}
+
+// loadDraftForResume reads `path` and decodes it as a review.Review. The
+// caller adopts the returned value wholesale (preserving Extras / CreatedAt /
+// Body / Files etc.) and only overwrites the fields tied to the *current*
+// diff snapshot (Branch / Base / Head). Files is kept as-loaded so per-
+// FileMeta Extras survive resume -> save; refreshing Files against the live
+// diff is left as a follow-up.
+//
+// Returned errors are surfaced on stderr by the caller and the session
+// continues with an empty Review — a corrupt or unreadable draft must not
+// block startup.
+func loadDraftForResume(path string) (review.Review, error) {
+	b, err := os.ReadFile(path)
+	if err != nil {
+		return review.Review{}, fmt.Errorf("read draft: %w", err)
+	}
+	r, err := review.Decode(b)
+	if err != nil {
+		return review.Review{}, fmt.Errorf("decode draft: %w", err)
+	}
+	return r, nil
 }
 
 // resolveDiffSpec turns the parsed CLI options into a DiffSpec plus the

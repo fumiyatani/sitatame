@@ -33,6 +33,8 @@ sitatame は TUI でレビューを記録し、Markdown + YAML フロントマ�
 
 ## 2. ファイル構造
 
+人間向けの完全な schema 仕様は [`docs/review-schema.md`](../../../docs/review-schema.md) にある（フィールド定義・Side 決定ルール・state 遷移・Extras 契約まで網羅）。本 skill はそれを前提に AI 向けの処理手順だけを書く。schema が将来 bump された場合は、まず `docs/review-schema.md` の差分を読むこと。
+
 ```markdown
 ---
 schema: 1

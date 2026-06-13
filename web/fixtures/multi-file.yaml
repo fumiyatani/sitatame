@@ -1,0 +1,65 @@
+---
+schema: 1
+id: 20260501T101000-multi-file
+created_at: 2026-05-01T10:10:00Z
+branch: feature/multi-file
+base:
+  ref: origin/main
+  sha: aaaaaaa
+head:
+  ref: HEAD
+  sha: bbbbbbb
+files:
+  - path: src/a.go
+    blob_base: a1
+    blob_head: a2
+    status: modified
+  - path: src/b.go
+    blob_base: b1
+    blob_head: b2
+    status: modified
+  - path: src/c.go
+    blob_head: c2
+    status: added
+comments:
+  - anchor_id: aaaaaaaa-aaaa-aaaa-aaaa-000000000001
+    kind: line
+    path: src/a.go
+    side: head
+    blob: a2
+    line: 1
+    state: open
+    body: a-file comment 1
+  - anchor_id: bbbbbbbb-bbbb-bbbb-bbbb-000000000001
+    kind: line
+    path: src/b.go
+    side: head
+    blob: b2
+    line: 3
+    state: open
+    body: b-file comment 1
+  - anchor_id: aaaaaaaa-aaaa-aaaa-aaaa-000000000002
+    kind: line
+    path: src/a.go
+    side: head
+    blob: a2
+    line: 2
+    state: resolved
+    body: a-file comment 2 (resolved)
+  - anchor_id: bbbbbbbb-bbbb-bbbb-bbbb-000000000002
+    kind: range
+    path: src/b.go
+    side: head
+    blob: b2
+    line_start: 10
+    line_end: 12
+    state: open
+    body: b-file range comment
+  - anchor_id: cccccccc-cccc-cccc-cccc-000000000001
+    kind: file
+    path: src/c.go
+    state: open
+    body: new file looks fine overall; one nit below.
+---
+
+# Review: multi-file
