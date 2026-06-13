@@ -101,21 +101,22 @@ fun Application.module(workdir: Path, baseRef: String) {
 }
 
 /**
- * Normalises the raw `git rev-parse --abbrev-ref HEAD` output the same way the
- * Go CLI does in `cmd/root.go`: when HEAD is detached, `git` returns the literal
- * "HEAD", and `BranchSlug("HEAD")` would (a) collide with anyone literally
- * named-after-HEAD work and (b) — more importantly — diverge from the CLI/TUI,
- * which folds detached sessions into `detached/<sha[:12]>` so each detached
- * HEAD gets its own per-SHA slug. Without this, the Web UI and CLI of the same
- * repo in the same detached state would look at different on-disk directories
- * for reviews.
+ * Normalises the raw `Git.currentBranch()` output the same way the Go CLI does
+ * in `cmd/root.go`: when HEAD is detached, `symbolic-ref` exits non-zero and
+ * we get back an empty string, which on its own would route reviews to
+ * `BranchSlug("")` and collide across every detached session on the same
+ * machine. The CLI folds detached state into `detached/<sha[:12]>` so each
+ * detached HEAD has its own per-SHA slug. Without this, the Web UI and CLI of
+ * the same repo in the same detached state would look at different on-disk
+ * directories for reviews.
  *
- * Falls back to the raw branch string when [sha] is too short to take a 12-char
- * prefix from (e.g. HeadSHA failed): this matches Go's behaviour, which leaves
- * branch == "" and lets BranchSlug("") absorb the case.
+ * Falls back to the raw branch string when [sha] is too short to take a
+ * 12-char prefix from (e.g. HeadSHA failed). This matches Go's behaviour:
+ * when both branch and sha resolution fail the CLI also leaves branch == ""
+ * and lets BranchSlug("") absorb the case.
  */
 fun normalizeBranch(rawBranch: String, sha: String): String {
-    if (rawBranch == "HEAD" && sha.length >= 12) {
+    if (rawBranch.isEmpty() && sha.length >= 12) {
         return "detached/" + sha.substring(0, 12)
     }
     return rawBranch
