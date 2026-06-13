@@ -105,7 +105,11 @@ chain is not consulted. See the table in `base.candidates` above for the
 full matrix.
 
 `--staged` and `--working` ignore both the CLI base argument and the config
-file because their diff is always against `HEAD` by definition.
+file because their diff is always against `HEAD` by definition. In these
+modes `sitatame` does not read `.sitatame/config.yaml` at all, so a malformed
+or otherwise unparseable config does **not** produce a stderr warning for
+`--staged` / `--working` invocations — only the default range-diff mode
+loads the file and surfaces parse/validation diagnostics.
 
 ## Environment variables
 
