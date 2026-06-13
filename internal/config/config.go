@@ -48,20 +48,29 @@ type Config struct {
 // pass an explicit base argument. It is additive: it is prepended to whichever
 // candidate chain follows (either Candidates or the built-in fallback).
 //
-// Candidates, when non-empty, *fully replaces* the built-in
+// Candidates, when CandidatesPresent is true, *fully replaces* the built-in
 // gitx.BaseCandidates chain — the built-in chain is NOT appended. A repo that
 // pins `candidates: [origin/develop]` must never silently fall back to
 // `origin/main` / `main`, because every review is anchored against the
 // resolved base and a silently mismatched base would produce a misleading
-// review with no warning. When Candidates is empty, the built-in chain
-// follows Default so users only setting Default still benefit from the
-// auto-detect fallback.
+// review with no warning. When CandidatesPresent is false (the YAML key was
+// omitted entirely), the built-in chain follows Default so users only setting
+// Default still benefit from the auto-detect fallback.
+//
+// CandidatesPresent disambiguates "candidates key omitted" from "candidates
+// key present but set to an empty list ([])". Both produce
+// len(Candidates) == 0, but the user intent is different: an explicit empty
+// list means "auto-detect should be restricted to Default only, do NOT fall
+// back to the built-in chain". Collapsing them would silently rescue the
+// auto-detect via `main`/`origin/main` and contradict the documented
+// replacement-list contract.
 //
 // See cmd.mergeBaseCandidates for the canonical layering rules and
 // docs/config.md for the user-facing documentation.
 type BaseConfig struct {
-	Default    string
-	Candidates []string
+	Default           string
+	Candidates        []string
+	CandidatesPresent bool
 }
 
 // LoadFromRepo reads <repoRoot>/.sitatame/config.yaml and returns the parsed
@@ -176,6 +185,14 @@ func decodeBase(node *yaml.Node, sourcePath string, warnTo io.Writer) BaseConfig
 			}
 			b.Default = s
 		case "candidates":
+			// Mark the key as present *before* the type check. A user who
+			// types `candidates: "main"` (scalar, wrong type) clearly
+			// intended to specify a replacement list; falling back to the
+			// built-in chain just because their value was malformed would
+			// hide the same "silent fallback" footgun the type warning is
+			// meant to surface. The type warning still fires below; we
+			// just refuse to pretend the key never existed.
+			b.CandidatesPresent = true
 			if valNode.Kind != yaml.SequenceNode {
 				warn(warnTo, "%s: base.candidates must be a list, got %s (ignored)", sourcePath, describeYAMLType(valNode))
 				continue

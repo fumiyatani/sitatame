@@ -282,29 +282,43 @@ func resolveDiffSpec(repo *gitx.Repo, opts rootOpts, cfg *config.Config) (gitx.D
 // ResolveBaseWithCandidates' auto-detect path. The two config fields have
 // deliberately asymmetric semantics:
 //
-//   - cfg.Base.Candidates is a *replacement* list. When non-empty it is the
-//     entire chain we try — gitx.BaseCandidates is NOT appended. This is the
-//     contract documented in docs/config.md: a repo that pins
-//     `candidates: [origin/develop]` must never silently fall back to
-//     `origin/main` / `main` if `origin/develop` is unreachable, because the
-//     auto-resolved base is what every review is anchored against and a
-//     mismatched base produces a misleading review with no warning.
+//   - cfg.Base.Candidates is a *replacement* list. When the YAML
+//     `candidates:` key is present (cfg.Base.CandidatesPresent == true) it is
+//     the entire chain we try — gitx.BaseCandidates is NOT appended, even if
+//     the user wrote `candidates: []`. This is the contract documented in
+//     docs/config.md: a repo that pins `candidates: [origin/develop]` (or
+//     `candidates: []` with a default) must never silently fall back to
+//     `origin/main` / `main`, because the auto-resolved base is what every
+//     review is anchored against and a mismatched base produces a misleading
+//     review with no warning. The CandidatesPresent flag is what
+//     distinguishes "key omitted" (use built-in fallback) from "key set to
+//     []" (refuse to fall back); collapsing them on len(slice) == 0 would
+//     silently re-enable the chain users were trying to opt out of.
 //   - cfg.Base.Default is *additive*. It is shorthand for "try this ref
 //     first" and is prepended to whichever chain follows — either the
 //     replacement Candidates list or the built-in BaseCandidates fallback.
 //
 // Concretely:
 //
-//	default="", candidates=[]                  -> nil  (use gitx.BaseCandidates)
-//	default="X", candidates=[]                 -> [X, ...gitx.BaseCandidates]
+//	default="", candidates omitted             -> nil  (use gitx.BaseCandidates)
+//	default="X", candidates omitted            -> [X, ...gitx.BaseCandidates]
+//	default="", candidates=[]                  -> nil  (no candidates configured;
+//	                                              safety net: fall back to built-in
+//	                                              with a stderr note via the caller)
+//	default="X", candidates=[]                 -> [X]  (only the configured default;
+//	                                              built-in chain stays out)
 //	default="",  candidates=[A, B]             -> [A, B]
 //	default="X", candidates=[A, B]             -> [X, A, B]
 //
-// Returning nil for the empty case is load-bearing:
-// ResolveBaseWithCandidates falls back to gitx.BaseCandidates when its
-// candidates argument is nil/empty, so the existing
+// Returning nil for the no-config and "empty list with no default" cases is
+// load-bearing: ResolveBaseWithCandidates falls back to gitx.BaseCandidates
+// when its candidates argument is nil/empty, so the existing
 // TestResolveBase_FallsBackToMain et al keep hitting the built-in chain
-// unchanged.
+// unchanged. The "empty list with no default" case is a misconfiguration —
+// the user opted out of the built-in chain without providing any
+// replacement — so we fall back to the built-in as a safety net rather than
+// guaranteeing an auto-detect failure. The CandidatesPresent + len(Default)
+// path is the one that actually enforces the opt-out.
 //
 // Duplicates are collapsed so the failure message in
 // ResolveBaseWithCandidates does not list the same ref twice (e.g. if the
@@ -314,19 +328,30 @@ func mergeBaseCandidates(cfg *config.Config) []string {
 		return nil
 	}
 	hasDefault := cfg.Base.Default != ""
-	hasCandidates := len(cfg.Base.Candidates) > 0
-	if !hasDefault && !hasCandidates {
-		return nil
-	}
+	candidatesPresent := cfg.Base.CandidatesPresent
 
-	// Pick the tail chain: an explicit Candidates list replaces the
-	// built-in entirely; otherwise the built-in is the fallback so a
-	// default-only config still has somewhere to land.
+	// Pick the tail chain.
+	//   - candidates key explicitly present -> use its contents (even if
+	//     empty) as the replacement list. Built-in chain stays out.
+	//   - candidates key omitted -> built-in is the fallback so a
+	//     default-only (or no-config) invocation still has somewhere to
+	//     land.
 	var tail []string
-	if hasCandidates {
+	switch {
+	case candidatesPresent:
 		tail = cfg.Base.Candidates
-	} else {
+		// If both candidates and default are absent in this branch
+		// (candidates: [] with no default), there is nothing to try.
+		// Returning nil lets ResolveBaseWithCandidates apply its
+		// built-in fallback as a safety net rather than guaranteeing a
+		// failure for a likely-misconfigured file.
+		if !hasDefault && len(tail) == 0 {
+			return nil
+		}
+	case hasDefault:
 		tail = gitx.BaseCandidates
+	default:
+		return nil
 	}
 
 	seen := make(map[string]bool)
