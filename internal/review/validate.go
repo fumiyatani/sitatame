@@ -28,12 +28,18 @@ func Validate(r *Review, files []diffmodel.File) {
 // to suppress warnings — equivalent to Validate.
 //
 // Legacy anchors are draft comments saved before issues #36 / #19 were fixed:
-// the buggy openCommentModal stored Side=head + Line=BaseLine when the user
-// commented on a `-` row, producing a record that no consumer can interpret
-// correctly. We detect the obvious shape (Side=head + blob matches BlobBase
-// of some file) and emit a stderr line so the user notices before re-saving.
-// We do NOT silently fix the side — the user's original intent (head vs. base)
-// is ambiguous after the fact, and a silent flip would mask a real data
+// the buggy openCommentModal stored Side=head when the user commented on a
+// `-` row of a modified file. Because lineNumberAt fell back to BaseLine when
+// HeadLine was 0, and blobForSide returned BlobHead for Side=head, the
+// persisted shape was:
+//
+//	Side=head, Line=<base_line_value>, Blob=<head_blob>
+//
+// This is internally inconsistent: the line number identifies a `-` row that
+// only exists on the base side, but the side metadata claims head. We detect
+// that shape and emit a stderr line so the user notices before re-saving. We
+// do NOT silently fix the side — the user's original intent (head vs. base)
+// is ambiguous after the fact, and a silent flip would mask the data
 // corruption from the user's review of the draft.
 func ValidateWithWarnings(r *Review, files []diffmodel.File, warnings io.Writer) {
 	idx := buildDiffIndex(files)
@@ -50,28 +56,80 @@ func ValidateWithWarnings(r *Review, files []diffmodel.File, warnings io.Writer)
 }
 
 // emitLegacyAnchorWarning detects the issues #36 / #19 legacy-anchor shape and
-// writes a single line to w. The detection is intentionally conservative — we
-// only flag the case where Side=head but the anchor's Blob is a known
-// BlobBase, because that combination is impossible for a correctly-saved
-// anchor and indicates the old openCommentModal stored BaseLine under
-// Side=head.
+// writes a single line to w. We only flag line-level anchors with Side=head
+// where the line number cannot be reconciled with any HeadLine in the file's
+// hunks but DOES match a BaseLine on a `-` row (HeadLine == 0). That is the
+// fingerprint of the old openCommentModal storing BaseLine under Side=head.
+//
+// We additionally require that the anchor's Blob matches the file's BlobHead
+// (the buggy blobForSide returned BlobHead for Side=head). An anchor whose
+// blob does not match either side, or matches BlobBase, is a different shape
+// of corruption and is left for validateAnchor to mark stale.
 func emitLegacyAnchorWarning(a *Anchor, idx diffIndex, w io.Writer) {
-	if a.Side != SideHead || a.Blob == "" {
+	if a.Side != SideHead {
 		return
 	}
-	if _, headHit := idx.headByBlob[a.Blob]; headHit {
-		return // blob is a known head blob — anchor is internally consistent.
+	if a.Kind != KindLine && a.Kind != KindRange {
+		return
 	}
-	if _, baseHit := idx.baseByBlob[a.Blob]; !baseHit {
-		return // blob unknown on both sides; nothing actionable.
+	if a.Line <= 0 {
+		return
+	}
+	f, ok := lookupFile(a, idx)
+	if !ok {
+		return // path resolution failed; nothing actionable.
+	}
+	if a.Blob != "" && a.Blob != f.BlobHead {
+		return // blob does not match head; not the buggy shape we know.
+	}
+	if !lineMatchesDeletedBaseRow(f, a.Line) {
+		return
 	}
 	id := a.AnchorID
 	if id == "" {
 		id = "<no-id>"
 	}
 	fmt.Fprintf(w,
-		"sitatame: detected legacy anchor (id=%s, path=%s); side may be incorrect — please re-save.\n",
-		id, a.Path)
+		"sitatame: detected legacy head-side anchor pointing to a deleted line (id=%s); side may be incorrect — please re-save.\n",
+		id)
+}
+
+// lookupFile finds the diff File that the anchor refers to, trying the recorded
+// path on both sides plus rename metadata. It is used by the legacy-anchor
+// detector to locate hunks; validateAnchor below uses its own blob-first path.
+func lookupFile(a *Anchor, idx diffIndex) (diffmodel.File, bool) {
+	candidates := []string{a.Path, a.RenameTo, a.RenameFrom}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if f, ok := idx.headByPath[p]; ok {
+			return f, true
+		}
+		if f, ok := idx.baseByPath[p]; ok {
+			return f, true
+		}
+	}
+	return diffmodel.File{}, false
+}
+
+// lineMatchesDeletedBaseRow reports whether the file's hunks contain a `-` row
+// (HeadLine == 0) whose BaseLine equals line, AND no row whose HeadLine equals
+// line. If any row has a matching HeadLine the anchor is internally consistent
+// for head side and we do not warn.
+func lineMatchesDeletedBaseRow(f diffmodel.File, line int) bool {
+	foundDeletedBaseMatch := false
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			if l.HeadLine == line {
+				return false // valid head-side match exists; not buggy.
+			}
+			if l.HeadLine == 0 && l.BaseLine == line {
+				foundDeletedBaseMatch = true
+			}
+		}
+	}
+	return foundDeletedBaseMatch
 }
 
 type diffIndex struct {

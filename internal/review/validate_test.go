@@ -12,6 +12,27 @@ func makeReview(comments ...Comment) Review {
 	return Review{Comments: comments}
 }
 
+// makeFileWithDeletedLine returns a modified file whose hunk contains one `-`
+// row (BaseLine=baseLine, HeadLine=0) and one `+` row (BaseLine=0,
+// HeadLine=headLine), so test anchors can reference both sides unambiguously.
+func makeFileWithDeletedLine(path, baseBlob, headBlob string, baseLine, headLine int) diffmodel.File {
+	return diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  path,
+		PostPath: path,
+		BlobBase: baseBlob,
+		BlobHead: headBlob,
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: baseLine, BaseLines: 1,
+			HeadStart: headLine, HeadLines: 1,
+			Lines: []diffmodel.Line{
+				{Prefix: '-', BaseLine: baseLine, HeadLine: 0, Text: "old line"},
+				{Prefix: '+', BaseLine: 0, HeadLine: headLine, Text: "new line"},
+			},
+		}},
+	}
+}
+
 func TestValidate_BlobMatch_Open(t *testing.T) {
 	t.Parallel()
 	files := []diffmodel.File{{
@@ -144,29 +165,25 @@ func TestValidate_KindReview_Untouched(t *testing.T) {
 	}
 }
 
-// TestValidateWithWarnings_LegacyHeadAnchor pins issue #36/#19's backward
-// compatibility path: a draft saved before the Side-derivation fix may carry a
-// Comment with Side=head AND a line number whose value only exists on the base
-// side (because the buggy openCommentModal stored BaseLine under Side=head).
-// The new validator must emit a one-line warning per offending anchor so the
-// user notices before re-saving — silent fixing would mask the data corruption.
-func TestValidateWithWarnings_LegacyHeadAnchor(t *testing.T) {
+// TestValidateWithWarnings_LegacyDeletedLineAnchor_RealBug pins the actual
+// issue #36 / #19 buggy shape: openCommentModal on a `-` row of a modified
+// file persisted Side=head, Line=<BaseLine>, Blob=<HeadBlob> (because
+// lineNumberAt fell back to BaseLine when HeadLine was zero, and blobForSide
+// returned BlobHead for Side=head). The validator must detect that and warn,
+// because the side metadata contradicts the line number / row identity.
+func TestValidateWithWarnings_LegacyDeletedLineAnchor_RealBug(t *testing.T) {
 	t.Parallel()
-	// File where line 5 only exists on the base side (e.g. a `-` row).
-	files := []diffmodel.File{{
-		Status:   diffmodel.StatusModified,
-		PrePath:  "src/a.go",
-		PostPath: "src/a.go",
-		BlobBase: "old", BlobHead: "new",
-	}}
+	// `-` row at BaseLine=5, `+` row at HeadLine=8. The buggy anchor points to
+	// the `-` row but mis-records Side=head + HeadBlob.
+	files := []diffmodel.File{makeFileWithDeletedLine("src/a.go", "oldblob", "newblob", 5, 8)}
 	r := makeReview(Comment{
 		Anchor: Anchor{
 			AnchorID: "legacy-1",
 			Kind:     KindLine,
 			Path:     "src/a.go",
-			Side:     SideHead, // ← legacy bug: head + base-only number
-			Blob:     "old",    // and it points at the base blob
-			Line:     5,
+			Side:     SideHead, // ← bug: head + base-only line number
+			Blob:     "newblob",
+			Line:     5, // BaseLine value, not HeadLine
 		},
 		State: StateOpen,
 	})
@@ -178,33 +195,54 @@ func TestValidateWithWarnings_LegacyHeadAnchor(t *testing.T) {
 	if !strings.Contains(out, "legacy-1") {
 		t.Errorf("warning should name the anchor_id, got %q", out)
 	}
-	if !strings.Contains(out, "legacy anchor") {
-		t.Errorf("warning should mention 'legacy anchor', got %q", out)
+	if !strings.Contains(out, "legacy head-side anchor") {
+		t.Errorf("warning should mention 'legacy head-side anchor', got %q", out)
+	}
+	if !strings.Contains(out, "deleted line") {
+		t.Errorf("warning should mention 'deleted line', got %q", out)
 	}
 }
 
-// TestValidateWithWarnings_NoFalsePositives makes sure healthy anchors do not
-// trigger the legacy warning. A Side=head anchor with a matching head blob is
-// the canonical case and must produce no stderr noise.
-func TestValidateWithWarnings_NoFalsePositives(t *testing.T) {
+// TestValidateWithWarnings_CorrectAnchor_NoWarning covers the post-fix shape
+// for the same `-` row: Side=base, Line=BaseLine, Blob=BlobBase. This must
+// produce no warning — the anchor is internally consistent.
+func TestValidateWithWarnings_CorrectAnchor_NoWarning(t *testing.T) {
 	t.Parallel()
-	files := []diffmodel.File{{
-		Status:   diffmodel.StatusModified,
-		PrePath:  "src/a.go",
-		PostPath: "src/a.go",
-		BlobBase: "old", BlobHead: "new",
-	}}
+	files := []diffmodel.File{makeFileWithDeletedLine("src/a.go", "oldblob", "newblob", 5, 8)}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID: "ok-base",
+			Kind:     KindLine,
+			Path:     "src/a.go",
+			Side:     SideBase,
+			Blob:     "oldblob",
+			Line:     5,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+	if out := buf.String(); out != "" {
+		t.Errorf("expected no warnings for properly-saved base-side anchor, got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_BothSidesValid_HeadOnPlusLine pins the canonical
+// `+` row case: Side=head, Line=HeadLine, Blob=BlobHead. This is the original
+// healthy shape and must never trigger the legacy warning.
+func TestValidateWithWarnings_BothSidesValid_HeadOnPlusLine(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFileWithDeletedLine("src/a.go", "oldblob", "newblob", 5, 8)}
 	r := makeReview(
 		Comment{
-			Anchor: Anchor{AnchorID: "ok-1", Kind: KindLine, Path: "src/a.go", Side: SideHead, Blob: "new", Line: 5},
+			Anchor: Anchor{AnchorID: "ok-head", Kind: KindLine, Path: "src/a.go", Side: SideHead, Blob: "newblob", Line: 8},
 			State:  StateOpen,
 		},
 		Comment{
-			Anchor: Anchor{AnchorID: "ok-2", Kind: KindLine, Path: "src/a.go", Side: SideBase, Blob: "old", Line: 3},
-			State:  StateOpen,
-		},
-		Comment{
-			Anchor: Anchor{AnchorID: "ok-3", Kind: KindFile, Path: "src/a.go", Side: SideHead, Blob: "new"},
+			// File-kind anchor: no line number to validate, must be ignored by
+			// the legacy detector regardless of side.
+			Anchor: Anchor{AnchorID: "ok-file", Kind: KindFile, Path: "src/a.go", Side: SideHead, Blob: "newblob"},
 			State:  StateOpen,
 		},
 	)
@@ -212,7 +250,33 @@ func TestValidateWithWarnings_NoFalsePositives(t *testing.T) {
 	var buf bytes.Buffer
 	ValidateWithWarnings(&r, files, &buf)
 	if out := buf.String(); out != "" {
-		t.Errorf("expected no warnings, got %q", out)
+		t.Errorf("expected no warnings for healthy anchors, got %q", out)
+	}
+}
+
+// TestValidateWithWarnings_HeadBlobMismatch_NoWarning makes sure the detector
+// does not fire when the head-side anchor's blob does not match BlobHead. That
+// is a different kind of corruption (or simply a stale anchor) and is left to
+// validateAnchor to mark stale.
+func TestValidateWithWarnings_HeadBlobMismatch_NoWarning(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{makeFileWithDeletedLine("src/a.go", "oldblob", "newblob", 5, 8)}
+	r := makeReview(Comment{
+		Anchor: Anchor{
+			AnchorID: "weird",
+			Kind:     KindLine,
+			Path:     "src/a.go",
+			Side:     SideHead,
+			Blob:     "some-other-blob",
+			Line:     5,
+		},
+		State: StateOpen,
+	})
+
+	var buf bytes.Buffer
+	ValidateWithWarnings(&r, files, &buf)
+	if out := buf.String(); out != "" {
+		t.Errorf("expected no warning when blob does not match BlobHead, got %q", out)
 	}
 }
 
