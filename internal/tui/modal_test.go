@@ -260,3 +260,386 @@ func TestModal_EscCancelsWithoutAppend(t *testing.T) {
 		t.Errorf("Esc must not append: %+v", m.Review.Comments)
 	}
 }
+
+// modifiedFileWithBlobs is a diffmodel.File modeling a real
+// "modified, context + add + delete" hunk with non-empty blob IDs on both
+// sides. Layout:
+//
+//	row 0: file header
+//	row 1: hunk header (@@ -1,2 +1,2 @@)
+//	row 2: ` x`  → BaseLine=1, HeadLine=1
+//	row 3: `+y`  → BaseLine=0, HeadLine=2
+//	row 4: `-z`  → BaseLine=2, HeadLine=0
+//
+// Distinct BlobBase / BlobHead lets the new Side-derivation logic prove it's
+// picking the right blob for the row's prefix (issues #36 + #19).
+func modifiedFileWithBlobs() diffmodel.File {
+	f := diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "a.go", PostPath: "a.go",
+		BlobBase: "blob-base", BlobHead: "blob-head",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: ' ', Text: "x"},
+				{Prefix: '+', Text: "y"},
+				{Prefix: '-', Text: "z"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// renamedFileWithDeletion mirrors a "rename + edit" scenario where the user
+// might want to comment on a deleted line in the renamed file. RenameFrom /
+// RenameTo + distinct blobs lets us assert the anchor carries the right
+// rename metadata on the base side.
+func renamedFileWithDeletion() diffmodel.File {
+	f := diffmodel.File{
+		Status:     diffmodel.StatusRenamed,
+		PrePath:    "old.go",
+		PostPath:   "new.go",
+		BlobBase:   "blob-old",
+		BlobHead:   "blob-new",
+		RenameFrom: "old.go",
+		RenameTo:   "new.go",
+		Similarity: 80,
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: ' ', Text: "ctx"},
+				{Prefix: '-', Text: "gone"},
+				{Prefix: '+', Text: "kept"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// TestModal_LineOnDeletedRowAnchorsToBase pins issue #36/#19: commenting on a
+// `-` row in a modified file must record Side=base, Line=BaseLine, Blob=BlobBase
+// so the anchor is internally consistent (no Side=head + BaseLine mismatch).
+func TestModal_LineOnDeletedRowAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{modifiedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 header, 1 hunk hdr, 2 ` x`, 3 `+y`, 4 `-z`.
+	for i := 0; i < 4; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on deleted row should open modal")
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for `-` row", a.Side)
+	}
+	if a.Line != 2 {
+		t.Errorf("Line=%d, want BaseLine=2 for `-z` row", a.Line)
+	}
+	if a.Blob != "blob-base" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-base")
+	}
+
+	m = typeBody(m, "undo this")
+	m = modalSendSave(m)
+	if got := len(m.Review.Comments); got != 1 {
+		t.Fatalf("expected 1 comment, got %d", got)
+	}
+	c := m.Review.Comments[0]
+	if c.Side != review.SideBase || c.Line != 2 || c.Blob != "blob-base" {
+		t.Errorf("saved comment anchor wrong: %+v", c.Anchor)
+	}
+}
+
+// TestModal_LineOnAddedRowAnchorsToHead pins the `+` row symmetric: Side=head,
+// Line=HeadLine, Blob=BlobHead.
+func TestModal_LineOnAddedRowAnchorsToHead(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{modifiedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 header, 1 hunk hdr, 2 ` x`, 3 `+y`.
+	for i := 0; i < 3; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on added row should open modal")
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideHead {
+		t.Errorf("Side=%q, want head for `+` row", a.Side)
+	}
+	if a.Line != 2 {
+		t.Errorf("Line=%d, want HeadLine=2 for `+y` row", a.Line)
+	}
+	if a.Blob != "blob-head" {
+		t.Errorf("Blob=%q, want BlobHead=%q", a.Blob, "blob-head")
+	}
+}
+
+// TestModal_LineOnContextRowAnchorsToHead pins context-row behavior: keep the
+// existing SideHead default so cursor-on-context comments anchor to the
+// current revision.
+func TestModal_LineOnContextRowAnchorsToHead(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{modifiedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 header, 1 hunk hdr, 2 ` x` (context).
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	a := m.Modal().AnchorState()
+	if a.Side != review.SideHead {
+		t.Errorf("Side=%q, want head for context row", a.Side)
+	}
+	if a.Line != 1 {
+		t.Errorf("Line=%d, want HeadLine=1 for ` x` context row", a.Line)
+	}
+	if a.Blob != "blob-head" {
+		t.Errorf("Blob=%q, want BlobHead=%q", a.Blob, "blob-head")
+	}
+}
+
+// TestModal_LineOnRenamedDeletedRowCarriesRenameMeta pins rename + `-` row:
+// the anchor must carry RenameFrom (the pre-rename path) so the validator can
+// follow blob movement, and Side=base.
+func TestModal_LineOnRenamedDeletedRowCarriesRenameMeta(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{renamedFileWithDeletion()}
+	m := New(files, review.Review{})
+	// rows: 0 header, 1 hunk hdr, 2 ` ctx`, 3 `-gone`.
+	for i := 0; i < 3; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	m, _ = applyKey(m, "c")
+	a := m.Modal().AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for renamed file's `-` row", a.Side)
+	}
+	if a.Line != 2 {
+		t.Errorf("Line=%d, want BaseLine=2 for `-gone` row", a.Line)
+	}
+	if a.Blob != "blob-old" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-old")
+	}
+	if a.RenameFrom != "old.go" || a.RenameTo != "new.go" {
+		t.Errorf("rename meta missing: from=%q to=%q", a.RenameFrom, a.RenameTo)
+	}
+}
+
+// TestModal_RangeAllDeletedAnchorsToBase: selecting only `-` rows must yield
+// Side=base with LineStart..LineEnd referring to BaseLine numbers.
+func TestModal_RangeAllDeletedAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	// Hunk: ` ctx` (b=1,h=1), `-d1` (b=2), `-d2` (b=3), `+a1` (h=2).
+	f := diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "a.go", PostPath: "a.go",
+		BlobBase: "bb", BlobHead: "bh",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 3, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: ' ', Text: "ctx"},
+				{Prefix: '-', Text: "d1"},
+				{Prefix: '-', Text: "d2"},
+				{Prefix: '+', Text: "a1"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	m := New([]diffmodel.File{f}, review.Review{})
+	// rows: 0 hdr, 1 hunk hdr, 2 ctx, 3 -d1, 4 -d2, 5 +a1.
+	for i := 0; i < 3; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	// Now on `-d1`. Start range and extend to `-d2`.
+	m, _ = applyKey(m, "r")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	a := m.Modal().AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for all-`-` range", a.Side)
+	}
+	if a.LineStart != 2 || a.LineEnd != 3 {
+		t.Errorf("range = (%d,%d), want (2,3) on base side", a.LineStart, a.LineEnd)
+	}
+	if a.Blob != "bb" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "bb")
+	}
+}
+
+// TestModal_RangeMixedFallsBackToHead pins the mixed-prefix selection rule:
+// a range that spans `-` and `+` lines cannot live on one side cleanly, so we
+// keep the head default and surface a status-bar warning. Behavior chosen so
+// the saved anchor stays self-consistent (Side=head + HeadLine numbers).
+func TestModal_RangeMixedFallsBackToHead(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{modifiedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 hdr, 1 hunk hdr, 2 ` x`, 3 `+y`, 4 `-z`.
+	for i := 0; i < 3; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	// Now on `+y`. Start range and extend down into `-z` (mixed).
+	m, _ = applyKey(m, "r")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	a := m.Modal().AnchorState()
+	if a.Side != review.SideHead {
+		t.Errorf("Side=%q, want head for mixed +/- range", a.Side)
+	}
+	// LineStart must reflect HeadLine on `+y` (=2). LineEnd must be the head
+	// number reachable from `-z`; since `-z` has no HeadLine, the helper falls
+	// back to BaseLine (existing lineNumberAt behavior). Either way the range
+	// is at minimum [2, 2].
+	if a.LineStart == 0 {
+		t.Errorf("LineStart=0, want non-zero head-side number")
+	}
+}
+
+// TestModal_DeletedRowSelectionStatus pins the warning surfaced when a mixed
+// `-` + `+` range is committed: the status bar carries an explanation so the
+// user understands why Side stayed on head.
+func TestModal_DeletedRowSelectionStatus(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{modifiedFileWithBlobs()}
+	m := New(files, review.Review{})
+	for i := 0; i < 3; i++ {
+		m, _ = applyKey(m, "j")
+	}
+	// On `+y`. Range into `-z`.
+	m, _ = applyKey(m, "r")
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	if m.statusMsg != mixedRangeMsg {
+		t.Errorf("statusMsg = %q, want %q", m.statusMsg, mixedRangeMsg)
+	}
+}
+
+// deletedFileWithBlobs models a fully-deleted file: only BlobBase is set, the
+// hunk is all `-` rows. Used to exercise the file-scope Side fallback for
+// rowFileHeader / rowHunkHeader / rowBinary on a deleted file.
+func deletedFileWithBlobs() diffmodel.File {
+	f := diffmodel.File{
+		Status:   diffmodel.StatusDeleted,
+		PrePath:  "gone.go", PostPath: "gone.go",
+		BlobBase: "blob-base", BlobHead: "",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 0, HeadLines: 0,
+			Lines: []diffmodel.Line{
+				{Prefix: '-', Text: "a"},
+				{Prefix: '-', Text: "b"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// addedFileWithBlobs models a fully-added file: only BlobHead is set, the
+// hunk is all `+` rows. Symmetric to deletedFileWithBlobs for the head side.
+func addedFileWithBlobs() diffmodel.File {
+	f := diffmodel.File{
+		Status:   diffmodel.StatusAdded,
+		PrePath:  "new.go", PostPath: "new.go",
+		BlobBase: "", BlobHead: "blob-head",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 0, BaseLines: 0, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: '+', Text: "a"},
+				{Prefix: '+', Text: "b"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// TestModal_DeletedFileHunkHeaderAnchorsToBase pins the PR61 round-2 regression:
+// pressing `c` on the hunk header of a deleted file must anchor the file-scope
+// comment to SideBase + BlobBase. Before the fix, the default branch left
+// Side=SideHead, which paired with the empty BlobHead and stale'd the anchor.
+func TestModal_DeletedFileHunkHeaderAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{deletedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 file header, 1 hunk header.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on hunk header should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file (hunk header falls back to file scope)", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for deleted-file hunk-header anchor", a.Side)
+	}
+	if a.Blob != "blob-base" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-base")
+	}
+}
+
+// TestModal_AddedFileHeaderAnchorsToHead pins the symmetric case: a fully
+// added file's rowFileHeader keeps Side=SideHead + Blob=BlobHead, mirroring
+// the pre-PR61 default and matching the file's only meaningful side.
+func TestModal_AddedFileHeaderAnchorsToHead(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{addedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// cursor starts at row 0 (file header).
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on file header should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideHead {
+		t.Errorf("Side=%q, want head for added-file file-header anchor", a.Side)
+	}
+	if a.Blob != "blob-head" {
+		t.Errorf("Blob=%q, want BlobHead=%q", a.Blob, "blob-head")
+	}
+}
+
+// TestModal_DeletedFileBinaryRowAnchorsToBase pins binary deleted files: the
+// rowBinary placeholder must still pick SideBase via fileScopeSide so the
+// file-scope comment's blob lookup resolves to BlobBase.
+func TestModal_DeletedFileBinaryRowAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusDeleted,
+		PrePath:  "img.bin", PostPath: "img.bin",
+		Binary:   true,
+		BlobBase: "blob-base", BlobHead: "",
+	}}
+	m := New(files, review.Review{})
+	// rows: 0 file header, 1 binary placeholder.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on binary placeholder should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file (binary forces file kind)", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for deleted binary file", a.Side)
+	}
+	if a.Blob != "blob-base" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-base")
+	}
+}

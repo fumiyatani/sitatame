@@ -99,6 +99,49 @@ func TestOverlay_RenameOnly_PreservesAnchorOnNewPath(t *testing.T) {
 	}
 }
 
+// TestOverlay_BaseSideAnchorMapsDeletedRow pins issue #36/#19's overlay path:
+// a comment stored with Side=base + Line=BaseLine must light up the `-` row in
+// a modified hunk, not a context row that happens to share a head-side number.
+func TestOverlay_BaseSideAnchorMapsDeletedRow(t *testing.T) {
+	t.Parallel()
+	// Hunk: ` x` (b=1,h=1), `+y` (h=2), `-z` (b=2).
+	f := diffmodel.File{
+		Status:   diffmodel.StatusModified,
+		PrePath:  "a.go", PostPath: "a.go",
+		BlobBase: "bb", BlobHead: "bh",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: ' ', Text: "x"},
+				{Prefix: '+', Text: "y"},
+				{Prefix: '-', Text: "z"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	r := review.Review{Comments: []review.Comment{{
+		Anchor: review.Anchor{
+			Kind: review.KindLine, Path: "a.go", Side: review.SideBase, Line: 2, Blob: "bb",
+		},
+		State: review.StateOpen,
+		Body:  "undo this",
+	}}}
+	m := New([]diffmodel.File{f}, r)
+
+	// rows: 0 hdr, 1 hunk hdr, 2 ` x`, 3 `+y`, 4 `-z`.
+	hits := m.Overlay()
+	got, ok := hits[4]
+	if !ok || len(got) != 1 {
+		t.Fatalf("overlay missing on `-z` row (idx 4): %+v", hits)
+	}
+	// And it must NOT light up the `+y` row (idx 3) even though that row's
+	// HeadLine=2 matches anchor.Line=2 — Side selects the side, not the
+	// number.
+	if _, on := hits[3]; on {
+		t.Errorf("overlay erroneously lit on `+y` row: %+v", hits)
+	}
+}
+
 func TestOverlay_RenameEdit_StaleAndNoEdit(t *testing.T) {
 	t.Parallel()
 	// Path moved AND blob changed → stale.

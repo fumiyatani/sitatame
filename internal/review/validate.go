@@ -1,6 +1,9 @@
 package review
 
 import (
+	"fmt"
+	"io"
+
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
@@ -17,14 +20,166 @@ import (
 // kind == review comments have no anchor and are left unchanged. kind == file
 // comments have no line numbers but are validated the same way.
 func Validate(r *Review, files []diffmodel.File) {
+	ValidateWithWarnings(r, files, nil)
+}
+
+// ValidateWithWarnings runs Validate and additionally surfaces legacy-anchor
+// warnings (one line per offending comment) on the provided writer. Pass nil
+// to suppress warnings — equivalent to Validate.
+//
+// Legacy anchors are draft comments saved before issues #36 / #19 were fixed:
+// the buggy openCommentModal stored Side=head when the user commented on a
+// `-` row of a modified file. Because lineNumberAt fell back to BaseLine when
+// HeadLine was 0, and blobForSide returned BlobHead for Side=head, the
+// persisted shape was:
+//
+//	Side=head, Line=<base_line_value>, Blob=<head_blob>
+//
+// This is internally inconsistent: the line number identifies a `-` row that
+// only exists on the base side, but the side metadata claims head. We detect
+// that shape and emit a stderr line so the user notices before re-saving. We
+// do NOT silently fix the side — the user's original intent (head vs. base)
+// is ambiguous after the fact, and a silent flip would mask the data
+// corruption from the user's review of the draft.
+func ValidateWithWarnings(r *Review, files []diffmodel.File, warnings io.Writer) {
 	idx := buildDiffIndex(files)
 	for i := range r.Comments {
 		c := &r.Comments[i]
 		if c.Kind == KindReview {
 			continue
 		}
+		if warnings != nil {
+			emitLegacyAnchorWarning(&c.Anchor, idx, warnings)
+		}
 		validateAnchor(&c.Anchor, &c.State, idx)
 	}
+}
+
+// emitLegacyAnchorWarning detects the issues #36 / #19 legacy-anchor shape and
+// writes a single line to w. We flag line-level anchors with Side=head whose
+// line number matches a `-` row's BaseLine (HeadLine == 0) in the file's
+// hunks. That is the fingerprint of the old openCommentModal storing BaseLine
+// under Side=head.
+//
+// We additionally require that the anchor's Blob matches the file's BlobHead
+// (the buggy blobForSide returned BlobHead for Side=head). An anchor whose
+// blob does not match either side, or matches BlobBase, is a different shape
+// of corruption and is left for validateAnchor to mark stale.
+//
+// We do NOT require the absence of a HeadLine match for the same integer:
+// deleting a base line shifts subsequent context rows so that the same
+// integer commonly appears on both sides, and the buggy modal still stored
+// the wrong shape in that case. Skipping the warning when HeadLine overlaps
+// would silently overlay the comment onto the unrelated `+`/context row.
+func emitLegacyAnchorWarning(a *Anchor, idx diffIndex, w io.Writer) {
+	if a.Side != SideHead {
+		return
+	}
+	if a.Kind != KindLine && a.Kind != KindRange {
+		return
+	}
+	f, ok := lookupFile(a, idx)
+	if !ok {
+		return // path resolution failed; nothing actionable.
+	}
+	if a.Blob != "" && a.Blob != f.BlobHead {
+		return // blob does not match head; not the buggy shape we know.
+	}
+
+	var matches bool
+	switch a.Kind {
+	case KindLine:
+		if a.Line <= 0 {
+			return
+		}
+		matches = lineMatchesDeletedBaseRow(f, a.Line)
+	case KindRange:
+		// A range anchor is legacy-buggy when EVERY line in [LineStart, LineEnd]
+		// appears only as a `-` row (BaseLine match, HeadLine == 0) — i.e. the
+		// whole range was anchored to the head side despite being all-deleted.
+		// Mixed ranges (some `-`, some `+`) are intentionally kept on Head by
+		// the new logic and must not warn.
+		if a.LineStart <= 0 || a.LineEnd < a.LineStart {
+			return
+		}
+		matches = rangeAllDeletedBaseRows(f, a.LineStart, a.LineEnd)
+	}
+	if !matches {
+		return
+	}
+	id := a.AnchorID
+	if id == "" {
+		id = "<no-id>"
+	}
+	fmt.Fprintf(w,
+		"sitatame: detected legacy head-side anchor pointing to a deleted line (id=%s); side may be incorrect — please re-save.\n",
+		id)
+}
+
+// lookupFile finds the diff File that the anchor refers to, trying the recorded
+// path on both sides plus rename metadata. It is used by the legacy-anchor
+// detector to locate hunks; validateAnchor below uses its own blob-first path.
+func lookupFile(a *Anchor, idx diffIndex) (diffmodel.File, bool) {
+	candidates := []string{a.Path, a.RenameTo, a.RenameFrom}
+	for _, p := range candidates {
+		if p == "" {
+			continue
+		}
+		if f, ok := idx.headByPath[p]; ok {
+			return f, true
+		}
+		if f, ok := idx.baseByPath[p]; ok {
+			return f, true
+		}
+	}
+	return diffmodel.File{}, false
+}
+
+// lineMatchesDeletedBaseRow reports whether the file's hunks contain a `-` row
+// (HeadLine == 0) whose BaseLine equals line.
+//
+// The presence of a row whose HeadLine also equals line is NOT a disqualifier.
+// Deleting a base line causes subsequent context rows to drift, so a hunk
+// where BaseLine 5 is deleted very commonly also contains a context row with
+// HeadLine 5 — the same integer reused for an unrelated row on the other
+// side. The legacy buggy modal still saved Side=head, Line=BaseLine, Blob=
+// BlobHead in that case, which silently overlays the comment onto the
+// unrelated `+`/context row instead of the deleted `-` row the user clicked.
+// Treating "HeadLine matches" as a clean signal would mask exactly this case.
+//
+// So: we only need to confirm that anchor.Line is a deleted base line at all.
+// The caller already gates on Side == head and Blob == BlobHead, which is the
+// fingerprint of the buggy modal regardless of any incidental HeadLine
+// overlap.
+func lineMatchesDeletedBaseRow(f diffmodel.File, line int) bool {
+	for _, h := range f.Hunks {
+		for _, l := range h.Lines {
+			if l.HeadLine == 0 && l.BaseLine == line {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// rangeAllDeletedBaseRows reports whether every integer in [start, end] matches
+// a `-` row (HeadLine == 0, BaseLine == n) somewhere in the file's hunks. That
+// is the range-anchor analogue of the issue #36 fingerprint: a range claimed
+// to live on the head side but in fact composed entirely of deleted base lines.
+//
+// As with the line case, incidental HeadLine overlap (a context `+` row whose
+// HeadLine equals one of the values in the range) is NOT a disqualifier: the
+// buggy modal saved Side=head + BaseLine + BlobHead regardless of such
+// overlap, and we want to surface that. The "all deleted" requirement still
+// excludes ranges that span actual `+`-only rows the user might have
+// legitimately intended to anchor on Head.
+func rangeAllDeletedBaseRows(f diffmodel.File, start, end int) bool {
+	for n := start; n <= end; n++ {
+		if !lineMatchesDeletedBaseRow(f, n) {
+			return false
+		}
+	}
+	return true
 }
 
 type diffIndex struct {
