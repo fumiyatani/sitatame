@@ -157,7 +157,7 @@ comments:
 |------------------|-----------------------------|------|------|
 | `schema`         | int                         | 必須 | スキーマバージョン。現行は `1` 固定。reader は値を見て分岐する |
 | `id`             | string                      | 必須 | ファイル名 (拡張子無し) と同一の id |
-| `created_at`     | RFC 3339 timestamp          | 必須 | レビュー保存時刻 |
+| `created_at`     | RFC 3339 timestamp          | 必須 | 最初に保存した時刻 (UTC)。再保存時は維持される |
 | `branch`         | string                      | 必須 | レビュー対象のブランチ名。`branch-slug` の元 |
 | `base`           | `{ref, sha}`                | 必須 | 比較元 (`git diff base..head` の base) |
 | `head`           | `{ref, sha}`                | 必須 | 比較先 (`git diff base..head` の head) |
