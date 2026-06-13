@@ -1,0 +1,85 @@
+<idea-plugin>
+    <id>dev.sitatame.intellij</id>
+    <name>sitatame review</name>
+    <vendor email="fumisorena@gmail.com" url="https://github.com/fumiyatani/sitatame">fumiyatani</vendor>
+
+    <description><![CDATA[
+        Author and consume sitatame code reviews directly inside IntelliJ
+        Community / IDEA Ultimate / Android Studio.<br/>
+        <br/>
+        Phase 1 (this release) covers the write path: select a range, add a
+        comment, list everything in a tool window, and copy an AI-ready prompt
+        to the clipboard. Reviews and drafts live under
+        <code>~/.sitatame/&lt;project-slug&gt;/{reviews,drafts}/&lt;branch-slug&gt;/</code>
+        so the CLI, Web UI and IntelliJ plugin all see the same files.<br/>
+        <br/>
+        Status: experimental. Not yet on JetBrains Marketplace; install from
+        disk via <code>./gradlew :intellij:buildPlugin</code>.
+    ]]></description>
+
+    <change-notes><![CDATA[
+        <b>0.1.0</b> — initial scaffold. Range / line comment actions,
+        tool window listing, AI prompt copy, draft → review promotion,
+        SITATAME_HOME override in Settings.
+    ]]></change-notes>
+
+    <depends>com.intellij.modules.platform</depends>
+    <depends>Git4Idea</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow
+            id="SitatameReview"
+            anchor="right"
+            icon="AllIcons.Toolwindows.ToolWindowMessages"
+            factoryClass="dev.sitatame.intellij.toolwindow.SitatameToolWindowFactory"/>
+
+        <applicationConfigurable
+            parentId="tools"
+            id="dev.sitatame.intellij.settings.SitatameConfigurable"
+            displayName="sitatame review"
+            instance="dev.sitatame.intellij.settings.SitatameConfigurable"/>
+
+        <!--
+            ReviewStore and SitatameSettings are registered via @Service
+            annotations on the classes themselves. Listing them here too
+            would double-register and trigger a startup warning.
+        -->
+
+        <notificationGroup id="sitatame.review" displayType="BALLOON"/>
+    </extensions>
+
+    <actions>
+        <!--
+            Add Comment is the entry point for the write path. Cmd+Shift+C
+            mirrors the CLI's `sitatame comment` shortcut convention and
+            doesn't collide with the standard IDEA copy/comment shortcuts.
+        -->
+        <action id="sitatame.AddComment"
+                class="dev.sitatame.intellij.actions.AddCommentAction"
+                text="sitatame: Add Comment"
+                description="Add a sitatame review comment for the current selection or line">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift C"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift C" replace-all="false"/>
+        </action>
+
+        <action id="sitatame.ResolveComment"
+                class="dev.sitatame.intellij.actions.ResolveCommentAction"
+                text="sitatame: Toggle Resolved"
+                description="Toggle the resolved/open state of a sitatame comment under the caret">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift R"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift R" replace-all="false"/>
+        </action>
+
+        <action id="sitatame.CopyAIPrompt"
+                class="dev.sitatame.intellij.actions.CopyAIPromptAction"
+                text="sitatame: Copy AI Prompt"
+                description="Copy an AI-ready prompt for the selected or all open comments"/>
+
+        <action id="sitatame.PromoteReview"
+                class="dev.sitatame.intellij.actions.PromoteReviewAction"
+                text="sitatame: Promote Draft to Review"
+                description="Promote the current draft to reviews/ and notify the IDE"/>
+    </actions>
+</idea-plugin>

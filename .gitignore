@@ -18,5 +18,12 @@ dist/
 web/.gradle/
 web/build/
 web/.kotlin/
+
+# Gradle build outputs (intellij/ plugin). Wrapper jars stay tracked.
+intellij/.gradle/
+intellij/build/
+intellij/.kotlin/
+intellij/.intellijPlatform/
+
 **/*.iml
 .idea/
