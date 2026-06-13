@@ -169,7 +169,9 @@ sitatame → Shift+R → 本文を入力 → Ctrl+S → s
    `side`、必要に応じて `line` / `line_start` / `line_end`、staleness 判定用の
    blob ハッシュ、`body` を含む）が並びます。`sitatame` がモデル化していない
    キーは round-trip で温存されるため、エージェント側でスキーマを拡張しても
-   次回保存時に失われません。
+   次回保存時に失われません。全フィールドの定義・Side 決定ルール・state
+   遷移・forward-compat 戦略は
+   [docs/review-schema.md](docs/review-schema.md) にまとめています。
 5. 過去レビューの読み戻しは `sitatame search <pattern>` を使います。
 
 シェルでの最小受け渡しはこの形:
