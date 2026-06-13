@@ -101,6 +101,27 @@ fun Application.module(workdir: Path, baseRef: String) {
 }
 
 /**
+ * Normalises the raw `git rev-parse --abbrev-ref HEAD` output the same way the
+ * Go CLI does in `cmd/root.go`: when HEAD is detached, `git` returns the literal
+ * "HEAD", and `BranchSlug("HEAD")` would (a) collide with anyone literally
+ * named-after-HEAD work and (b) — more importantly — diverge from the CLI/TUI,
+ * which folds detached sessions into `detached/<sha[:12]>` so each detached
+ * HEAD gets its own per-SHA slug. Without this, the Web UI and CLI of the same
+ * repo in the same detached state would look at different on-disk directories
+ * for reviews.
+ *
+ * Falls back to the raw branch string when [sha] is too short to take a 12-char
+ * prefix from (e.g. HeadSHA failed): this matches Go's behaviour, which leaves
+ * branch == "" and lets BranchSlug("") absorb the case.
+ */
+fun normalizeBranch(rawBranch: String, sha: String): String {
+    if (rawBranch == "HEAD" && sha.length >= 12) {
+        return "detached/" + sha.substring(0, 12)
+    }
+    return rawBranch
+}
+
+/**
  * Owns the assembly of the `WorkspaceResponse` from git + the review YAML on
  * disk. Stateless across requests (re-runs git each call) so the response
  * always reflects the current working tree.
@@ -112,7 +133,9 @@ class WorkspaceService(
     fun snapshot(): WorkspaceResponse {
         val git = Git(workdir)
         val repoRoot = git.repoRoot()
-        val branch = git.currentBranch()
+        val rawBranch = git.currentBranch()
+        val headSha = git.headSHA()
+        val branch = normalizeBranch(rawBranch, headSha)
         val files = try {
             DiffParser.parse(git.unifiedDiff(baseRef))
         } catch (e: Exception) {
