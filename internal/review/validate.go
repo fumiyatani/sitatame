@@ -72,9 +72,6 @@ func emitLegacyAnchorWarning(a *Anchor, idx diffIndex, w io.Writer) {
 	if a.Kind != KindLine && a.Kind != KindRange {
 		return
 	}
-	if a.Line <= 0 {
-		return
-	}
 	f, ok := lookupFile(a, idx)
 	if !ok {
 		return // path resolution failed; nothing actionable.
@@ -82,7 +79,26 @@ func emitLegacyAnchorWarning(a *Anchor, idx diffIndex, w io.Writer) {
 	if a.Blob != "" && a.Blob != f.BlobHead {
 		return // blob does not match head; not the buggy shape we know.
 	}
-	if !lineMatchesDeletedBaseRow(f, a.Line) {
+
+	var matches bool
+	switch a.Kind {
+	case KindLine:
+		if a.Line <= 0 {
+			return
+		}
+		matches = lineMatchesDeletedBaseRow(f, a.Line)
+	case KindRange:
+		// A range anchor is legacy-buggy when EVERY line in [LineStart, LineEnd]
+		// appears only as a `-` row (BaseLine match, HeadLine == 0) — i.e. the
+		// whole range was anchored to the head side despite being all-deleted.
+		// Mixed ranges (some `-`, some `+`) are intentionally kept on Head by
+		// the new logic and must not warn.
+		if a.LineStart <= 0 || a.LineEnd < a.LineStart {
+			return
+		}
+		matches = rangeAllDeletedBaseRows(f, a.LineStart, a.LineEnd)
+	}
+	if !matches {
 		return
 	}
 	id := a.AnchorID
@@ -130,6 +146,24 @@ func lineMatchesDeletedBaseRow(f diffmodel.File, line int) bool {
 		}
 	}
 	return foundDeletedBaseMatch
+}
+
+// rangeAllDeletedBaseRows reports whether every integer in [start, end] matches
+// a `-` row (HeadLine == 0, BaseLine == n) somewhere in the file's hunks AND
+// none of those values appear as a HeadLine. That is the range-anchor analogue
+// of the issue #36 fingerprint: a range claimed to live on the head side but in
+// fact composed entirely of deleted base lines.
+//
+// Mixed ranges (any line in the range matches a HeadLine row) are deliberately
+// excluded — the new logic keeps mixed ranges on Head and surfaces them
+// elsewhere; double-warning would be noise.
+func rangeAllDeletedBaseRows(f diffmodel.File, start, end int) bool {
+	for n := start; n <= end; n++ {
+		if !lineMatchesDeletedBaseRow(f, n) {
+			return false
+		}
+	}
+	return true
 }
 
 type diffIndex struct {
