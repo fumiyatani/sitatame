@@ -19,11 +19,12 @@ dependencies {
     testRuntimeOnly("org.junit.platform:junit-platform-launcher")
 }
 
-// Minimum JDK 17 keeps local dev and CI aligned without auto-provisioning a
-// toolchain (sandboxed runs cannot download JDKs). CI provisions Temurin 21
-// and that satisfies the >=17 constraint at the bytecode level.
+// JDK 21 matches what CI provisions via actions/setup-java (Temurin 21). If
+// the local environment only has JDK 17, Gradle's toolchain auto-provisioning
+// will try to download Temurin 21 — set `org.gradle.java.installations.auto-detect`
+// or install JDK 21 locally to avoid that.
 kotlin {
-    jvmToolchain(17)
+    jvmToolchain(21)
 }
 
 tasks.test {
