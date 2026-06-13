@@ -172,3 +172,18 @@ review directory.
 - The Wasm dist is not yet auto-copied into the Ktor static resources; serve
   it via `:wasmJsBrowserDevelopmentRun` until step 2 wires the production
   bundling.
+
+### Large diffs
+
+`GET /api/v1/workspace` returns the full `<base>..HEAD` diff embedded in a
+single JSON payload. For very large branches (5k+ changed lines, or branches
+with binary blobs that explode the patch) the response can reach several MB
+and slow both the wire transfer and the in-browser parse / render.
+
+Phase 1 step 1 ships with this limitation accepted; step 2 will split the API
+into a sidebar-summary endpoint (file list + counters only) plus a per-file
+`GET /api/v1/file/{path}` streaming endpoint, mirroring the lazy-load pattern
+the TUI already uses. Until that lands, the recommended workaround for huge
+branches is to point the review at a smaller base (rebase, or use a more
+recent merge-base manually) — the `origin/main` hard-coding (see above) makes
+that less convenient than it will be after #67.
