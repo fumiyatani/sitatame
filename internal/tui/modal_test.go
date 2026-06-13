@@ -521,3 +521,125 @@ func TestModal_DeletedRowSelectionStatus(t *testing.T) {
 		t.Errorf("statusMsg = %q, want %q", m.statusMsg, mixedRangeMsg)
 	}
 }
+
+// deletedFileWithBlobs models a fully-deleted file: only BlobBase is set, the
+// hunk is all `-` rows. Used to exercise the file-scope Side fallback for
+// rowFileHeader / rowHunkHeader / rowBinary on a deleted file.
+func deletedFileWithBlobs() diffmodel.File {
+	f := diffmodel.File{
+		Status:   diffmodel.StatusDeleted,
+		PrePath:  "gone.go", PostPath: "gone.go",
+		BlobBase: "blob-base", BlobHead: "",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 1, BaseLines: 2, HeadStart: 0, HeadLines: 0,
+			Lines: []diffmodel.Line{
+				{Prefix: '-', Text: "a"},
+				{Prefix: '-', Text: "b"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// addedFileWithBlobs models a fully-added file: only BlobHead is set, the
+// hunk is all `+` rows. Symmetric to deletedFileWithBlobs for the head side.
+func addedFileWithBlobs() diffmodel.File {
+	f := diffmodel.File{
+		Status:   diffmodel.StatusAdded,
+		PrePath:  "new.go", PostPath: "new.go",
+		BlobBase: "", BlobHead: "blob-head",
+		Hunks: []diffmodel.Hunk{{
+			BaseStart: 0, BaseLines: 0, HeadStart: 1, HeadLines: 2,
+			Lines: []diffmodel.Line{
+				{Prefix: '+', Text: "a"},
+				{Prefix: '+', Text: "b"},
+			},
+		}},
+	}
+	diffmodel.AssignLineNumbers(&f.Hunks[0])
+	return f
+}
+
+// TestModal_DeletedFileHunkHeaderAnchorsToBase pins the PR61 round-2 regression:
+// pressing `c` on the hunk header of a deleted file must anchor the file-scope
+// comment to SideBase + BlobBase. Before the fix, the default branch left
+// Side=SideHead, which paired with the empty BlobHead and stale'd the anchor.
+func TestModal_DeletedFileHunkHeaderAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{deletedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// rows: 0 file header, 1 hunk header.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on hunk header should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file (hunk header falls back to file scope)", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for deleted-file hunk-header anchor", a.Side)
+	}
+	if a.Blob != "blob-base" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-base")
+	}
+}
+
+// TestModal_AddedFileHeaderAnchorsToHead pins the symmetric case: a fully
+// added file's rowFileHeader keeps Side=SideHead + Blob=BlobHead, mirroring
+// the pre-PR61 default and matching the file's only meaningful side.
+func TestModal_AddedFileHeaderAnchorsToHead(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{addedFileWithBlobs()}
+	m := New(files, review.Review{})
+	// cursor starts at row 0 (file header).
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on file header should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideHead {
+		t.Errorf("Side=%q, want head for added-file file-header anchor", a.Side)
+	}
+	if a.Blob != "blob-head" {
+		t.Errorf("Blob=%q, want BlobHead=%q", a.Blob, "blob-head")
+	}
+}
+
+// TestModal_DeletedFileBinaryRowAnchorsToBase pins binary deleted files: the
+// rowBinary placeholder must still pick SideBase via fileScopeSide so the
+// file-scope comment's blob lookup resolves to BlobBase.
+func TestModal_DeletedFileBinaryRowAnchorsToBase(t *testing.T) {
+	t.Parallel()
+	files := []diffmodel.File{{
+		Status:   diffmodel.StatusDeleted,
+		PrePath:  "img.bin", PostPath: "img.bin",
+		Binary:   true,
+		BlobBase: "blob-base", BlobHead: "",
+	}}
+	m := New(files, review.Review{})
+	// rows: 0 file header, 1 binary placeholder.
+	m, _ = applyKey(m, "j")
+	m, _ = applyKey(m, "c")
+	mo := m.Modal()
+	if mo == nil {
+		t.Fatalf("c on binary placeholder should open modal")
+	}
+	if mo.Kind() != review.KindFile {
+		t.Errorf("kind=%q, want file (binary forces file kind)", mo.Kind())
+	}
+	a := mo.AnchorState()
+	if a.Side != review.SideBase {
+		t.Errorf("Side=%q, want base for deleted binary file", a.Side)
+	}
+	if a.Blob != "blob-base" {
+		t.Errorf("Blob=%q, want BlobBase=%q", a.Blob, "blob-base")
+	}
+}
