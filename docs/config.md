@@ -113,6 +113,13 @@ never blocks the TUI from launching:
 - **Field with the wrong type** (e.g. `base.candidates: "main"` instead of
   a list): one stderr warning, the offending field is dropped, other
   fields in the same section are still applied.
+- **YAML scalar typed as non-string** (e.g. `base.default: true`,
+  `base.default: 123`, `base.default: null`): one stderr warning naming
+  the offending YAML type, that single value is dropped, parsing
+  continues. Quote the value (`base.default: "true"`) to force string
+  interpretation. For `base.candidates`, the rule is per-entry: bad
+  entries are skipped individually so a single typo does not discard the
+  whole chain.
 
 Warnings are prefixed with `sitatame: config:` so they are easy to grep for
 when wiring `sitatame` into agent pipelines.
