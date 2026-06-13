@@ -1,6 +1,8 @@
 tmp/
 .sitatame/
-sitatame
+# Anchor to repo root so directories named "sitatame" inside web/src don't
+# get swept up (the build binary lives only at repo root).
+/sitatame
 dist/
 .gocache/
 .gomodcache/
@@ -11,3 +13,10 @@ dist/
 !.claude/skills/sitatame-review-apply/
 .claude/skills/sitatame-review-apply/*
 !.claude/skills/sitatame-review-apply/SKILL.md
+
+# Gradle build outputs (web/ Kotlin PoC). Wrapper jars stay tracked.
+web/.gradle/
+web/build/
+web/.kotlin/
+**/*.iml
+.idea/
