@@ -129,6 +129,71 @@ func TestStore_SaveDraftAndPromote(t *testing.T) {
 	}
 }
 
+func TestSaveDraft_SetsCreatedAtIfZero(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 5, 1, 15, 23, 0, 0, time.UTC)
+	s := newTestStore(t, ts)
+	r := &Review{
+		Schema:        1,
+		Branch:        "feature/auth",
+		Base:          Ref{Ref: "origin/main", SHA: "aaa"},
+		Head:          Ref{Ref: "HEAD", SHA: "bbb"},
+		ReviewComment: "fix-auth",
+		// CreatedAt deliberately left zero.
+	}
+	if _, err := s.SaveDraft(r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.CreatedAt.Equal(ts) {
+		t.Errorf("in-memory CreatedAt = %v, want %v", r.CreatedAt, ts)
+	}
+	// Verify the persisted YAML carries the same timestamp so external tools
+	// can sort/filter without seeing Go zero time.
+	body, err := os.ReadFile(s.Paths.DraftFile(r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CreatedAt.Equal(ts) {
+		t.Errorf("persisted created_at = %v, want %v", got.CreatedAt, ts)
+	}
+}
+
+func TestSaveDraft_PreservesExistingCreatedAt(t *testing.T) {
+	t.Parallel()
+	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
+	s := newTestStore(t, now)
+	original := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
+	r := &Review{
+		Schema:        1,
+		Branch:        "feature/auth",
+		Base:          Ref{Ref: "origin/main", SHA: "aaa"},
+		Head:          Ref{Ref: "HEAD", SHA: "bbb"},
+		ReviewComment: "fix-auth",
+		CreatedAt:     original,
+	}
+	if _, err := s.SaveDraft(r); err != nil {
+		t.Fatal(err)
+	}
+	if !r.CreatedAt.Equal(original) {
+		t.Errorf("CreatedAt overwritten: got %v, want %v", r.CreatedAt, original)
+	}
+	body, err := os.ReadFile(s.Paths.DraftFile(r.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := Decode(body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got.CreatedAt.Equal(original) {
+		t.Errorf("persisted created_at = %v, want %v", got.CreatedAt, original)
+	}
+}
+
 func TestStore_DetectDraft(t *testing.T) {
 	t.Parallel()
 	ts := time.Date(2026, 5, 1, 15, 23, 0, 0, time.UTC)
