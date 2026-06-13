@@ -120,6 +120,201 @@ comments:
 	}
 }
 
+// TestRunRoot_AutoLoad_PreservesExtras pins the PR #70 codex P2 fix: the
+// auto-load → re-save cycle must round-trip unknown top-level YAML keys
+// (Extras). AI agents lean on PR #65's forward-compat mechanism to attach
+// experimental metadata that sitatame itself does not model; if RunRoot
+// re-builds the Review from a hand-picked subset of fields, those keys are
+// silently dropped on the next save. We assert both:
+//
+//  1. the captured TUI Review carries the Extras forward, and
+//  2. the final review file (post-Promote) still contains the key on disk.
+func TestRunRoot_AutoLoad_PreservesExtras(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+
+	paths := review.NewPaths(resolved, "feature")
+	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	draftBody := `---
+schema: 1
+id: 20260101T000000-extras
+branch: feature
+base:
+  ref: main
+  sha: ""
+head:
+  ref: HEAD
+  sha: ""
+experimental_metadata: agent-tag-xyz
+---
+`
+	draftPath := filepath.Join(paths.DraftsDir(), "20260101T000000-extras.md")
+	if err := os.WriteFile(draftPath, []byte(draftBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		captured = opts
+		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if _, ok := captured.Review.Extras["experimental_metadata"]; !ok {
+		t.Errorf("captured Review.Extras missing experimental_metadata key: %v", captured.Review.Extras)
+	}
+
+	// Read the promoted review file back from disk and confirm the key
+	// survived the encode roundtrip.
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if !strings.HasPrefix(pathLine, filepath.Join(projectRoot, "reviews")) {
+		t.Fatalf("review file not under reviews/: %q", pathLine)
+	}
+	b, err := os.ReadFile(pathLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "experimental_metadata: agent-tag-xyz") {
+		t.Errorf("promoted review must keep experimental_metadata; got:\n%s", string(b))
+	}
+}
+
+// TestRunRoot_AutoLoad_PreservesCreatedAt guards the documented `created_at`
+// field (PR #65 schema docs / PR #69). The pre-fix RunRoot copied only ID /
+// Comments / ReviewComment off the loaded draft, which zeroed CreatedAt on the
+// next save and silently rewrote the file with a different timestamp story
+// than the user originally captured.
+func TestRunRoot_AutoLoad_PreservesCreatedAt(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+
+	paths := review.NewPaths(resolved, "feature")
+	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const wantCreatedAt = "2026-01-02T03:04:05Z"
+	draftBody := `---
+schema: 1
+id: 20260101T000000-createdat
+created_at: ` + wantCreatedAt + `
+branch: feature
+base:
+  ref: main
+  sha: ""
+head:
+  ref: HEAD
+  sha: ""
+---
+`
+	draftPath := filepath.Join(paths.DraftsDir(), "20260101T000000-createdat.md")
+	if err := os.WriteFile(draftPath, []byte(draftBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		captured = opts
+		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if captured.Review.CreatedAt.IsZero() {
+		t.Errorf("captured Review.CreatedAt is zero; want loaded timestamp")
+	}
+	if got := captured.Review.CreatedAt.UTC().Format("2006-01-02T15:04:05Z"); got != wantCreatedAt {
+		t.Errorf("captured CreatedAt = %q, want %q", got, wantCreatedAt)
+	}
+
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if !strings.HasPrefix(pathLine, filepath.Join(projectRoot, "reviews")) {
+		t.Fatalf("review file not under reviews/: %q", pathLine)
+	}
+	b, err := os.ReadFile(pathLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), wantCreatedAt) {
+		t.Errorf("promoted review must keep created_at %q; got:\n%s", wantCreatedAt, string(b))
+	}
+}
+
+// TestRunRoot_AutoLoad_PreservesBody asserts that the Markdown body following
+// the YAML front matter survives the resume → re-save cycle. The pre-fix
+// RunRoot rebuilt a fresh Review and never copied Body, so any handwritten
+// narrative the user attached to the draft was wiped on the next launch.
+func TestRunRoot_AutoLoad_PreservesBody(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+
+	paths := review.NewPaths(resolved, "feature")
+	if err := os.MkdirAll(paths.DraftsDir(), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const wantBody = "## Reviewer notes\n\nThis body must survive resume.\n"
+	draftBody := `---
+schema: 1
+id: 20260101T000000-body
+branch: feature
+base:
+  ref: main
+  sha: ""
+head:
+  ref: HEAD
+  sha: ""
+---
+
+` + wantBody
+	draftPath := filepath.Join(paths.DraftsDir(), "20260101T000000-body.md")
+	if err := os.WriteFile(draftPath, []byte(draftBody), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		captured = opts
+		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if !strings.Contains(captured.Review.Body, "Reviewer notes") ||
+		!strings.Contains(captured.Review.Body, "This body must survive resume.") {
+		t.Errorf("captured Review.Body lost content: %q", captured.Review.Body)
+	}
+
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if !strings.HasPrefix(pathLine, filepath.Join(projectRoot, "reviews")) {
+		t.Fatalf("review file not under reviews/: %q", pathLine)
+	}
+	b, err := os.ReadFile(pathLine)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(b), "Reviewer notes") ||
+		!strings.Contains(string(b), "This body must survive resume.") {
+		t.Errorf("promoted review must keep body content; got:\n%s", string(b))
+	}
+}
+
 // TestRunRoot_NoDraftStartsEmpty is the negative companion: when no draft
 // exists for the branch the TUI must receive an empty Comments slice.
 // Without this guard a regression where the auto-load path ran on a missing
