@@ -155,7 +155,7 @@ comments:
 
 | フィールド       | 型                          | 必須 | 意味 |
 |------------------|-----------------------------|------|------|
-| `schema`         | int                         | 必須 | スキーマバージョン。現行は `1` 固定。reader は値を見て分岐する |
+| `schema`         | int                         | 必須 | スキーマバージョン。現行は `1` 固定。reader は値を読み取って保持するだけで、v1 reader が未知の値 (`2` 以降) を **積極的には reject しない** (10 節参照) |
 | `id`             | string                      | 必須 | ファイル名 (拡張子無し) と同一の id |
 | `created_at`     | RFC 3339 timestamp          | 必須 | 最初に保存した時刻 (UTC)。再保存時は維持される。writer は常に `Z` suffix (UTC) で出力する。decoder は RFC 3339 互換で `+09:00` 等の他オフセットも受理する |
 | `branch`         | string                      | 必須 | レビュー対象のブランチ名。`branch-slug` の元 |
@@ -190,6 +190,13 @@ comments:
 (レビュー全体の感想だけ残す) 用に、Comment 配列とは独立に持つフィー
 ルドです。複数行可。空文字なら省略。
 
+**sitatame TUI 本体の運用上の住み分け**: 現在の sitatame TUI は、レビュー
+全体に対する一言コメントを **常に `review_comment` (frontmatter top-level
+の文字列フィールド)** に書き込みます。`kind: review` の Comment は schema
+上は許容されていますが、sitatame 本体は生成しません。`kind: review` は
+外部ツール / AI agent が「state (open/resolved) と紐づく恒久的な全体
+コメント」を扱いたい場合のための拡張枠として用意されています。
+
 ### `comments[]`
 
 各コメント。`Anchor` と Comment 固有フィールドが同じ map にフラット
@@ -221,6 +228,10 @@ comments:
 持たず、コード位置と紐づきません。`review_comment` フィールドとの
 住み分けは「`kind: review` は state を持つ恒久コメント、`review_comment`
 は state を持たない自由記述」です。
+
+なお現状の sitatame 本体は全体コメントを `review_comment` に書き込み、
+`kind: review` の Comment は生成しません (4 節「`review_comment`」の
+注記参照)。外部 tool / AI agent が拡張用途で発行する想定の枠です。
 
 ```yaml
 - anchor_id: 3c9...
@@ -632,6 +643,30 @@ comments:
   勝手に上げない (誤って古い reader が読めなくなるのを避ける)
 - v1 → v2 の migration コマンドを別途用意し、明示実行で v2 に
   上書きする
+
+### v2 bump の事前条件 (v1 reader への追加対応)
+
+現状の v1 reader (`internal/review/codec.go` の `Decode`) は `schema`
+の値を struct に読み取って保持するだけで、未知のバージョン (`schema:
+2` 等) を **積極的には reject していません**。このまま v2 を世に出すと、
+v2 ファイルを v1 reader が「とりあえず読めてしまう」状態になり、
+未対応フィールドを欠落させたまま Encode で上書き保存して破壊する事故が
+起きえます。
+
+そのため v2 を bump する前に、以下の対応を v1 reader 側に入れる必要が
+あります:
+
+- `schema > 1` のファイルを **open (read) は許容**: 表示や read-only
+  での参照は壊さない
+- `schema > 1` のファイルへの **write を拒否**: SaveDraft / SaveReview
+  / promote 等、Encode を経由する書き戻し経路をエラーで止め、
+  「より新しい reader が必要」旨のメッセージを返す
+- 上記をテストで担保 (v1 reader が schema=2 ファイルを開いて write を
+  試みたら error、open のみは OK)
+
+この事前対応を v1 リリース系列 (現行) に入れたうえで v2 を出すと、
+古い sitatame を使い続けているユーザーが新フォーマットを誤って壊す
+ことを防げます。
 
 ### 責任分担
 
