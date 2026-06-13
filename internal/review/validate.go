@@ -1,6 +1,9 @@
 package review
 
 import (
+	"fmt"
+	"io"
+
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
 )
 
@@ -17,14 +20,58 @@ import (
 // kind == review comments have no anchor and are left unchanged. kind == file
 // comments have no line numbers but are validated the same way.
 func Validate(r *Review, files []diffmodel.File) {
+	ValidateWithWarnings(r, files, nil)
+}
+
+// ValidateWithWarnings runs Validate and additionally surfaces legacy-anchor
+// warnings (one line per offending comment) on the provided writer. Pass nil
+// to suppress warnings — equivalent to Validate.
+//
+// Legacy anchors are draft comments saved before issues #36 / #19 were fixed:
+// the buggy openCommentModal stored Side=head + Line=BaseLine when the user
+// commented on a `-` row, producing a record that no consumer can interpret
+// correctly. We detect the obvious shape (Side=head + blob matches BlobBase
+// of some file) and emit a stderr line so the user notices before re-saving.
+// We do NOT silently fix the side — the user's original intent (head vs. base)
+// is ambiguous after the fact, and a silent flip would mask a real data
+// corruption from the user's review of the draft.
+func ValidateWithWarnings(r *Review, files []diffmodel.File, warnings io.Writer) {
 	idx := buildDiffIndex(files)
 	for i := range r.Comments {
 		c := &r.Comments[i]
 		if c.Kind == KindReview {
 			continue
 		}
+		if warnings != nil {
+			emitLegacyAnchorWarning(&c.Anchor, idx, warnings)
+		}
 		validateAnchor(&c.Anchor, &c.State, idx)
 	}
+}
+
+// emitLegacyAnchorWarning detects the issues #36 / #19 legacy-anchor shape and
+// writes a single line to w. The detection is intentionally conservative — we
+// only flag the case where Side=head but the anchor's Blob is a known
+// BlobBase, because that combination is impossible for a correctly-saved
+// anchor and indicates the old openCommentModal stored BaseLine under
+// Side=head.
+func emitLegacyAnchorWarning(a *Anchor, idx diffIndex, w io.Writer) {
+	if a.Side != SideHead || a.Blob == "" {
+		return
+	}
+	if _, headHit := idx.headByBlob[a.Blob]; headHit {
+		return // blob is a known head blob — anchor is internally consistent.
+	}
+	if _, baseHit := idx.baseByBlob[a.Blob]; !baseHit {
+		return // blob unknown on both sides; nothing actionable.
+	}
+	id := a.AnchorID
+	if id == "" {
+		id = "<no-id>"
+	}
+	fmt.Fprintf(w,
+		"sitatame: detected legacy anchor (id=%s, path=%s); side may be incorrect — please re-save.\n",
+		id, a.Path)
 }
 
 type diffIndex struct {
