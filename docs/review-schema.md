@@ -333,22 +333,36 @@ context 行 (` ` 行) は head 側の既存行として扱うため、`-` 行と
 |------------|------|
 | `open`     | コメント作成直後、または `x` で reopened されたもの |
 | `resolved` | `x` で完了印を付けたもの (open ↔ resolved は双方向) |
-| `stale`    | anchor がドリフトして元の行 / blob に解決できないもの |
+| `stale`    | anchor の `path` か `blob` のどちらかが現在の diff の期待値と一致しないもの |
 
 ### 遷移ルール
 
 - `open` ⇄ `resolved`: `x` で双方向に切り替え (`internal/tui/model.go`
   の `toggleResolvedAtCursor`)
 - `*` → `stale`: `internal/review/validate.go` の `Validate` が、diff
-  上で blob も path も解決できないコメントを自動的に `stale` に格上げ
+  との突き合わせで anchor が一致しないコメントを自動的に `stale` に
+  格上げ。期待する `blob` が現在の diff の同 `side` 側に見つからない
+  場合 (anchor の `blob` がドリフトした場合) に発生し、内訳は次の
+  どちらか:
+  - 同 `side` の diff に同 `path` のファイルがあり、その blob が
+    anchor の `blob` と違う → 同じ path で中身がドリフトした (同 path
+    での再編集、または rename + edit)
+  - 同 `side` の diff に同 `path` のファイルも無い → 対象ファイル
+    自体が diff から消えた (削除 / rename で path 解決も失敗)
 - `stale` → `*`: 自動復帰しない。anchor を手動で修正するか、コメント
   自体を消す
 - `stale` のコメントは `x` トグルの対象外で、AI 経由の resolve でも
   触らないのが基本方針
 
-stale 判定の詳細は `internal/review/validate.go` の `validateAnchor`
-を参照してください。blob 一致 → path 一致 → 不一致 の優先順位で判定
-されます。
+判定順は **blob 一致 → path 一致 → 不一致** です:
+
+1. blob が一致するファイルがあれば `open` (path が変わっていれば
+   `rename_from` / `rename_to` を自動更新)
+2. blob は一致しないが同 path が同 side に存在する → `stale`
+3. blob も path も一致しない → `stale`
+
+実装の一次情報は `internal/review/validate.go` の `validateAnchor` を
+参照してください。
 
 ## 8. Extras (未知キー保持) と forward-compat 戦略
 
