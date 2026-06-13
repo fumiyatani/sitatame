@@ -1,3 +1,5 @@
+//go:build tui_e2e
+
 // Package replay drives the compiled sitatame binary inside a pseudo-terminal
 // and re-builds the rendered screen via a VT100 emulator so smoke tests can
 // assert on what a real user would see.
@@ -6,6 +8,10 @@
 // *testing.T and skip when the host kernel refuses to hand out a pty (sandbox,
 // container without /dev/ptmx, etc.). It deliberately stays in internal/ so
 // non-test packages do not depend on it.
+//
+// The whole package compiles only under the `tui_e2e` build tag so the default
+// `go test ./...` run stays fast and self-contained. Use
+// `make test-tui-e2e` (or `go test -tags tui_e2e ./...`) to exercise it.
 package replay
 
 import (
