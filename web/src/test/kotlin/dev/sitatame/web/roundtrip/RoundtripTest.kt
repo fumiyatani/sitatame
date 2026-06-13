@@ -97,6 +97,6 @@ class RoundtripTest {
          * Lower bound for the fixture count. See [fixtureCountSanity] for the
          * rationale.
          */
-        const val MIN_FIXTURE_COUNT = 12
+        const val MIN_FIXTURE_COUNT = 13
     }
 }

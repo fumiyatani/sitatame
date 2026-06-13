@@ -302,7 +302,7 @@ func TestEncode_RoundtripWebFixtures(t *testing.T) {
 
 	// Coverage floor: if a future PR removes fixtures the round-trip test
 	// becomes meaningless. Mirror Kotlin's MIN_FIXTURE_COUNT.
-	const minFixtures = 11 // 12 total minus with-yaml-comments
+	const minFixtures = 12 // 13 total minus with-yaml-comments
 	if count < minFixtures {
 		t.Errorf("fixture count regression: found %d eligible fixtures under %s, want >= %d",
 			count, dir, minFixtures)
