@@ -3,13 +3,16 @@
 [日本語版 README](README.ja.md)
 
 > **Project status (2026-06)**: the terminal UI is in maintenance mode.
-> Active development has moved to the Kotlin Web UI under [`web/`](web/)
-> and the IntelliJ Plugin (tracked in
-> [#68](https://github.com/fumiyatani/sitatame/issues/68)). TUI bug
-> fixes are still welcome; new feature work targets the Web UI or the
-> IntelliJ Plugin. See [docs/tui-status.md](docs/tui-status.md) for the
-> maintenance policy, the full TUI feature inventory, and the parity
-> table that tracks each capability across all three surfaces.
+> Active development has moved to the Kotlin Web UI (Phase 0 PoC under
+> [`web/`](web/); Phase 1 read-only viewer tracked in
+> [#66](https://github.com/fumiyatani/sitatame/issues/66)) and the
+> IntelliJ Plugin (tracked in
+> [#68](https://github.com/fumiyatani/sitatame/issues/68); no code
+> merged yet). TUI bug fixes are still welcome; new feature work
+> targets the Web UI or the IntelliJ Plugin. See
+> [docs/tui-status.md](docs/tui-status.md) for the maintenance policy,
+> the full TUI feature inventory, and the parity table that tracks
+> each capability across all three surfaces.
 
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
