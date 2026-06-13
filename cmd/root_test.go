@@ -321,6 +321,84 @@ func TestResolveDiffSpec_DefaultIsPrependedToBuiltinWhenCandidatesEmpty(t *testi
 	}
 }
 
+// TestResolveDiffSpec_EmptyCandidatesUsesOnlyDefault is the PR #60 round 3
+// regression test. An explicit `candidates: []` together with a configured
+// `default` must restrict the auto-detect chain to *only* the default — the
+// built-in fallback (origin/main / main / …) must not silently sneak in.
+//
+// Pre-fix, mergeBaseCandidates collapsed "key omitted" and "key set to []"
+// onto the same len(slice) == 0 branch, so an explicit empty list would
+// silently re-enable the built-in chain and `main` would resolve. The fix
+// adds CandidatesPresent to BaseConfig and routes the empty-list case
+// through the replacement branch. We pin that behavior by configuring a
+// default that does not resolve in the test repo (`origin/release`) while
+// leaving `main` reachable — pre-fix this would have landed on `main` and
+// returned 0; post-fix the auto-detect chain is `[origin/release]` only and
+// RunRoot exits 1.
+func TestResolveDiffSpec_EmptyCandidatesUsesOnlyDefault(t *testing.T) {
+	dir, _ := newRepo(t)
+	// `main` is still present from newRepo. Pre-fix this is the ref the
+	// built-in fallback would have silently selected.
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+  candidates: []
+`)
+	chdir(t, dir)
+	var stdout, stderr bytes.Buffer
+	tuiCalled := false
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     &stdout,
+		Stderr:     &stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			tuiCalled = true
+			return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 1 {
+		t.Errorf("exit = %d, want 1 (auto-detect must fail when default is unreachable and candidates list is explicitly empty)", code)
+	}
+	if tuiCalled {
+		t.Errorf("RunTUI must not be called when base resolution fails")
+	}
+	// Guard the symptom of the pre-fix bug: `main` silently selected.
+	if strings.Contains(stderr.String(), "main") && !strings.Contains(stderr.String(), "base not found") {
+		t.Errorf("stderr mentions main without a 'base not found' diagnostic; built-in chain may have leaked in: %q", stderr.String())
+	}
+}
+
+// TestResolveDiffSpec_NoCandidatesKeyUsesBuiltin is the symmetric guard:
+// when `candidates:` is omitted entirely (only `default:` is set), the
+// built-in BaseCandidates chain must still follow the default. This is the
+// "default + built-in fallback" workflow documented in docs/config.md and
+// the case CandidatesPresent must keep working — collapsing all
+// len(slice) == 0 cases onto the replacement branch would regress it the
+// other way.
+//
+// We use a default that does not resolve (`origin/release` — no such
+// remote in the test repo) so the test isolates the "tail still runs"
+// behavior: if the built-in chain were dropped, RunRoot would exit 1; the
+// fact that it picks `main` proves the chain is intact.
+func TestResolveDiffSpec_NoCandidatesKeyUsesBuiltin(t *testing.T) {
+	dir, mainSHA := newRepo(t)
+	writeRepoConfig(t, dir, `base:
+  default: "origin/release"
+`)
+	chdir(t, dir)
+	var captured TUIOptions
+	env, _, _ := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 (built-in fallback should still run when candidates key is omitted)", code)
+	}
+	if captured.Base.Ref != "main" {
+		t.Errorf("base.Ref = %q, want main (built-in BaseCandidates should follow default)", captured.Base.Ref)
+	}
+	if captured.Base.SHA != mainSHA {
+		t.Errorf("base.SHA = %q, want %q", captured.Base.SHA, mainSHA)
+	}
+}
+
 // TestRunRoot_MalformedConfig_DegradesToAutoDetect guards the graceful
 // degradation path: a config file that fails to parse must not block the TUI
 // — the built-in BaseCandidates chain still resolves and the user sees a

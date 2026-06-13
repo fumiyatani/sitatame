@@ -367,6 +367,67 @@ func TestLoadFromRepo_BaseDefaultQuotedString(t *testing.T) {
 	}
 }
 
+// TestLoad_BaseCandidatesEmptyListSetsPresent pins the parser contract that
+// drives the silent-fallback fix: an explicit `candidates: []` must be
+// distinguishable from an omitted `candidates:` key. Both produce
+// len(Candidates) == 0, so callers (cmd.mergeBaseCandidates) rely solely on
+// CandidatesPresent to decide whether the built-in fallback chain stays in
+// play. Conflating the two reintroduces the PR #60 round 3 bug.
+func TestLoad_BaseCandidatesEmptyListSetsPresent(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `base:
+  default: "origin/release"
+  candidates: []
+`)
+	var warn bytes.Buffer
+	cfg, err := LoadFromRepo(dir, &warn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !cfg.Base.CandidatesPresent {
+		t.Errorf("CandidatesPresent = false, want true (key was explicitly set)")
+	}
+	if len(cfg.Base.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want empty", cfg.Base.Candidates)
+	}
+	if cfg.Base.Default != "origin/release" {
+		t.Errorf("Default = %q, want origin/release", cfg.Base.Default)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("unexpected warnings: %s", warn.String())
+	}
+}
+
+// TestLoad_BaseCandidatesOmittedKeepsPresentFalse is the other half of the
+// pair: when the YAML file does not mention `candidates:` at all,
+// CandidatesPresent must stay false so the built-in fallback chain can run.
+// Without this guard a default-only config would lose its built-in tail and
+// the long-standing "I just want to default to origin/release, but please
+// still find main" workflow would regress.
+func TestLoad_BaseCandidatesOmittedKeepsPresentFalse(t *testing.T) {
+	dir := t.TempDir()
+	writeConfig(t, dir, `base:
+  default: "origin/release"
+`)
+	var warn bytes.Buffer
+	cfg, err := LoadFromRepo(dir, &warn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.Base.CandidatesPresent {
+		t.Errorf("CandidatesPresent = true, want false (key was omitted)")
+	}
+	if len(cfg.Base.Candidates) != 0 {
+		t.Errorf("Candidates = %v, want empty", cfg.Base.Candidates)
+	}
+	if cfg.Base.Default != "origin/release" {
+		t.Errorf("Default = %q, want origin/release", cfg.Base.Default)
+	}
+	if warn.Len() != 0 {
+		t.Errorf("unexpected warnings: %s", warn.String())
+	}
+}
+
 func TestLoadFromRepo_NilWarnWriter_DoesNotPanic(t *testing.T) {
 	dir := t.TempDir()
 	writeConfig(t, dir, `base:
