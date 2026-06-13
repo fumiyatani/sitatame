@@ -14,6 +14,7 @@ import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
 import io.ktor.server.routing.routing
+import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import java.nio.file.Path
 
@@ -44,7 +45,7 @@ fun main() {
         module(workdir, DEFAULT_BASE_REF)
     }.start(wait = false)
 
-    val resolved = server.engine.resolvedConnectors()
+    val resolved = runBlocking { server.engine.resolvedConnectors() }
     val port = resolved.firstOrNull()?.port
         ?: error("Ktor failed to bind any connector")
     // stdout, single line — the launcher / IDE parses this.

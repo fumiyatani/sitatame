@@ -3,13 +3,10 @@
 [日本語版 README](README.ja.md)
 
 > **Project status (2026-06)**: the terminal UI is in maintenance mode.
-> Active development has moved to the Kotlin Web UI (Phase 0 PoC under
-> [`web/`](web/); Phase 1 read-only viewer tracked in
-> [#66](https://github.com/fumiyatani/sitatame/issues/66)) and the
-> IntelliJ Plugin (tracked in
-> [#68](https://github.com/fumiyatani/sitatame/issues/68); no code
-> merged yet). TUI bug fixes are still welcome; new feature work
-> targets the Web UI or the IntelliJ Plugin. See
+> Active development has moved to the Kotlin Web UI under [`web/`](web/)
+> and the IntelliJ Plugin under [`intellij/`](intellij/). TUI bug fixes
+> are still welcome; new feature work targets the Web UI or the IntelliJ
+> Plugin. See
 > [docs/tui-status.md](docs/tui-status.md) for the maintenance policy,
 > the full TUI feature inventory, and the parity table that tracks
 > each capability across all three surfaces.
@@ -46,6 +43,13 @@ result as a Markdown + YAML front-matter file under
   - `BenchmarkUpdate_LargeDiff` for TUI hot path
   - `make build` / `make build-all` (darwin & linux × amd64 & arm64) /
     `make install` / `make bench` / `make update-golden` / `make vet`
+- **Web UI**: Kotlin Multiplatform 2.1.10, Compose Multiplatform 1.7.3
+  for the Wasm client, Ktor 3.0.3 for the JVM backend, Gradle wrapper
+  8.11.1, JDK 21 toolchain
+- **IntelliJ Plugin**: Kotlin/JVM 2.1.10, JetBrains IntelliJ Platform
+  Gradle Plugin 2.1.0, target IntelliJ IDEA Community 2024.3
+  (`sinceBuild=243`, `untilBuild=251.*`), bundled `Git4Idea`, JDK 21
+  toolchain
 
 ## Build / install
 
@@ -100,6 +104,132 @@ workflow ships):
 ```sh
 make build-all  # writes dist/sitatame-{darwin,linux}-{amd64,arm64}
 ```
+
+## Web UI
+
+The Web UI in [`web/`](web/) is a Kotlin Multiplatform implementation of a
+read-only review viewer. The JVM target runs a Ktor backend that reads the
+current repository, runs `git diff origin/main..HEAD`, loads the latest review
+Markdown from the shared sitatame storage directory, and exposes the result as
+JSON. The Wasm target renders that data with Compose for Web.
+
+Requirements:
+
+- JDK 21
+- `git` on `$PATH`
+- Network access on the first Gradle run if the JDK toolchain or Gradle
+  dependencies are not already cached
+
+Run the backend from the repository root:
+
+```sh
+cd web
+./gradlew :run
+```
+
+The server binds to a random local port and prints the URL on stdout:
+
+```text
+SITATAME_WEB_URL=http://127.0.0.1:<port>
+```
+
+Run the Wasm frontend dev server in another shell:
+
+```sh
+cd web
+./gradlew :wasmJsBrowserDevelopmentRun
+```
+
+For build and smoke-test coverage:
+
+```sh
+cd web
+./gradlew :jvmTest
+./gradlew :wasmJsBrowserDistribution
+```
+
+Regenerate the shared YAML fixtures from the Go implementation before changing
+the Kotlin codec or storage compatibility tests:
+
+```sh
+make web-fixtures
+```
+
+Current limitations:
+
+- The diff base is hard-coded to `origin/main`.
+- The viewer is read-only; resolve/reopen controls are UI scaffolding only.
+- The production Wasm distribution is not yet wired into the Ktor static
+  resources automatically, so use `:wasmJsBrowserDevelopmentRun` for local UI
+  development.
+
+See [`web/README.md`](web/README.md) for the full module layout, API routes,
+environment variables, and known limitations.
+
+## IntelliJ Plugin
+
+The IntelliJ plugin in [`intellij/`](intellij/) is an experimental IDE surface
+for writing and consuming sitatame reviews. It can add line/range comments from
+the editor, toggle comment state, list comments in the `SitatameReview` tool
+window, promote a draft to `reviews/`, copy an AI-ready prompt, and configure a
+plugin-level `SITATAME_HOME` override.
+
+Requirements:
+
+- JDK 21
+- IntelliJ IDEA Community / Ultimate 2024.3 or newer
+- Android Studio 2024.3.x is intended to work, but is not verified in the
+  current CI matrix
+- Network access on the first Gradle run if the IntelliJ SDK or dependencies
+  are not already cached
+
+Build the plugin zip:
+
+```sh
+cd intellij
+./gradlew :buildPlugin
+```
+
+The zip is written to:
+
+```text
+intellij/build/distributions/sitatame-intellij-0.1.0.zip
+```
+
+Install it in the IDE with **Settings -> Plugins -> gear icon -> Install
+Plugin from Disk...**, then select the generated zip and restart.
+
+Launch a sandbox IDE with the plugin already loaded:
+
+```sh
+cd intellij
+./gradlew :runIde
+```
+
+Run plugin tests:
+
+```sh
+cd intellij
+./gradlew :test
+```
+
+Main entry points after installation:
+
+- Editor context menu: `sitatame: Add Comment`
+- Shortcut: `Cmd+Shift+C` on macOS, `Ctrl+Shift+C` elsewhere
+- Editor context menu: `sitatame: Toggle Resolved`
+- Shortcut: `Cmd+Shift+R` on macOS, `Ctrl+Shift+R` elsewhere
+- Tool window: `SitatameReview`
+- Settings: **Settings -> Tools -> sitatame review**
+
+The plugin uses the same storage shape as the CLI and Web UI:
+
+```text
+$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+```
+
+See [`intellij/README.md`](intellij/README.md) for the detailed feature list,
+storage notes, and plugin-specific limitations.
 
 ## Usage
 

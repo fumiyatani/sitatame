@@ -22,8 +22,8 @@ data class SitatamePaths(
     val slug: String,
 ) {
     fun root(): String = joinPath(outputRoot, projectSlug)
-    fun reviewsRoot(): String = joinPath(root(), REVIEWS_DIR)
-    fun draftsRoot(): String = joinPath(root(), DRAFTS_DIR)
+    fun reviewsRoot(): String = joinPath(root(), PathsFactory.REVIEWS_DIR)
+    fun draftsRoot(): String = joinPath(root(), PathsFactory.DRAFTS_DIR)
     fun reviewsDir(): String = joinPath(reviewsRoot(), slug)
     fun draftsDir(): String = joinPath(draftsRoot(), slug)
     fun reviewFile(id: String): String = joinPath(reviewsDir(), "$id.md")
@@ -34,7 +34,7 @@ data class SitatamePaths(
      * the user if old data still exists; never read or written.
      */
     fun legacyRoot(): String =
-        if (repoRoot.isEmpty()) "" else joinPath(repoRoot, ROOT_DIR)
+        if (repoRoot.isEmpty()) "" else joinPath(repoRoot, PathsFactory.ROOT_DIR)
 }
 
 object PathsFactory {

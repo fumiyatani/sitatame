@@ -1,11 +1,8 @@
 # sitatame
 
 > **プロジェクトステータス (2026-06)**: TUI はメンテナンスモードに入りました。
-> 新規機能の開発は Kotlin Web UI（[`web/`](web/) 配下に Phase 0 PoC のみ
-> マージ済み。Phase 1 の read-only viewer は
-> [#66](https://github.com/fumiyatani/sitatame/issues/66) で進行中）と
-> IntelliJ Plugin（[#68](https://github.com/fumiyatani/sitatame/issues/68)
-> で進行中。`main` にはまだコード未マージ）の 2 ラインに移行しています。
+> 新規機能の開発は [`web/`](web/) 配下の Kotlin Web UI と
+> [`intellij/`](intellij/) 配下の IntelliJ Plugin に移行しています。
 > TUI のバグ修正は引き続き歓迎しますが、新機能は Web UI または
 > IntelliJ Plugin 側で実装します。詳細・全 TUI キーバインドの棚卸し・
 > 3 サーフェスでの機能対比表は
@@ -44,6 +41,13 @@ Markdown 形式で書き出され、後段のエージェントがそのまま�
   - Makefile target: `make build` / `make build-all`（darwin & linux × amd64
     & arm64）/ `make install` / `make bench` / `make update-golden` /
     `make vet`
+- **Web UI**: Kotlin Multiplatform 2.1.10、Wasm client は Compose
+  Multiplatform 1.7.3、JVM backend は Ktor 3.0.3、Gradle wrapper
+  8.11.1、JDK 21 toolchain
+- **IntelliJ Plugin**: Kotlin/JVM 2.1.10、JetBrains IntelliJ Platform
+  Gradle Plugin 2.1.0、target は IntelliJ IDEA Community 2024.3
+  （`sinceBuild=243`, `untilBuild=251.*`）、bundled `Git4Idea`、JDK 21
+  toolchain
 
 ## ビルド / インストール
 
@@ -96,6 +100,129 @@ make install    # go install ./... — $GOBIN に配置
 ```sh
 make build-all  # dist/sitatame-{darwin,linux}-{amd64,arm64} を生成
 ```
+
+## Web UI
+
+[`web/`](web/) の Web UI は、レビューを read-only で確認するための Kotlin
+Multiplatform 実装です。JVM target の Ktor backend が現在のリポジトリを読み、
+`git diff origin/main..HEAD` と共有 sitatame storage 内の最新 review Markdown
+を JSON として返します。Wasm target はそのデータを Compose for Web で表示します。
+
+必要なもの:
+
+- JDK 21
+- `$PATH` 上の `git`
+- JDK toolchain や Gradle dependencies がキャッシュされていない初回実行時は
+  network access
+
+リポジトリルートから backend を起動:
+
+```sh
+cd web
+./gradlew :run
+```
+
+server は localhost の空き port に bind し、stdout に URL を出力します:
+
+```text
+SITATAME_WEB_URL=http://127.0.0.1:<port>
+```
+
+Wasm frontend の dev server は別 shell で起動します:
+
+```sh
+cd web
+./gradlew :wasmJsBrowserDevelopmentRun
+```
+
+build / smoke test:
+
+```sh
+cd web
+./gradlew :jvmTest
+./gradlew :wasmJsBrowserDistribution
+```
+
+Kotlin codec や storage compatibility test を変更する前に、Go 実装から共有
+YAML fixture を再生成できます:
+
+```sh
+make web-fixtures
+```
+
+現時点の制約:
+
+- diff base は `origin/main` に hard-code されています。
+- viewer は read-only です。resolve / reopen controls は UI scaffold のみです。
+- production Wasm distribution は Ktor static resources にまだ自動連携されて
+  いないため、local UI development では `:wasmJsBrowserDevelopmentRun` を使います。
+
+module layout、API routes、environment variables、既知の制約は
+[`web/README.md`](web/README.md) にまとめています。
+
+## IntelliJ Plugin
+
+[`intellij/`](intellij/) の IntelliJ plugin は、sitatame review を IDE 内で
+書く / 読むための experimental surface です。editor から line / range comment
+を追加し、comment state を toggle し、`SitatameReview` tool window で一覧し、
+draft を `reviews/` に promote し、AI-ready prompt を clipboard にコピーし、
+plugin level の `SITATAME_HOME` override を設定できます。
+
+必要なもの:
+
+- JDK 21
+- IntelliJ IDEA Community / Ultimate 2024.3 以降
+- Android Studio 2024.3.x は動作想定ですが、現 CI matrix では未検証です。
+- IntelliJ SDK や dependencies がキャッシュされていない初回実行時は network
+  access
+
+plugin zip を build:
+
+```sh
+cd intellij
+./gradlew :buildPlugin
+```
+
+zip は次に出力されます:
+
+```text
+intellij/build/distributions/sitatame-intellij-0.1.0.zip
+```
+
+IDE では **Settings -> Plugins -> gear icon -> Install Plugin from Disk...**
+から生成された zip を選択し、再起動してください。
+
+plugin を読み込んだ sandbox IDE を起動:
+
+```sh
+cd intellij
+./gradlew :runIde
+```
+
+plugin test:
+
+```sh
+cd intellij
+./gradlew :test
+```
+
+install 後の主な entry point:
+
+- editor context menu: `sitatame: Add Comment`
+- shortcut: macOS は `Cmd+Shift+C`、それ以外は `Ctrl+Shift+C`
+- editor context menu: `sitatame: Toggle Resolved`
+- shortcut: macOS は `Cmd+Shift+R`、それ以外は `Ctrl+Shift+R`
+- tool window: `SitatameReview`
+- settings: **Settings -> Tools -> sitatame review**
+
+plugin は CLI / Web UI と同じ storage shape を使います:
+
+```text
+$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+```
+
+詳細な feature list、storage notes、plugin 固有の制約は
+[`intellij/README.md`](intellij/README.md) を参照してください。
 
 ## 使い方
 
