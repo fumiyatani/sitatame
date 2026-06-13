@@ -24,6 +24,7 @@ const (
 	KeySave        = "s"
 	KeyToggleLayout = "tab"
 	KeyResolveToggle = "x"
+	KeyFilePicker    = "f"
 )
 
 // mouseWheelStep is the number of rows the viewport scrolls per wheel tick.
