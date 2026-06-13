@@ -11,6 +11,10 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  # Required check: vet + the default (untagged) test suite. This is what
+  # branch protection should gate merges on. The TUI is in maintenance
+  # mode (see docs/tui-status.md) so the teatest scenario + pty smoke
+  # suite has been split out into the optional `tui-e2e` job below.
   test:
     name: Test
     runs-on: ubuntu-slim
@@ -30,6 +34,32 @@ jobs:
 
       - name: Test
         run: go test ./...
+        env:
+          GOFLAGS: -mod=readonly
+
+  # Optional check: the `tui_e2e` build tag turns on the teatest scenario
+  # suite under internal/tui/ and the pty smoke under internal/replay/.
+  # These exercise a bubbletea program through a virtual terminal, which
+  # is the most failure-prone surface (timing, pty allocation, vt10x
+  # quirks). Kept non-required so a flaky scenario does not block merges
+  # while the project's active development sits in the Kotlin Web UI.
+  tui-e2e:
+    name: TUI E2E (optional)
+    runs-on: ubuntu-slim
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Vet (tui_e2e)
+        run: go vet -tags tui_e2e ./...
+
+      - name: Test (tui_e2e)
+        run: go test -tags tui_e2e ./...
         env:
           GOFLAGS: -mod=readonly
 
