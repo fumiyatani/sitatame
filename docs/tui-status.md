@@ -2,9 +2,12 @@
 
 This document records the maintenance policy for the terminal UI shipped
 under `internal/tui/`. Active feature development for sitatame has moved
-to the Kotlin Web UI (see [`web/`](../web/)) and the IntelliJ Plugin (see
-[`intellij/`](../intellij/) once it lands; tracked in
-[#68](https://github.com/fumiyatani/sitatame/issues/68)). The TUI is
+to the Kotlin Web UI (scoped under [`web/`](../web/); Phase 0 PoC
+merged, Phase 1 read-only viewer tracked in
+[#66](https://github.com/fumiyatani/sitatame/issues/66)) and the
+IntelliJ Plugin (tracked in
+[#68](https://github.com/fumiyatani/sitatame/issues/68); no code merged
+yet — the `intellij/` directory will land with that issue). The TUI is
 not deprecated and is still the only review surface that ships in the
 default `sitatame` binary, but new features land in the Web UI or the
 IntelliJ Plugin first.
@@ -106,43 +109,58 @@ The table below tracks each TUI capability against the two parallel
 frontends so a future decision to freeze one of them has a concrete
 inventory to work from. Status legend:
 
-- **Shipped** — already merged into `main`
-- **Phase 1** — scoped in the current Phase 1 issue, not yet merged
+- **Shipped** — already merged into `main` on that surface
+- **Phase 1 (in flight)** — scoped in the current Phase 1 issue, not
+  yet merged
 - **Phase 2** — explicitly out of Phase 1 scope per the tracking issue
+- **Planned** — beyond the current tracking issues; no merged code and
+  no Phase 1 commitment yet
+- **Native (platform)** — provided by the browser / IDE itself; no
+  sitatame code required on that surface
 - **N/A** — not planned for that surface (different interaction model)
+
+Web UI ([#66](https://github.com/fumiyatani/sitatame/issues/66)) status
+today: only the Phase 0 YAML round-trip PoC under `web/` is merged;
+the Phase 1 read-only viewer is tracked in
+[#72](https://github.com/fumiyatani/sitatame/pull/72) and is still
+in flight. IntelliJ Plugin ([#68](https://github.com/fumiyatani/sitatame/issues/68))
+status today: no code merged, the `intellij/` directory does not yet
+exist on `main`.
 
 | Feature                                  | TUI           | Web UI (Compose Multiplatform Web, [#66](https://github.com/fumiyatani/sitatame/issues/66)) | IntelliJ Plugin ([#68](https://github.com/fumiyatani/sitatame/issues/68)) |
 | ---------------------------------------- | ------------- | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------- |
 | Cursor navigation (`j`/`k`/↑/↓)          | Shipped       | Phase 2 (`LazyColumn` scroll only in Phase 1)                                               | N/A (IDE caret)                                                           |
 | Next / previous file (`n`/`p`/←/→)       | Shipped       | Phase 2                                                                                     | N/A (IDE project view)                                                    |
 | File picker (`f`)                        | Shipped       | Phase 2                                                                                     | N/A (IDE Goto File)                                                       |
-| Mouse wheel scroll                       | Shipped       | Shipped (browser native)                                                                    | Shipped (IDE native)                                                      |
-| Mouse click to position cursor           | Shipped       | Shipped (browser native)                                                                    | Shipped (IDE native)                                                      |
-| Range selection (`r` → `j`/`k`)          | Shipped       | Phase 2                                                                                     | Shipped (editor selection drives Add Comment)                             |
-| Line comment (`c` on a line)             | Shipped       | Phase 2 (Phase 1 is read-only viewer)                                                       | Phase 1 (`Cmd+Shift+C` on caret)                                          |
-| Range comment (`c` after `r`)            | Shipped       | Phase 2                                                                                     | Phase 1 (`Cmd+Shift+C` on selection)                                      |
+| Mouse wheel scroll                       | Shipped       | Native (browser)                                                                            | Native (IDE)                                                              |
+| Mouse click to position cursor           | Shipped       | Native (browser)                                                                            | Native (IDE)                                                              |
+| Range selection (`r` → `j`/`k`)          | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; editor selection drives Add Comment)                  |
+| Line comment (`c` on a line)             | Shipped       | Phase 2 (Phase 1 is read-only viewer)                                                       | Phase 1 (in flight; `Cmd+Shift+C` on caret)                               |
+| Range comment (`c` after `r`)            | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; `Cmd+Shift+C` on selection)                           |
 | File-scope comment                       | Shipped       | Phase 2                                                                                     | Phase 2                                                                   |
 | Review-level comment (`Shift+R`)         | Shipped       | Phase 2                                                                                     | Phase 2                                                                   |
-| Modal confirm (`Ctrl+S`)                 | Shipped       | Phase 2                                                                                     | Shipped (`DialogWrapper` OK button)                                       |
-| Resolved toggle (`x`)                    | Shipped       | Phase 2                                                                                     | Phase 1 (`Cmd+Shift+R` / Tool Window action)                              |
-| Stale comments read-only                 | Shipped       | Phase 1 (rendered with state badge)                                                         | Phase 1 (state colour in Tool Window)                                     |
-| Comment gutter markers (`*` / `~`)       | Shipped       | Phase 2 (heatmap in Phase 1)                                                                | Phase 2 (gutter bar)                                                      |
+| Modal confirm (`Ctrl+S`)                 | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; `DialogWrapper` OK button)                            |
+| Resolved toggle (`x`)                    | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; `Cmd+Shift+R` / Tool Window action)                   |
+| Stale comments read-only                 | Shipped       | Phase 1 (in flight; rendered with state badge)                                              | Phase 1 (in flight; state colour in Tool Window)                          |
+| Comment gutter markers (`*` / `~`)       | Shipped       | Phase 2 (heatmap planned for Phase 1)                                                       | Phase 2 (gutter bar)                                                      |
 | Split / side-by-side layout (`Tab`)      | Shipped       | Phase 2                                                                                     | N/A (IDE diff viewer covers this)                                         |
-| Help overlay (`?`)                       | Shipped       | Phase 2 (keyboard shortcuts panel)                                                          | Shipped (IDE Keymap)                                                      |
-| Save & promote (`s`)                     | Shipped       | Phase 2 (Phase 1 is read-only)                                                              | Phase 1 (`Promote Review` action)                                         |
-| Save as draft (`q`)                      | Shipped       | Phase 2                                                                                     | Phase 1 (automatic on `Add Comment`)                                      |
-| `SITATAME_REVIEW=` stdout handoff        | Shipped       | Phase 2                                                                                     | Phase 1 (IDE Notification)                                                |
-| Read latest review                       | Shipped       | Phase 1 (`GET /api/v1/reviews/latest`)                                                      | Phase 1 (Tool Window list)                                                |
+| Help overlay (`?`)                       | Shipped       | Phase 2 (keyboard shortcuts panel)                                                          | Native (IDE Keymap)                                                       |
+| Save & promote (`s`)                     | Shipped       | Phase 2 (Phase 1 is read-only)                                                              | Phase 1 (in flight; `Promote Review` action)                              |
+| Save as draft (`q`)                      | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; automatic on `Add Comment`)                           |
+| `SITATAME_REVIEW=` stdout handoff        | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; IDE Notification)                                     |
+| Read latest review                       | Shipped       | Phase 1 (in flight; `GET /api/v1/reviews/latest`)                                           | Phase 1 (in flight; Tool Window list)                                     |
 | Auto-detect base (`origin/HEAD`, …)      | Shipped       | Phase 2                                                                                     | Phase 2 (Git4Idea)                                                        |
 | `--staged` / `--working` flags           | Shipped       | Phase 2                                                                                     | Phase 2                                                                   |
 | `sitatame search <pattern>`              | Shipped (CLI) | Phase 2                                                                                     | Phase 2                                                                   |
-| AI prompt export                         | N/A           | Phase 2                                                                                     | Phase 1 (`Copy AI Prompt` action)                                         |
-| YAML round-trip with unknown-key preserve| Shipped       | Shipped (snakeyaml-engine 2.9 PoC, [#62](https://github.com/fumiyatani/sitatame/issues/62)) | Phase 1 (shares the Web UI `Codec.kt`)                                    |
+| AI prompt export                         | N/A           | Phase 2                                                                                     | Phase 1 (in flight; `Copy AI Prompt` action)                              |
+| YAML round-trip with unknown-key preserve| Shipped       | Shipped (snakeyaml-engine 2.9 PoC, [#62](https://github.com/fumiyatani/sitatame/issues/62)) | Phase 1 (in flight; shares the Web UI `Codec.kt`)                         |
 
-Rows marked **Phase 2** are not promises — they are the explicit
-non-goals of the current Phase 1 issues. If a Phase 2 feature later
-ships on Web UI or the IntelliJ Plugin, update the corresponding row
-and the freeze-decision section below before merging.
+Rows marked **Phase 1 (in flight)** depend on the open issues / PRs
+linked above and are not yet merged on `main`. Rows marked **Phase 2**
+are explicit non-goals of the current Phase 1 issues. If a Phase 1 row
+merges or a Phase 2 row ships on Web UI / IntelliJ Plugin, update the
+corresponding row and the freeze-decision section below before
+merging.
 
 ## What "maintenance mode" means
 
