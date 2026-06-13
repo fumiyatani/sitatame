@@ -314,6 +314,37 @@ class ReviewLoaderIntegrationTest {
         }
     }
 
+    /**
+     * Parity guard: `findLatestPath` must choose by filename lex order, not
+     * mtime. Filenames are `<yyyyMMddTHHmmss>-<slug>.md` so lex order tracks
+     * creation time and survives `git checkout` / `git restore`, which would
+     * otherwise drift mtime and silently divert the Web UI to a different
+     * "latest" review than the Go TUI.
+     */
+    @Test
+    fun `findLatestPath picks by filename lex order ignoring mtime`() {
+        val dir = Files.createTempDirectory("sitatame-web-loader-sort")
+        try {
+            val older = dir.resolve("20260101T000000-alpha.md")
+            val newer = dir.resolve("20260102T000000-beta.md")
+            // Write older first, then newer. Then invert mtimes: make `older`
+            // look newer than `newer` on the filesystem.
+            older.writeText("---\nid: alpha\n---\n\n")
+            newer.writeText("---\nid: beta\n---\n\n")
+
+            val now = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis())
+            val past = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 10 * 60 * 1000)
+            Files.setLastModifiedTime(older, now)
+            Files.setLastModifiedTime(newer, past)
+
+            val picked = ReviewLoader.findLatestPath(dir)
+            assertNotNull(picked)
+            assertEquals("20260102T000000-beta.md", picked!!.fileName.toString())
+        } finally {
+            runCatching { rmrf(dir) }
+        }
+    }
+
     private fun rmrf(p: Path) {
         if (!Files.exists(p)) return
         Files.walk(p).use { walk ->

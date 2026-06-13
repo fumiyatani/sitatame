@@ -24,13 +24,23 @@ import kotlin.io.path.name
  */
 object ReviewLoader {
 
-    /** Returns the newest .md path under [reviewsDir], or null. */
+    /**
+     * Returns the newest .md path under [reviewsDir], or null.
+     *
+     * "Newest" is defined as the lexicographically greatest filename, which
+     * matches the Go TUI side (see `internal/review/loader.go`). Filenames are
+     * `<yyyyMMddTHHmmss>-<slug>.md`, so lex order coincides with creation
+     * order while staying stable under `git checkout` / `git restore` and
+     * other operations that touch mtime. Using `lastModifiedTime` here was a
+     * parity bug — two clients on the same repo could disagree on "latest"
+     * after a checkout drifted mtimes.
+     */
     fun findLatestPath(reviewsDir: Path): Path? {
         if (!Files.isDirectory(reviewsDir)) return null
         return Files.list(reviewsDir).use { stream ->
             stream
                 .filter { it.isRegularFile() && it.name.endsWith(".md") }
-                .max(compareBy { Files.getLastModifiedTime(it).toMillis() })
+                .max(compareBy { it.fileName.toString() })
                 .orElse(null)
         }
     }
