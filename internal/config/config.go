@@ -169,36 +169,97 @@ func decodeBase(node *yaml.Node, sourcePath string, warnTo io.Writer) BaseConfig
 		valNode := node.Content[i+1]
 		switch keyNode.Value {
 		case "default":
-			if valNode.Kind != yaml.ScalarNode {
-				warn(warnTo, "%s: base.default must be a string (ignored)", sourcePath)
+			s, ok := stringScalar(valNode)
+			if !ok {
+				warn(warnTo, "%s: base.default must be a string, got %s (ignored)", sourcePath, describeYAMLType(valNode))
 				continue
 			}
-			b.Default = valNode.Value
+			b.Default = s
 		case "candidates":
 			if valNode.Kind != yaml.SequenceNode {
-				warn(warnTo, "%s: base.candidates must be a list (ignored)", sourcePath)
+				warn(warnTo, "%s: base.candidates must be a list, got %s (ignored)", sourcePath, describeYAMLType(valNode))
 				continue
 			}
 			cands := make([]string, 0, len(valNode.Content))
-			ok := true
 			for _, item := range valNode.Content {
-				if item.Kind != yaml.ScalarNode {
-					warn(warnTo, "%s: base.candidates entries must be strings (entire list ignored)", sourcePath)
-					ok = false
-					break
+				s, ok := stringScalar(item)
+				if !ok {
+					warn(warnTo, "%s: base.candidates entry must be a string, got %s (entry ignored)", sourcePath, describeYAMLType(item))
+					continue
 				}
-				if item.Value != "" {
-					cands = append(cands, item.Value)
+				if s != "" {
+					cands = append(cands, s)
 				}
 			}
-			if ok {
-				b.Candidates = cands
-			}
+			b.Candidates = cands
 		default:
 			warn(warnTo, "%s: unknown key base.%s (ignored)", sourcePath, keyNode.Value)
 		}
 	}
 	return b
+}
+
+// stringScalar returns (value, true) when n is a YAML scalar that the spec
+// resolves to a string — either an explicit `!!str` tag, a quoted scalar, or
+// a plain scalar whose unquoted form is not a YAML boolean / integer / float
+// / null / timestamp literal.
+//
+// yaml.v3's implicit type resolution kicks in for plain (unquoted) scalars:
+// `default: true` produces Tag=`!!bool`, `default: 123` produces `!!int`,
+// `default: null` produces `!!null`. Reading `Node.Value` directly would
+// silently coerce those into the strings "true" / "123" / "" and then send
+// them on to gitx auto-detect, where they fail to resolve and trigger a
+// silent fallback — exactly the kind of "config looked accepted but did not
+// take effect" failure docs/config.md promises to flag with a warning.
+//
+// Quoted scalars (`default: "true"`) keep Tag=`!!str` and are accepted as
+// strings, matching user intent.
+func stringScalar(n *yaml.Node) (string, bool) {
+	if n == nil || n.Kind != yaml.ScalarNode {
+		return "", false
+	}
+	switch n.Tag {
+	case "!!bool", "!!int", "!!float", "!!null", "!!timestamp", "!!binary":
+		return "", false
+	}
+	return n.Value, true
+}
+
+// describeYAMLType returns a short human-readable label for n's YAML type,
+// suitable for embedding in warning messages. It prefers the resolved tag
+// (e.g. "bool", "int") so users can spot the type mismatch without having to
+// know YAML internals.
+func describeYAMLType(n *yaml.Node) string {
+	if n == nil {
+		return "missing"
+	}
+	switch n.Kind {
+	case yaml.MappingNode:
+		return "mapping"
+	case yaml.SequenceNode:
+		return "list"
+	case yaml.AliasNode:
+		return "alias"
+	case yaml.ScalarNode:
+		switch n.Tag {
+		case "!!bool":
+			return "bool"
+		case "!!int":
+			return "int"
+		case "!!float":
+			return "float"
+		case "!!null":
+			return "null"
+		case "!!timestamp":
+			return "timestamp"
+		case "!!binary":
+			return "binary"
+		case "!!str", "":
+			return "string"
+		}
+		return n.Tag
+	}
+	return "unknown"
 }
 
 // warn writes a single sitatame-prefixed line, but only when w is non-nil.
