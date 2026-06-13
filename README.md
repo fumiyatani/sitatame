@@ -208,6 +208,20 @@ Both modes skip base auto-detection and record the review with
 an explicit base argument. Untracked files are not included; run
 `git add -N <path>` first if you want them in the diff.
 
+### Per-repo config
+
+You can override the base auto-detect chain per repository by dropping a
+[`<repo>/.sitatame/config.yaml`](docs/config.md) file with a `base` section.
+The minimal form is:
+
+```yaml
+base:
+  default: "origin/develop"   # tried first when no CLI base is given
+```
+
+See [docs/config.md](docs/config.md) for the full schema, error-handling
+rules, and reserved-for-future-use sections.
+
 ## Development
 
 ```sh
