@@ -14,8 +14,8 @@
 Terminal UI for reviewing your own git diff before opening a pull request.
 `sitatame` runs `git diff <base>..HEAD` inside a bubbletea TUI, lets you
 attach 4 grains of comments (review-level, file, line, range), and saves the
-result as a Markdown + YAML front-matter file under
-`~/.sitatame/<project-slug>/reviews/` that downstream agents can ingest.
+result as a Markdown + YAML front-matter file at
+`~/.sitatame/<project-slug>/<branch-slug>/review.md` that downstream agents can ingest.
 
 ## Tech stack
 
@@ -225,7 +225,7 @@ Main entry points after installation:
 The plugin uses the same storage shape as the CLI and Web UI:
 
 ```text
-$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+$SITATAME_HOME/<project-slug>/<branch-slug>/review.md
 ```
 
 See [`intellij/README.md`](intellij/README.md) for the detailed feature list,
@@ -240,7 +240,9 @@ sitatame                # auto-detect base (origin/HEAD, @{upstream}, main, …)
 sitatame origin/main    # explicit base
 sitatame --staged       # review staged changes (index vs HEAD)
 sitatame --working      # review all uncommitted changes (worktree vs HEAD)
-sitatame search TODO    # grep saved reviews under ~/.sitatame/<project-slug>/reviews/
+sitatame --new          # refuse if review.md already exists for this branch
+sitatame --force-new    # back up review.md to review.md.bak and start fresh
+sitatame search TODO    # grep saved reviews under ~/.sitatame/<project-slug>/
 ```
 
 Keys:
@@ -255,11 +257,11 @@ r           start range selection (extend with j/k, Esc to clear)
 c           comment at the cursor (kind auto-decided from selection / row)
 x           toggle resolved on the comment under the cursor (open ↔ resolved; stale skipped)
 Shift+R     review-level comment (edits review_comment in front matter)
-s           save & promote — writes ~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
-            and prints SITATAME_REVIEW=<abs path> on stdout
-q           save as draft and exit 1 (~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md)
+s           save & exit — writes ~/.sitatame/<project-slug>/<branch-slug>/review.md
+            atomically and prints SITATAME_REVIEW=<abs path> on stdout; exits 0
+q           discard & exit — leaves review.md untouched; exits 1
 ?           toggle help
-Esc         close modal / clear selection
+Esc         close modal / clear selection (no-op at top level)
 
 Inside the comment modal:
 Ctrl+S      confirm and append the comment
@@ -294,11 +296,11 @@ Comment markers in the gutter:
 can consume the human reviewer's notes without screen scraping:
 
 1. Spawn `sitatame` against the branch you want reviewed.
-2. The reviewer reviews and presses `s` (save & promote).
+2. The reviewer reviews and presses `s` (save & exit).
 3. `sitatame` exits 0 and writes one machine-readable line to **stdout**:
 
    ```
-   SITATAME_REVIEW=/abs/path/to/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
+   SITATAME_REVIEW=/abs/path/to/.sitatame/<project-slug>/<branch-slug>/review.md
    ```
 
 4. Capture that path. The file is YAML front matter + Markdown body. The
@@ -327,19 +329,17 @@ the promoted Markdown into `$SITATAME_AGENT` via `sh -c`, so set that
 variable only to commands you fully trust — never to values pulled from
 untrusted sources.
 
-`q` on the other hand exits 1 and leaves a draft under
-`~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md` — pick it up next
-session, or feed it to an agent that knows to look at drafts before starting
-work.
+`q` on the other hand exits 1 and leaves `review.md` untouched — the
+previous `review.md` (if any) is still readable next session.
 
-Re-launching `sitatame` on the same branch auto-loads the most recent draft
-so prior comments reappear in the TUI; saving again writes back to the same
-draft file.
+Re-launching `sitatame` on the same branch auto-loads the existing `review.md`
+so prior comments reappear in the TUI; pressing `s` again overwrites the same
+file atomically.
 
 ### Storage location
 
-Reviews and drafts live outside the repository tree so you don't have to add
-ignore rules per project. The output root resolves in this order:
+Reviews live outside the repository tree so you don't have to add ignore rules
+per project. The output root resolves in this order:
 
 1. `$SITATAME_HOME` if set and non-empty
 2. `~/.sitatame` (default)
@@ -348,32 +348,21 @@ ignore rules per project. The output root resolves in this order:
 Under the output root each repository checkout gets its own
 `<project-slug>/` directory, derived from the basename plus a short hash of
 the absolute repo path. Distinct checkouts of the same repository (e.g.
-worktrees) therefore stay separated.
+worktrees) therefore stay separated. Within that directory, each branch gets
+`<branch-slug>/review.md` — one file per branch.
 
-If a legacy `<repo>/.sitatame/` directory still exists from before this
-change, `sitatame` prints a one-line stderr notice on startup but does not
-auto-migrate or read from it. Delete it once you've copied anything you want
-to keep.
+#### Migration from the pre-#76 layout
 
-To migrate drafts from the legacy in-repo location, copy the printed target
-path out of stderr — `sitatame` prints the resolved drafts root so you don't
-have to compute the `<project-slug>` by hand:
+If you have a `~/.sitatame/<project-slug>/drafts/` or `reviews/` directory
+from an earlier version, `sitatame` auto-migrates on the first run: the old
+trees are moved into `.legacy-<timestamp>/` (data is preserved, not deleted)
+and the latest review per branch is copied into the new `<branch-slug>/review.md`
+location. `sitatame` prints a migration summary on stderr.
 
-```sh
-# Run once, inside the repo with the legacy directory. The second stderr line
-# from `sitatame` looks like:
-#   sitatame: To migrate drafts: mkdir -p '/Users/you/.sitatame/<project-slug>/drafts' && mv '/path/to/repo/.sitatame'/drafts/* '/Users/you/.sitatame/<project-slug>/drafts'/
-# Paths are POSIX single-quoted so spaces and shell metacharacters in your
-# checkout or `$SITATAME_HOME` survive copy-paste; the `/drafts/*` glob is
-# left outside the closing quote so the shell still expands it. Run that
-# printed line (the `mkdir -p` is there so the first upgrade does not fail
-# when the new drafts root doesn't exist yet), then remove the empty legacy
-# directory. The form below is the same shape but uses `~` for brevity — if
-# your repo path or `$SITATAME_HOME` contains spaces, prefer copy-pasting the
-# stderr line verbatim instead.
-mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
-rm -rf .sitatame
-```
+If a legacy `<repo>/.sitatame/` directory still exists from before the
+output-root change (pre-#38), `sitatame` prints a one-line stderr notice on
+startup but does not auto-migrate or read from it. Delete it once you've
+copied anything you want to keep.
 
 ### Reviewing uncommitted changes
 
