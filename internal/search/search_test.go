@@ -78,3 +78,42 @@ func TestWalk_MissingDir(t *testing.T) {
 		t.Errorf("missing dir should return zero hits and nil err; got hits=%v err=%v", hits, err)
 	}
 }
+
+// TestWalk_ExcludesLegacyDirs verifies that directories with a .legacy- prefix
+// are skipped entirely so migrated data does not surface in search results.
+func TestWalk_ExcludesLegacyDirs(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+
+	// File in a normal directory: should match.
+	normalDir := filepath.Join(dir, "feature--auth")
+	if err := os.MkdirAll(normalDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(normalDir, "review.md"),
+		[]byte("TODO: check legacy exclusion\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// File in a .legacy-<ts>/ directory: must NOT match.
+	legacyDir := filepath.Join(dir, ".legacy-20260614T105720", "reviews", "feature--auth")
+	if err := os.MkdirAll(legacyDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacyDir, "20260101T000000-review.md"),
+		[]byte("TODO: this is in legacy and must not appear\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	re := regexp.MustCompile(`TODO`)
+	hits, err := Walk(dir, re)
+	if err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+	if len(hits) != 1 {
+		t.Fatalf("hits = %d, want 1 (only the non-legacy file); got %+v", len(hits), hits)
+	}
+	if strings.Contains(hits[0].Path, ".legacy-") {
+		t.Errorf("hit path contains .legacy- directory: %s", hits[0].Path)
+	}
+}
