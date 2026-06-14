@@ -298,6 +298,17 @@ class ReviewStore {
                 "\"$k\": ${if (v is String?) "\"${v?.replace("\"", "\\\"") ?: ""}\"" else v}"
             }
             Files.writeString(rescuePath, json)
+            // Apply 0600 permissions to the rescue file so its content is
+            // owner-private, matching Go's os.WriteFile(path, b, 0o600).
+            // On Windows, POSIX permissions are unsupported; skip silently.
+            try {
+                Files.setPosixFilePermissions(
+                    rescuePath,
+                    PosixFilePermissions.fromString("rw-------")
+                )
+            } catch (_: UnsupportedOperationException) {
+                // Non-POSIX FS (Windows) — nothing to do.
+            }
             log.warn("sitatame: encode failed; rescue written to $rescuePath", encodeErr)
             rescuePath.toString()
         } catch (e: Exception) {
