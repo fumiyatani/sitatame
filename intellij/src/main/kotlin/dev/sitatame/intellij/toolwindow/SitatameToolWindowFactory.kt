@@ -8,7 +8,7 @@ import com.intellij.ui.content.ContentFactory
 
 /**
  * Registers the right-anchored sitatame review tool window. Listing /
- * navigation / promote / copy-AI-prompt all live inside
+ * navigation / copy-AI-prompt all live inside
  * [SitatameToolWindowContent].
  */
 class SitatameToolWindowFactory : ToolWindowFactory, DumbAware {

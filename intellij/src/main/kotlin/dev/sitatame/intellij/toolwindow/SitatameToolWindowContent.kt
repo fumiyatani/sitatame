@@ -41,7 +41,7 @@ import javax.swing.ListCellRenderer
  *     summarising state (open / resolved / stale).
  *   - Right: details pane for the selected comment (anchor + body).
  *
- * A toolbar above hosts Refresh / Promote / Copy AI prompt. Selection
+ * A toolbar above hosts Refresh / Copy AI prompt. Selection
  * changes refresh the right pane; double-click jumps the editor to the
  * anchored line via [OpenFileDescriptor].
  */
@@ -97,9 +97,8 @@ class SitatameToolWindowContent(private val project: Project) {
         val group = DefaultActionGroup().apply {
             add(RefreshAction { refresh() })
             addSeparator()
-            // Reuse the registered Promote and Copy actions so any keybindings
-            // applied to them in the IDE also work from this toolbar.
-            ActionManager.getInstance().getAction("sitatame.PromoteReview")?.let { add(it) }
+            // Reuse the registered Copy action so any keybindings applied to it
+            // in the IDE also work from this toolbar.
             ActionManager.getInstance().getAction("sitatame.CopyAIPrompt")?.let { add(it) }
         }
         val toolbar = ActionManager.getInstance()
