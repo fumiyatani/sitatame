@@ -303,8 +303,14 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
                     files = workspace.files,
                     comments = effectiveComments,
                     selectedPath = selectedPath,
+                    filterState = holder.filterState,
                     onSelect = { selectedPath = it },
+                    onFilterSelect = { holder.filterState = it },
                     onToggleState = { comment -> toggleCommentState(comment) },
+                    onReply = { sourceComment, body ->
+                        val target = sourceComment.toCommentTarget()
+                        submitComment(target, body)
+                    },
                     pendingToggleIds = holder.pendingToggleIds,
                     modifier = Modifier
                         .width(320.dp)
