@@ -93,7 +93,7 @@ issue #76 (1-branch-1-file layout) 以降、レビューは
 |---|---|
 | `review.md` | ブランチの現行レビュー (`s` で書き込み) |
 | `review.md.bak` | `review.md` を上書きする直前に 1 世代だけ保持するバックアップ (`internal/review/paths.go` の `BakFile`) |
-| `review.md.rescue.<YYYYMMDDTHHMMSS>.json` | Encode 失敗時の緊急退避ファイル。フォーマットは `rescuePayload` (schema `"rescue/1"`)。複数回失敗しても別タイムスタンプで重複せず蓄積される (`internal/review/store.go` の `writeRescue`) |
+| `review.md.rescue.<YYYYMMDDTHHMMSS>-<nanos>.json` | Encode 失敗時の緊急退避ファイル。フォーマットは `rescuePayload` (schema `"rescue/1"`)。ファイル名はタイムスタンプ (秒精度) にナノ秒 9 桁を付加し、同一秒内の連続失敗でも別ファイルに蓄積される。glob `review.md.rescue.*.json` で一括参照可能 (`internal/review/store.go` の `writeRescue`) |
 
 ### Migration (pre-#76 からの移行)
 

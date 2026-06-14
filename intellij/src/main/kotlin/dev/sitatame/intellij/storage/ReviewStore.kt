@@ -56,6 +56,14 @@ class ReviewStore {
     @Suppress("VisibleForTests")
     var pathsOverride: SitatamePaths? = null
 
+    /**
+     * When set, replaces [Codec.encode] in [saveReview]. Tests inject a
+     * throwing lambda to exercise the rescue path without a real encode
+     * failure. Production code must leave this null.
+     */
+    @Suppress("VisibleForTests")
+    var encodeFunc: ((Review) -> ByteArray)? = null
+
     private val settings: SitatameSettings
         get() = ApplicationManager.getApplication().getService(SitatameSettings::class.java)
 
@@ -226,8 +234,9 @@ class ReviewStore {
         Files.createDirectories(branchDir)
         tryRestrictPermissions(branchDir)
 
+        val encode = encodeFunc ?: { r -> Codec.encode(r) }
         val bytes: ByteArray = try {
-            Codec.encode(review)
+            encode(review)
         } catch (encodeErr: Exception) {
             // Rescue: write raw JSON so the user can recover content.
             val rescuePath = writeRescue(p, review, encodeErr)
@@ -262,28 +271,48 @@ class ReviewStore {
      *
      * Mirrors Go's `store.writeRescue`.
      */
+    /**
+     * Write an in-memory Review as rescue JSON when Codec.encode fails.
+     * Returns the written path, or an empty string on failure.
+     *
+     * Uses [RescuePayload] + kotlinx.serialization-json for full Review
+     * serialization, matching the schema produced by Go's `store.writeRescue`.
+     */
     private fun writeRescue(p: SitatamePaths, review: Review, encodeErr: Exception): String {
         return try {
             val branchDir = toPath(p.branchDir())
             Files.createDirectories(branchDir)
-            val ts = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
-            val filename = "review.md.rescue.$ts.json"
+            val now = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
+            val ts = now.format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
+            // Append nanoseconds (zero-padded to 9 digits) to prevent filename
+            // collision when two Encode failures occur within the same second.
+            // Mirrors Go's writeRescue nanos suffix. Glob review.md.rescue.*.json
+            // is still satisfied.
+            val nanos = String.format(Locale.ROOT, "%09d", now.nano)
+            val filename = "review.md.rescue.$ts-$nanos.json"
             val rescuePath = branchDir.resolve(filename)
-            val payload = mapOf(
-                "schema" to "rescue/1",
-                "saved_at" to LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
-                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
-                "reason" to "yaml encode failed",
-                "original_encode_error" to encodeErr.message,
-                "review_id" to review.id,
-                "branch" to review.branch,
-                "comment_count" to review.comments.size,
+
+            val payload = RescuePayload(
+                schema = "rescue/1",
+                savedAt = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                reason = "yaml encode failed",
+                originalEncodeError = encodeErr.message ?: "",
+                review = review.toDto(),
             )
-            val json = payload.entries.joinToString(",\n  ", "{\n  ", "\n}") { (k, v) ->
-                "\"$k\": ${if (v is String?) "\"${v?.replace("\"", "\\\"") ?: ""}\"" else v}"
-            }
+            val json = rescueJson.encodeToString(RescuePayload.serializer(), payload)
             Files.writeString(rescuePath, json)
+
+            // Apply 0600 permissions to the rescue file so its content is
+            // owner-private, matching Go's os.WriteFile(path, b, 0o600).
+            // On Windows, POSIX permissions are unsupported; skip silently.
+            try {
+                Files.setPosixFilePermissions(
+                    rescuePath,
+                    PosixFilePermissions.fromString("rw-------")
+                )
+            } catch (_: UnsupportedOperationException) {
+                // Non-POSIX FS (Windows) — nothing to do.
+            }
             log.warn("sitatame: encode failed; rescue written to $rescuePath", encodeErr)
             rescuePath.toString()
         } catch (e: Exception) {
