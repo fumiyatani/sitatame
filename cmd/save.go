@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"github.com/fumiyatani/sitatame/internal/clipboard"
 	"github.com/fumiyatani/sitatame/internal/review"
 	"github.com/fumiyatani/sitatame/internal/tui"
 )
@@ -21,7 +22,10 @@ import (
 //     leave the filesystem untouched and exit 0.
 //
 // Errors are written to env.Stderr and surface as exit code 1.
-func finalizeReview(env Env, store *review.Store, result TUIResult) int {
+//
+// noClipboard suppresses the automatic clipboard copy (equivalent to
+// --no-clipboard / SITATAME_NO_CLIPBOARD=1).
+func finalizeReview(env Env, store *review.Store, result TUIResult, noClipboard bool) int {
 	switch result.Reason {
 	case tui.QuitSave:
 		finalPath, err := store.SaveReview(&result.Review)
@@ -35,6 +39,18 @@ func finalizeReview(env Env, store *review.Store, result TUIResult) int {
 		}
 		abs, _ := filepath.Abs(finalPath)
 		fmt.Fprintf(env.Stdout, "SITATAME_REVIEW=%s\n", abs)
+
+		if !noClipboard {
+			copyFn := env.Clipboard
+			if copyFn == nil {
+				copyFn = clipboard.Copy
+			}
+			if err := copyFn(abs); err != nil {
+				fmt.Fprintf(env.Stderr, "sitatame: clipboard copy failed: %v\n", err)
+			} else {
+				fmt.Fprintf(env.Stderr, "sitatame: path copied to clipboard\n")
+			}
+		}
 		return 0
 	case tui.QuitDiscard:
 		// User explicitly chose to discard — do not write anything.
