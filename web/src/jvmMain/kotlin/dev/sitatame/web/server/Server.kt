@@ -120,8 +120,13 @@ fun Application.module(workdir: Path, baseRef: String) {
                     )
                 val req = call.receive<CreateCommentRequest>()
                 val mutationService = workspace.mutationService()
+                // Fetch the current workspace file list for blob integrity checks.
+                // This is a read-only git operation and is safe to call here; the
+                // cost is one `git diff` invocation per POST, which is acceptable
+                // for the current single-user dev-tool use case.
+                val workspaceFiles = runCatching { workspace.snapshot().files }.getOrNull()
 
-                when (val result = mutationService.addComment(req, ifMatch)) {
+                when (val result = mutationService.addComment(req, ifMatch, workspaceFiles)) {
                     is MutationResult.Success -> {
                         call.response.header("ETag", result.newEtag)
                         call.respond(HttpStatusCode.OK, mapOf("anchor_id" to result.anchorId))

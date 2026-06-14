@@ -1,6 +1,7 @@
 package dev.sitatame.web.server
 
 import dev.sitatame.web.api.CreateCommentRequest
+import dev.sitatame.web.api.FileDto
 import dev.sitatame.web.api.UpdateCommentStateRequest
 import dev.sitatame.web.api.UpdateReviewCommentRequest
 import dev.sitatame.web.roundtrip.Codec
@@ -41,9 +42,16 @@ class ReviewMutationService(
      * Add a new comment to the review.
      *
      * [ifMatch] is the ETag value from the client's `If-Match` header.
+     * [workspaceFiles] is the current list of diff files from the workspace
+     * snapshot.  When provided, blob integrity is checked against the diff
+     * index data (see [Validation.validate]).
      */
-    suspend fun addComment(req: CreateCommentRequest, ifMatch: String): MutationResult {
-        val validationErrors = Validation.validate(req)
+    suspend fun addComment(
+        req: CreateCommentRequest,
+        ifMatch: String,
+        workspaceFiles: List<FileDto>? = null,
+    ): MutationResult {
+        val validationErrors = Validation.validate(req, workspaceFiles)
         if (validationErrors.isNotEmpty()) {
             return MutationResult.ValidationError(validationErrors)
         }

@@ -116,10 +116,11 @@ class ReviewStateHolder {
     /** Confirms an optimistic update (removes override since server confirmed). */
     fun confirmOptimistic(anchorId: String, newEtag: String) {
         etag = newEtag
+        // Capture the optimistic entry before removing it so the snapshot patch
+        // below can still read the confirmed state value.
+        val opt = optimisticStates[anchorId] ?: return
         optimisticStates = optimisticStates - anchorId
         pendingToggleIds = pendingToggleIds - anchorId
-        // Patch the snapshot so the next render reflects the confirmed state.
-        val opt = optimisticStates[anchorId] ?: return
         snapshot = snapshot?.let { ws ->
             ws.copy(
                 review = ws.review?.let { rev ->
