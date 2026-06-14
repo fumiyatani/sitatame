@@ -121,9 +121,10 @@ func waitForBoot(t *testing.T, s *replay.Session) {
 	}
 }
 
-// TestBootAndQuitCreatesDraft launches sitatame, sends `q`, expects exit code
-// 1, and confirms at least one draft .md was written under SITATAME_HOME.
-func TestBootAndQuitCreatesDraft(t *testing.T) {
+// TestBootAndQuitDiscardsAndExitsCleanly launches sitatame, sends `q`
+// (QuitDiscard since PR #77), expects exit code 0, and confirms that no
+// draft or review file was written under SITATAME_HOME.
+func TestBootAndQuitDiscardsAndExitsCleanly(t *testing.T) {
 	replay.SkipIfNoPTY(t)
 	bin := buildBinary(t)
 	dir, home := setupRepo(t)
@@ -137,28 +138,39 @@ func TestBootAndQuitCreatesDraft(t *testing.T) {
 	if err != nil {
 		t.Fatalf("waiting for exit: %v\nscreen=\n%s", err, s.Screen())
 	}
-	if code != 1 {
-		t.Fatalf("exit code = %d, want 1 (QuitDraft)\nscreen=\n%s", code, s.Screen())
+	if code != 0 {
+		t.Fatalf("exit code = %d, want 0 (QuitDiscard)\nscreen=\n%s", code, s.Screen())
 	}
 
-	// drafts/ is below <home>/<project-slug>/drafts/<branch-slug>/. Rather than
-	// reverse-engineer the slug here, walk the tree for any .md.
-	found := findFirstMarkdown(t, filepath.Join(home), "drafts")
-	if found == "" {
-		t.Fatalf("no draft .md file found under %s", home)
+	// QuitDiscard must not write any file under SITATAME_HOME.
+	found := findFirstMarkdown(t, home, "")
+	if found != "" {
+		t.Fatalf("unexpected .md file written on QuitDiscard: %s", found)
 	}
 }
 
-// TestBootSavePromotePrintsEnv launches sitatame, sends `s`, expects exit
-// code 0, and confirms the stdout contains `SITATAME_REVIEW=` followed by an
-// absolute path to a .md file under the reviews/ tree.
-func TestBootSavePromotePrintsEnv(t *testing.T) {
+// TestBootSaveWithCommentPrintsEnv launches sitatame, adds a line comment
+// via the `c` modal (QuitSave requires a non-empty review since PR #77),
+// saves with `s`, expects exit code 0, and confirms the stdout contains
+// `SITATAME_REVIEW=` followed by an absolute path to a .md file.
+func TestBootSaveWithCommentPrintsEnv(t *testing.T) {
 	replay.SkipIfNoPTY(t)
 	bin := buildBinary(t)
 	dir, _ := setupRepo(t)
 
 	s := replay.Start(t, bin, dir, "--working")
 	waitForBoot(t, s)
+
+	// Open the comment modal, type a body, confirm with Ctrl+S, then save.
+	s.Send("c")
+	if err := s.WaitFor("Ctrl+S save", 3*time.Second); err != nil {
+		t.Fatalf("comment modal did not open: %v\nscreen=\n%s", err, s.Screen())
+	}
+	s.Send("test comment")
+	s.Send("<ctrl+s>")
+
+	// Give the TUI a moment to process the confirm and return to the main view.
+	time.Sleep(100 * time.Millisecond)
 
 	s.Send("s")
 
@@ -167,7 +179,7 @@ func TestBootSavePromotePrintsEnv(t *testing.T) {
 		t.Fatalf("waiting for exit: %v\nscreen=\n%s", err, s.Screen())
 	}
 	if code != 0 {
-		t.Fatalf("exit code = %d, want 0 (QuitPromote)\nscreen=\n%s\nstdout=\n%s", code, s.Screen(), s.Stdout())
+		t.Fatalf("exit code = %d, want 0 (QuitSave)\nscreen=\n%s\nstdout=\n%s", code, s.Screen(), s.Stdout())
 	}
 
 	out := s.Stdout()
