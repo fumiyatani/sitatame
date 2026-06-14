@@ -13,6 +13,9 @@ dist/
 !.claude/skills/sitatame-review-apply/
 .claude/skills/sitatame-review-apply/*
 !.claude/skills/sitatame-review-apply/SKILL.md
+!.claude/agents/
+!.claude/agents/*.md
+!.claude/agents/README.md
 
 # Gradle build outputs (web/ Kotlin PoC). Wrapper jars stay tracked.
 web/.gradle/
