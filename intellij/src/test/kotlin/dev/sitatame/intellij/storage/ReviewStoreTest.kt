@@ -1,5 +1,8 @@
 package dev.sitatame.intellij.storage
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -197,6 +200,52 @@ class ReviewStoreTest {
         store.recoverFromCrash("", "")
 
         assertFalse("orphaned .tmp should be deleted", Files.exists(orphan))
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue JSON content: full Review + Go key-name parity
+    // -----------------------------------------------------------------------
+
+    /**
+     * The rescue JSON must include a full "review" object with the same
+     * top-level key names as Go's rescuePayload, and the review sub-object
+     * must carry all comments, not just a comment_count summary.
+     */
+    @Test
+    fun writeRescue_containsFullReviewJson() {
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure") }
+
+        val review = store.loadOrInit("", "")
+        review.branch = "feature/test"
+        review.reviewComment = "overall comment"
+        review.comments.add(sampleComment("src/main.kt", 42, "rename this method"))
+        review.comments.add(sampleComment("src/util.kt", 7, "extract helper"))
+
+        val result = store.saveReview("", "")
+        assertNotNull("rescue error expected", result.error)
+
+        val rescuePath = java.nio.file.Paths.get(result.error!!.rescuePath)
+        val raw = String(Files.readAllBytes(rescuePath))
+        val root = Json.parseToJsonElement(raw).jsonObject
+
+        // Top-level Go-compatible keys.
+        assertEquals("schema", "rescue/1", root["schema"]?.jsonPrimitive?.content)
+        assertTrue("saved_at must be present", root.containsKey("saved_at"))
+        assertEquals("reason", "yaml encode failed", root["reason"]?.jsonPrimitive?.content)
+        assertTrue("original_encode_error must be present", root.containsKey("original_encode_error"))
+        assertTrue("review must be present", root.containsKey("review"))
+
+        // review sub-object must carry comments array, not just comment_count.
+        val reviewObj = root["review"]!!.jsonObject
+        assertTrue("review.branch must be present", reviewObj.containsKey("branch"))
+        assertTrue("review.comments must be present", reviewObj.containsKey("comments"))
+
+        val commentsArr = reviewObj["comments"]!!.let {
+            kotlinx.serialization.json.Json.parseToJsonElement(it.toString())
+                .let { e -> e as? kotlinx.serialization.json.JsonArray }
+        }
+        assertNotNull("comments should be a JSON array", commentsArr)
+        assertEquals("comment count in JSON", 2, commentsArr!!.size)
     }
 
     // -----------------------------------------------------------------------
