@@ -1,4 +1,4 @@
-.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures
+.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures web
 
 BIN := sitatame
 PKG := ./...
@@ -57,3 +57,10 @@ clean:
 web-fixtures:
 	mkdir -p $(WEB_FIXTURE_DIR)
 	go run ./cmd/yamlfixture -out $(WEB_FIXTURE_DIR)
+
+# Build the Compose Wasm UI and launch the Web UI on a single localhost port.
+# `:run` bundles the wasm dist into the Ktor server's resources, so one process
+# serves the UI ("/") and the API ("/api/v1/..."). Open the printed
+# SITATAME_WEB_URL line. First build is slow (wasm compile); reruns are cached.
+web:
+	cd web && ./gradlew :run
