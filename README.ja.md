@@ -11,8 +11,8 @@
 PR を出す前に、自分の git diff を端末上でレビューするための TUI ツール。
 `sitatame` は `git diff <base>..HEAD` を bubbletea ベースの TUI で表示し、
 4 粒度（review 全体 / file / line / range）でコメントを残せます。
-保存結果は `~/.sitatame/<project-slug>/reviews/` 配下に YAML front matter +
-Markdown 形式で書き出され、後段のエージェントがそのまま読み取れます。
+保存結果は `~/.sitatame/<project-slug>/<branch-slug>/review.md` に
+YAML front matter + Markdown 形式で書き出され、後段のエージェントがそのまま読み取れます。
 
 ## 技術スタック
 
@@ -218,7 +218,7 @@ install 後の主な entry point:
 plugin は CLI / Web UI と同じ storage shape を使います:
 
 ```text
-$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+$SITATAME_HOME/<project-slug>/<branch-slug>/review.md
 ```
 
 詳細な feature list、storage notes、plugin 固有の制約は
@@ -233,7 +233,9 @@ sitatame                # base を自動検出（origin/HEAD, @{upstream}, main,
 sitatame origin/main    # base を明示指定
 sitatame --staged       # ステージ済みの変更をレビュー（index vs HEAD）
 sitatame --working      # 未コミットの全変更をレビュー（worktree vs HEAD）
-sitatame search TODO    # ~/.sitatame/<project-slug>/reviews/ を grep
+sitatame --new          # review.md が既に存在する場合は起動を拒否
+sitatame --force-new    # review.md を review.md.bak にバックアップして新規開始
+sitatame search TODO    # ~/.sitatame/<project-slug>/ を grep
 ```
 
 キーバインド:
@@ -248,11 +250,11 @@ r           範囲選択開始（j/k で拡張、Esc で解除）
 c           カーソル位置にコメント（kind は選択 / 行種別から自動決定）
 x           カーソル位置のコメントを resolved ↔ open でトグル（stale はスキップ）
 Shift+R     review 全体コメント（front matter の review_comment を編集）
-s           保存して promote — ~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md に書き出し、
-            stdout に SITATAME_REVIEW=<絶対パス> を 1 行出力
-q           draft として保存し exit 1（~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md）
+s           保存して exit 0 — ~/.sitatame/<project-slug>/<branch-slug>/review.md を
+            アトミックに書き出し、stdout に SITATAME_REVIEW=<絶対パス> を 1 行出力
+q           破棄して exit 1 — review.md は変更されない
 ?           ヘルプ表示の切り替え
-Esc         モーダルを閉じる / 選択解除
+Esc         モーダルを閉じる / 選択解除（トップレベルでは何もしない）
 
 コメントモーダル内:
 Ctrl+S      コメントを確定して追加
@@ -283,11 +285,11 @@ sitatame → Shift+R → 本文を入力 → Ctrl+S → s
 画面スクレイプなしでレビュー結果を消費できることを前提に設計しています:
 
 1. レビュー対象のブランチで `sitatame` を起動。
-2. レビュアがレビューを終え `s`（save & promote）を押下。
+2. レビュアがレビューを終え `s`（save & exit）を押下。
 3. `sitatame` は exit 0 で終了し、**stdout** に機械可読行を 1 行出力:
 
    ```
-   SITATAME_REVIEW=/abs/path/to/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md
+   SITATAME_REVIEW=/abs/path/to/.sitatame/<project-slug>/<branch-slug>/review.md
    ```
 
 4. その path を capture します。ファイルは YAML front matter + Markdown 本文。
@@ -331,18 +333,16 @@ sitatame --working   # worktree を HEAD と比較（staged + unstaged の両方
 未追跡ファイルは含まれないので、必要なら事前に `git add -N <path>` を実行して
 ください。
 
-`q` で抜けた場合は exit 1 となり、draft が
-`~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md` に残ります。
-次回セッションで拾い直すか、draft 段階を意識するエージェントに先に渡しても
-良い設計です。
+`q` で抜けた場合は exit 1 となり、`review.md` は変更されません（前回
+セッションで保存した内容がそのまま残ります）。
 
-同じブランチで再度 `sitatame` を起動すると最新の draft が自動的に読み込まれ、
-前回のコメントが TUI に復元されます（再保存時は同じ draft ファイルに上書き
-されます）。
+同じブランチで再度 `sitatame` を起動すると既存の `review.md` が自動的に
+読み込まれ、前回のコメントが TUI に復元されます。再度 `s` を押すと
+同じファイルをアトミックに上書きします。
 
 ### 保存先
 
-レビュー / draft はリポジトリツリーの外に書き出すため、プロジェクトごとに
+レビューはリポジトリツリーの外に書き出すため、プロジェクトごとに
 ignore ルールを足す必要はありません。出力ルートは次の順で解決します:
 
 1. `$SITATAME_HOME` が設定されていればそれを使用
@@ -353,28 +353,21 @@ ignore ルールを足す必要はありません。出力ルートは次の順�
 出力ルート配下では、リポジトリの checkout ごとに `<project-slug>/`
 ディレクトリが作られます。slug は basename と絶対パスのハッシュから派生
 するので、同じリポジトリの別 checkout（worktree など）も衝突しません。
+その配下では `<branch-slug>/review.md` という形でブランチごとに 1 ファイルが
+置かれます。
 
-旧版が残した `<repo>/.sitatame/` ディレクトリが存在する場合は起動時に
-stderr で 1 行通知を出しますが、自動移行や参照は行いません。必要なデータを
-コピーしたら手動で削除してください。
+#### pre-#76 レイアウトからの移行
 
-旧 in-repo の draft を引き取りたい場合、stderr に出力される移行先パスを
-そのまま使えば `<project-slug>` を手で計算する必要はありません:
+以前のバージョン（issue #76 以前）の `drafts/` / `reviews/` ディレクトリが
+`~/.sitatame/<project-slug>/` 配下に残っている場合、初回起動時に
+`MigrateLegacyLayout` が自動実行されます。旧ディレクトリは
+`.legacy-<timestamp>/` に移動（データは削除されない）され、ブランチごとの
+最新 `.md` ファイルが新 `<branch-slug>/review.md` にコピーされます。
+移行サマリは stderr に出力されます。
 
-```sh
-# 旧ディレクトリが残っているリポジトリ内で一度だけ実行。stderr の 2 行目に
-#   sitatame: To migrate drafts: mkdir -p '/Users/you/.sitatame/<project-slug>/drafts' && mv '/path/to/repo/.sitatame'/drafts/* '/Users/you/.sitatame/<project-slug>/drafts'/
-# が出ているので、その 1 行をそのまま流す（パスは POSIX の single quote で
-# 囲まれているため、checkout や `$SITATAME_HOME` にスペースやシェル
-# メタ文字が含まれていてもそのまま貼り付けて動く。末尾の `/drafts/*` は
-# シェルに glob 展開させるため quote の外に出している。初回アップグレード時は
-# 新 drafts root が未作成のため `mkdir -p` を同梱している）。空になった旧
-# ディレクトリは別途削除する。下の例は同じ形を `~` で簡略化したもの。
-# repo パスや `$SITATAME_HOME` にスペースが含まれる場合は、こちらではなく
-# stderr の行をそのままコピペすること。
-mkdir -p ~/.sitatame/<project-slug>/drafts && mv .sitatame/drafts/* ~/.sitatame/<project-slug>/drafts/ 2>/dev/null || true
-rm -rf .sitatame
-```
+旧版が残した `<repo>/.sitatame/` ディレクトリ（in-repo storage, pre-#38）が
+存在する場合は起動時に stderr で 1 行通知を出しますが、自動移行や参照は
+行いません。必要なデータをコピーしたら手動で削除してください。
 
 ## 開発
 

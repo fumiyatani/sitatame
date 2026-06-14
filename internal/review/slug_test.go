@@ -79,7 +79,9 @@ func TestPaths(t *testing.T) {
 
 	// Use NewPathsWithRoot so the test is independent of $HOME and
 	// $SITATAME_HOME. The output root is treated as opaque — what matters is
-	// that everything resolves under <root>/<project-slug>/{reviews,drafts}.
+	// that everything resolves under <root>/<project-slug>/<branch-slug>/.
+	// As of issue #76 the layout is 1-branch-1-file:
+	//   <root>/<project-slug>/<branch-slug>/review.md
 	p := NewPathsWithRoot("/out", "/repo", "feature/x")
 	if p.Slug == "" || !strings.Contains(p.Slug, "__") {
 		t.Errorf("unexpected branch slug: %q", p.Slug)
@@ -88,28 +90,33 @@ func TestPaths(t *testing.T) {
 		t.Errorf("unexpected project slug: %q", p.ProjectSlug)
 	}
 	projectRoot := filepath.Join("/out", p.ProjectSlug)
-	want := filepath.Join(projectRoot, "reviews", p.Slug)
-	if got := p.ReviewsDir(); got != want {
-		t.Errorf("ReviewsDir() = %q, want %q", got, want)
+	wantBranchDir := filepath.Join(projectRoot, p.Slug)
+	if gotBranchDir := p.BranchDir(); gotBranchDir != wantBranchDir {
+		t.Errorf("BranchDir() = %q, want %q", gotBranchDir, wantBranchDir)
 	}
-	want = filepath.Join(projectRoot, "drafts", p.Slug)
-	if got := p.DraftsDir(); got != want {
-		t.Errorf("DraftsDir() = %q, want %q", got, want)
+	wantReviewFile := filepath.Join(wantBranchDir, "review.md")
+	if gotReviewFile := p.ReviewFile(); gotReviewFile != wantReviewFile {
+		t.Errorf("ReviewFile() = %q, want %q", gotReviewFile, wantReviewFile)
 	}
-	want = filepath.Join(p.ReviewsDir(), "20260501T000000-x.md")
-	if got := p.ReviewFile("20260501T000000-x"); got != want {
-		t.Errorf("ReviewFile() = %q, want %q", got, want)
+	wantBakFile := filepath.Join(wantBranchDir, "review.md.bak")
+	if gotBakFile := p.BakFile(); gotBakFile != wantBakFile {
+		t.Errorf("BakFile() = %q, want %q", gotBakFile, wantBakFile)
 	}
-	want = filepath.Join(p.DraftsDir(), "20260501T000000-x.md")
-	if got := p.DraftFile("20260501T000000-x"); got != want {
-		t.Errorf("DraftFile() = %q, want %q", got, want)
+	// Legacy helpers must still point to the pre-#76 layout.
+	wantLegacyReviews := filepath.Join(projectRoot, "reviews")
+	if gotLegacyReviews := p.LegacyReviewsRoot(); gotLegacyReviews != wantLegacyReviews {
+		t.Errorf("LegacyReviewsRoot() = %q, want %q", gotLegacyReviews, wantLegacyReviews)
+	}
+	wantLegacyDrafts := filepath.Join(projectRoot, "drafts")
+	if gotLegacyDrafts := p.LegacyDraftsRoot(); gotLegacyDrafts != wantLegacyDrafts {
+		t.Errorf("LegacyDraftsRoot() = %q, want %q", gotLegacyDrafts, wantLegacyDrafts)
 	}
 }
 
 // TestNewPathsWithRoot_EmptyBranchUsesDetachedSlug guards against regressing
 // the detached-HEAD fix: when RunRoot encounters `branch, _ := CurrentBranch()`
 // returning "" (detached HEAD), the per-branch helpers must still resolve to a
-// branch-scoped directory so SaveDraft / DetectDraft / Promote don't share
+// branch-scoped directory so SaveReview / DetectReview don't share
 // state across unrelated sessions in the same repo. BranchSlug("") returns the
 // deterministic "branch__da39a3ee", which is what we expect to land in Slug.
 func TestNewPathsWithRoot_EmptyBranchUsesDetachedSlug(t *testing.T) {
@@ -120,13 +127,13 @@ func TestNewPathsWithRoot_EmptyBranchUsesDetachedSlug(t *testing.T) {
 	if p.Slug != detachedSlug {
 		t.Errorf("Slug = %q, want %q (BranchSlug(\"\"))", p.Slug, detachedSlug)
 	}
-	wantDrafts := filepath.Join("/out", p.ProjectSlug, "drafts", detachedSlug)
-	if got := p.DraftsDir(); got != wantDrafts {
-		t.Errorf("DraftsDir() = %q, want %q", got, wantDrafts)
+	wantBranchDir := filepath.Join("/out", p.ProjectSlug, detachedSlug)
+	if got := p.BranchDir(); got != wantBranchDir {
+		t.Errorf("BranchDir() = %q, want %q", got, wantBranchDir)
 	}
-	wantReviews := filepath.Join("/out", p.ProjectSlug, "reviews", detachedSlug)
-	if got := p.ReviewsDir(); got != wantReviews {
-		t.Errorf("ReviewsDir() = %q, want %q", got, wantReviews)
+	wantReviewFile := filepath.Join(wantBranchDir, "review.md")
+	if got := p.ReviewFile(); got != wantReviewFile {
+		t.Errorf("ReviewFile() = %q, want %q", got, wantReviewFile)
 	}
 }
 
@@ -184,9 +191,9 @@ func TestNewPathsWithRoot_CanonicalisesSymlinkedRepoRoot(t *testing.T) {
 		t.Errorf("RepoRoot differs across symlink: real=%q link=%q",
 			viaReal.RepoRoot, viaLink.RepoRoot)
 	}
-	if viaReal.DraftsDir() != viaLink.DraftsDir() {
-		t.Errorf("DraftsDir differs across symlink: real=%q link=%q",
-			viaReal.DraftsDir(), viaLink.DraftsDir())
+	if viaReal.BranchDir() != viaLink.BranchDir() {
+		t.Errorf("BranchDir differs across symlink: real=%q link=%q",
+			viaReal.BranchDir(), viaLink.BranchDir())
 	}
 }
 

@@ -20,16 +20,16 @@ import java.util.concurrent.ConcurrentHashMap
 /**
  * Application-level singleton service for sitatame review storage.
  *
+ * As of issue #76 the layout is 1-branch-1-file:
+ *   `<OutputRoot>/<ProjectSlug>/<BranchSlug>/review.md`
+ *
  * The store is the single coordination point between the action layer
- * (AddComment / ResolveComment / Promote) and the tool window (which reads
- * the cached list to render the JBList). It deliberately keeps the cache
- * small — one [Review] per branch slug — because Phase 1 only deals with a
- * single in-progress draft at a time.
+ * (AddComment / ResolveComment) and the tool window (which reads the cached
+ * Review to render the JBList).
  *
  * Thread model:
  *  - Action layer runs on EDT (per the 2024.2+ threading rules) and dispatches
- *    file I/O off-EDT before returning to EDT to refresh the tool window. The
- *    store API itself is reentrant: every state read is a snapshot copy.
+ *    file I/O off-EDT before returning to EDT to refresh the tool window.
  *  - Mutations are serialised by a per-store lock so two background I/O
  *    threads writing different comments don't lose updates.
  */
@@ -41,35 +41,45 @@ class ReviewStore {
 
     /**
      * In-memory cache keyed by `<projectSlug>/<branchSlug>`. Holds the most
-     * recently loaded or written draft Review for that branch.
+     * recently loaded or written Review for that branch.
      */
     private val cache = ConcurrentHashMap<String, Review>()
 
     var clock: Clock = Clock.systemUTC()
 
+    /**
+     * When set, [paths] returns this value directly instead of consulting
+     * [SitatameSettings]. Intended for unit tests that run outside the
+     * IntelliJ Platform (no ApplicationManager). Production code must leave
+     * this null.
+     */
+    @Suppress("VisibleForTests")
+    var pathsOverride: SitatamePaths? = null
+
     private val settings: SitatameSettings
         get() = ApplicationManager.getApplication().getService(SitatameSettings::class.java)
 
     private fun paths(repoRoot: String, branch: String): SitatamePaths =
-        PathsFactory.newPaths(repoRoot, branch, overrideHome = settings.state.sitatameHomeOverride)
+        pathsOverride
+            ?: PathsFactory.newPaths(repoRoot, branch, overrideHome = settings.state.sitatameHomeOverride)
 
     private fun cacheKey(p: SitatamePaths): String = "${p.projectSlug}/${p.slug}"
 
     /**
-     * Load the most recently modified draft for the current branch, or return
-     * a fresh empty [Review] if no draft exists. The store caches the result
-     * so subsequent tool-window refreshes are cheap.
+     * Load the current review for the branch, or return a fresh empty [Review]
+     * if no review file exists yet. The store caches the result so subsequent
+     * tool-window refreshes are cheap.
      */
-    fun loadOrInitDraft(repoRoot: String, branch: String): Review {
+    fun loadOrInit(repoRoot: String, branch: String): Review {
         val p = paths(repoRoot, branch)
         val key = cacheKey(p)
         cache[key]?.let { return it }
-        val latest = latestDraftPath(p)
-        val review = if (latest != null) {
+        val reviewPath = toPath(p.reviewFile())
+        val review = if (Files.isRegularFile(reviewPath)) {
             try {
-                Codec.decode(Files.readAllBytes(latest))
+                Codec.decode(Files.readAllBytes(reviewPath))
             } catch (e: Exception) {
-                log.warn("failed to decode existing draft at $latest; starting fresh", e)
+                log.warn("failed to decode existing review at $reviewPath; starting fresh", e)
                 freshReview(branch)
             }
         } else {
@@ -80,20 +90,20 @@ class ReviewStore {
     }
 
     /**
-     * Append a new comment to the current draft and persist atomically. Runs
+     * Append a new comment to the current review and persist atomically. Runs
      * on a background thread; caller MUST switch back to EDT before touching
      * UI. Returns the saved file path.
      */
     fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult =
         synchronized(lock) {
             val p = paths(repoRoot, branch)
-            val review = loadOrInitDraft(repoRoot, branch)
+            val review = loadOrInit(repoRoot, branch)
             val added = mutate(review)
             if (added.anchor.anchorId.isEmpty()) {
                 added.anchor.anchorId = UUID.randomUUID().toString()
             }
             review.comments.add(added)
-            persistDraft(p, review)
+            saveReview(p, review)
         }
 
     /**
@@ -103,52 +113,83 @@ class ReviewStore {
     fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? =
         synchronized(lock) {
             val p = paths(repoRoot, branch)
-            val review = loadOrInitDraft(repoRoot, branch)
+            val review = loadOrInit(repoRoot, branch)
             val target = review.comments.firstOrNull(predicate) ?: return null
             target.state = if (target.state == ReviewState.RESOLVED) ReviewState.OPEN else ReviewState.RESOLVED
-            persistDraft(p, review)
+            saveReview(p, review)
         }
 
     /**
-     * Persist any pending changes and return the saved file path. The store
-     * does not auto-save on every mutation; the action layer triggers this
-     * after a successful comment edit.
+     * Atomically persist [review] to `<branchDir>/review.md`.
+     *
+     * - Empty review (no comments, blank review_comment) is a no-op; returns a
+     *   [SaveResult] with an empty path.
+     * - Existing `review.md` is backed up to `review.md.bak` before the new
+     *   version is renamed into place.
+     * - On encode failure, a rescue JSON file is written to
+     *   `<branchDir>/review.md.rescue.<timestamp>.json` and a [RescueError] is
+     *   returned via [SaveResult.error].
+     *
+     * Mirrors Go's `Store.SaveReview`.
      */
-    fun saveDraft(repoRoot: String, branch: String): SaveResult =
+    fun saveReview(repoRoot: String, branch: String): SaveResult =
         synchronized(lock) {
             val p = paths(repoRoot, branch)
-            val review = loadOrInitDraft(repoRoot, branch)
-            persistDraft(p, review)
+            val review = loadOrInit(repoRoot, branch)
+            saveReview(p, review)
         }
 
     /**
-     * Promote the most recent draft to reviews/. Returns the new path, or
-     * null if there is no draft to promote.
+     * Return the path of the current `review.md` if it exists, or null if none
+     * is present. Mirrors Go's `Store.DetectReview`.
      */
-    fun promoteDraft(repoRoot: String, branch: String): String? =
-        synchronized(lock) {
-            val p = paths(repoRoot, branch)
-            val draftPath = latestDraftPath(p) ?: return null
-            Files.createDirectories(toPath(p.reviewsDir()))
-            val id = draftPath.fileName.toString().removeSuffix(".md")
-            val target = toPath(p.reviewFile(id))
-            Files.move(draftPath, target, StandardCopyOption.ATOMIC_MOVE)
-            target.toString()
+    fun detectReview(repoRoot: String, branch: String): Path? {
+        val p = paths(repoRoot, branch)
+        val reviewPath = toPath(p.reviewFile())
+        return if (Files.isRegularFile(reviewPath)) reviewPath else null
+    }
+
+    /**
+     * Repair an incomplete write that left `review.md` missing but
+     * `review.md.bak` present (crash window between bak-rename and
+     * tmp-rename). Also cleans up orphaned `.tmp` files.
+     *
+     * Safe to call at startup: no-op when review.md exists or .bak is absent.
+     * Mirrors Go's `Store.RecoverFromCrash`.
+     */
+    fun recoverFromCrash(repoRoot: String, branch: String) {
+        val p = paths(repoRoot, branch)
+        val branchDir = toPath(p.branchDir())
+
+        // Clean up orphaned .tmp files.
+        if (Files.isDirectory(branchDir)) {
+            Files.list(branchDir).use { stream ->
+                stream.filter { it.fileName.toString().endsWith(".tmp") }
+                    .forEach { runCatching { Files.deleteIfExists(it) } }
+            }
         }
+
+        val final = toPath(p.reviewFile())
+        val bak = toPath(p.bakFile())
+        if (!Files.isRegularFile(final) && Files.isRegularFile(bak)) {
+            try {
+                Files.move(bak, final, StandardCopyOption.ATOMIC_MOVE)
+                log.info("sitatame: crash recovery: restored review.md from review.md.bak")
+            } catch (e: Exception) {
+                log.warn("sitatame: crash recovery: rename review.md.bak -> review.md failed", e)
+            }
+        }
+    }
 
     /** Snapshot of the cached comments for the tool window. */
     fun snapshotComments(repoRoot: String, branch: String): List<Comment> {
-        val review = loadOrInitDraft(repoRoot, branch)
+        val review = loadOrInit(repoRoot, branch)
         return review.comments.toList()
     }
 
-    /** Resolve the directory where drafts for the current branch live. */
-    fun draftsDir(repoRoot: String, branch: String): String =
-        paths(repoRoot, branch).draftsDir()
-
-    /** Resolve the directory where promoted reviews for the branch live. */
-    fun reviewsDir(repoRoot: String, branch: String): String =
-        paths(repoRoot, branch).reviewsDir()
+    /** Resolve the branch directory path (`<OutputRoot>/<ProjectSlug>/<BranchSlug>/`). */
+    fun branchDir(repoRoot: String, branch: String): String =
+        paths(repoRoot, branch).branchDir()
 
     /** Reset the in-memory cache. Tests + Settings panel rely on this. */
     fun invalidate() {
@@ -167,60 +208,100 @@ class ReviewStore {
         )
     }
 
-    private fun persistDraft(p: SitatamePaths, review: Review): SaveResult {
-        if (review.id.isEmpty()) {
-            review.id = generateId(p, review.reviewComment)
+    /**
+     * Internal: atomically persist [review] to `<branchDir>/review.md`.
+     * Caller must hold [lock].
+     */
+    private fun saveReview(p: SitatamePaths, review: Review): SaveResult {
+        // Empty review is a no-op.
+        if (review.comments.isEmpty() && review.reviewComment.trim().isEmpty()) {
+            return SaveResult(path = "", id = review.id)
         }
-        val draftsDir = toPath(p.draftsDir())
-        Files.createDirectories(draftsDir)
-        tryRestrictPermissions(draftsDir)
 
-        val final = toPath(p.draftFile(review.id))
-        val bytes = Codec.encode(review)
-        val tmp = Files.createTempFile(draftsDir, ".${review.id}.", ".tmp")
+        if (review.id.isEmpty()) {
+            review.id = generateId(review.reviewComment)
+        }
+
+        val branchDir = toPath(p.branchDir())
+        Files.createDirectories(branchDir)
+        tryRestrictPermissions(branchDir)
+
+        val bytes: ByteArray = try {
+            Codec.encode(review)
+        } catch (encodeErr: Exception) {
+            // Rescue: write raw JSON so the user can recover content.
+            val rescuePath = writeRescue(p, review, encodeErr)
+            return SaveResult(path = "", id = review.id, error = RescueError(rescuePath, encodeErr))
+        }
+
+        val final = toPath(p.reviewFile())
+        val bak = toPath(p.bakFile())
+
+        // Step 1: write to a tmp file in branchDir (same filesystem → atomic rename).
+        val tmp = Files.createTempFile(branchDir, ".review.", ".tmp")
         try {
             Files.write(tmp, bytes)
-            Files.move(tmp, final, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING)
+            // Step 2: back up existing review.md → review.md.bak.
+            if (Files.isRegularFile(final)) {
+                Files.move(final, bak, StandardCopyOption.REPLACE_EXISTING)
+            }
+            // Step 3: atomic rename tmp → review.md.
+            Files.move(tmp, final, StandardCopyOption.ATOMIC_MOVE)
         } catch (e: Exception) {
-            try { Files.deleteIfExists(tmp) } catch (_: Exception) { }
+            runCatching { Files.deleteIfExists(tmp) }
             throw e
         }
+
         cache[cacheKey(p)] = review
         return SaveResult(path = final.toString(), id = review.id)
     }
 
-    private fun latestDraftPath(p: SitatamePaths): Path? {
-        val dir = toPath(p.draftsDir())
-        if (!Files.isDirectory(dir)) return null
-        return Files.list(dir).use { stream ->
-            stream
-                .filter { Files.isRegularFile(it) && it.fileName.toString().endsWith(".md") }
-                .toArray { arrayOfNulls<Path>(it) }
-                .filterNotNull()
-                .maxByOrNull { Files.getLastModifiedTime(it).toMillis() }
+    /**
+     * Write an in-memory Review as rescue JSON when Codec.encode fails.
+     * Returns the written path, or an empty string on failure.
+     *
+     * Mirrors Go's `store.writeRescue`.
+     */
+    private fun writeRescue(p: SitatamePaths, review: Review, encodeErr: Exception): String {
+        return try {
+            val branchDir = toPath(p.branchDir())
+            Files.createDirectories(branchDir)
+            val ts = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
+                .format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
+            val filename = "review.md.rescue.$ts.json"
+            val rescuePath = branchDir.resolve(filename)
+            val payload = mapOf(
+                "schema" to "rescue/1",
+                "saved_at" to LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
+                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                "reason" to "yaml encode failed",
+                "original_encode_error" to encodeErr.message,
+                "review_id" to review.id,
+                "branch" to review.branch,
+                "comment_count" to review.comments.size,
+            )
+            val json = payload.entries.joinToString(",\n  ", "{\n  ", "\n}") { (k, v) ->
+                "\"$k\": ${if (v is String?) "\"${v?.replace("\"", "\\\"") ?: ""}\"" else v}"
+            }
+            Files.writeString(rescuePath, json)
+            log.warn("sitatame: encode failed; rescue written to $rescuePath", encodeErr)
+            rescuePath.toString()
+        } catch (e: Exception) {
+            log.error("sitatame: rescue write also failed", e)
+            ""
         }
     }
 
     /**
-     * Allocate a draft id of the form `yyyyMMddTHHmmss-<slug>` and append
-     * `-1`, `-2`, ... when the base is taken. Matches Go's [GenerateID]
-     * semantics from `store.go`.
+     * Allocate a review id of the form `yyyyMMddTHHmmss-<slug>`. The id is
+     * stored in review.md's `id:` field for cross-tool correlation.
      */
-    private fun generateId(p: SitatamePaths, reviewComment: String): String {
+    private fun generateId(reviewComment: String): String {
         val ts = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
             .format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
         val slug = slugifyReviewComment(reviewComment)
-        val base = "$ts-$slug"
-        if (!isIdTaken(p, base)) return base
-        for (i in 1..99) {
-            val cand = "$base-$i"
-            if (!isIdTaken(p, cand)) return cand
-        }
-        error("could not allocate id under $base after 99 tries")
+        return "$ts-$slug"
     }
-
-    private fun isIdTaken(p: SitatamePaths, id: String): Boolean =
-        Files.exists(toPath(p.draftFile(id))) || Files.exists(toPath(p.reviewFile(id)))
 
     private fun slugifyReviewComment(s: String): String {
         val first = s.substringBefore('\n').trim()
@@ -242,8 +323,8 @@ class ReviewStore {
     }
 
     /**
-     * Best-effort POSIX rwx------ on the drafts/reviews dir. Mirrors the Go
-     * side's 0o700. On Windows this is a silent no-op.
+     * Best-effort POSIX rwx------ on the branch dir. Mirrors Go's 0o700. On
+     * Windows this is a silent no-op.
      */
     private fun tryRestrictPermissions(dir: Path) {
         try {
@@ -256,7 +337,22 @@ class ReviewStore {
         }
     }
 
-    data class SaveResult(val path: String, val id: String)
+    data class SaveResult(
+        val path: String,
+        val id: String,
+        val error: RescueError? = null,
+    ) {
+        val succeeded: Boolean get() = error == null && path.isNotEmpty()
+    }
+
+    /**
+     * Returned (via [SaveResult.error]) when Codec.encode fails and a rescue
+     * file was written. Mirrors Go's `review.RescueError`.
+     */
+    class RescueError(
+        val rescuePath: String,
+        val encodeErr: Exception,
+    ) : Exception("encode failed (${encodeErr.message}); rescue written to $rescuePath", encodeErr)
 }
 
 /** Convenience: turn a File into a Path. */

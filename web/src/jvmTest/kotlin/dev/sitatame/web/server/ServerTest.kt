@@ -11,6 +11,7 @@ import io.ktor.server.testing.testApplication
 import kotlinx.serialization.json.Json
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertNotNull
+import org.junit.jupiter.api.Assertions.assertNull
 import org.junit.jupiter.api.Assertions.assertTrue
 import org.junit.jupiter.api.Test
 import java.nio.file.Files
@@ -248,13 +249,13 @@ class CurrentBranchTest {
 }
 
 /**
- * Verifies the ReviewLoader picks up a planted .md file via the
- * SitatamePaths.reviewsDir() layout. Doesn't need git at all.
+ * Verifies the ReviewLoader picks up review.md under the new 1-branch-1-file
+ * layout via [SitatamePaths.branchDir]. No git required.
  */
 class ReviewLoaderIntegrationTest {
 
     @Test
-    fun `loads latest review when present`() {
+    fun `loads review when present`() {
         val home = Files.createTempDirectory("sitatame-web-home")
         try {
             val repo = Files.createTempDirectory("sitatame-web-repo")
@@ -266,9 +267,9 @@ class ReviewLoaderIntegrationTest {
                 envLookup = { if (it == "SITATAME_HOME") home.toString() else null },
                 homeDir = home,
             )
-            val reviewsDir = paths.reviewsDir()
-            Files.createDirectories(reviewsDir)
-            val md = reviewsDir.resolve("20260501T000000-test.md")
+            val branchDir = paths.branchDir()
+            Files.createDirectories(branchDir)
+            val md = branchDir.resolve("review.md")
             md.writeText(
                 """
                 ---
@@ -296,9 +297,9 @@ class ReviewLoaderIntegrationTest {
                 """.trimIndent() + "\n"
             )
 
-            val latest = ReviewLoader.findLatestPath(reviewsDir)
-            assertNotNull(latest)
-            val review = ReviewLoader.load(latest!!)
+            val reviewPath = ReviewLoader.findReviewPath(branchDir)
+            assertNotNull(reviewPath)
+            val review = ReviewLoader.load(reviewPath!!)
             assertEquals("20260501T000000-test", review.id)
             assertEquals("feature/x", review.branch)
             assertEquals("origin/main", review.baseRef)
@@ -314,32 +315,36 @@ class ReviewLoaderIntegrationTest {
         }
     }
 
-    /**
-     * Parity guard: `findLatestPath` must choose by filename lex order, not
-     * mtime. Filenames are `<yyyyMMddTHHmmss>-<slug>.md` so lex order tracks
-     * creation time and survives `git checkout` / `git restore`, which would
-     * otherwise drift mtime and silently divert the Web UI to a different
-     * "latest" review than the Go TUI.
-     */
     @Test
-    fun `findLatestPath picks by filename lex order ignoring mtime`() {
-        val dir = Files.createTempDirectory("sitatame-web-loader-sort")
+    fun `findReviewPath returns null when review dot md absent`() {
+        val dir = Files.createTempDirectory("sitatame-web-no-review")
         try {
-            val older = dir.resolve("20260101T000000-alpha.md")
-            val newer = dir.resolve("20260102T000000-beta.md")
-            // Write older first, then newer. Then invert mtimes: make `older`
-            // look newer than `newer` on the filesystem.
-            older.writeText("---\nid: alpha\n---\n\n")
-            newer.writeText("---\nid: beta\n---\n\n")
+            // branchDir exists but has no review.md
+            assertNull(ReviewLoader.findReviewPath(dir))
+        } finally {
+            runCatching { rmrf(dir) }
+        }
+    }
 
-            val now = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis())
-            val past = java.nio.file.attribute.FileTime.fromMillis(System.currentTimeMillis() - 10 * 60 * 1000)
-            Files.setLastModifiedTime(older, now)
-            Files.setLastModifiedTime(newer, past)
+    @Test
+    fun `findReviewPath returns null when branchDir does not exist`() {
+        val dir = Files.createTempDirectory("sitatame-web-missing-parent")
+        val nonExistent = dir.resolve("no-such-branch")
+        try {
+            assertNull(ReviewLoader.findReviewPath(nonExistent))
+        } finally {
+            runCatching { rmrf(dir) }
+        }
+    }
 
-            val picked = ReviewLoader.findLatestPath(dir)
-            assertNotNull(picked)
-            assertEquals("20260102T000000-beta.md", picked!!.fileName.toString())
+    @Test
+    fun `findReviewPath ignores legacy timestamped md files`() {
+        val dir = Files.createTempDirectory("sitatame-web-legacy")
+        try {
+            // Legacy layout left timestamped files; new code must ignore them.
+            dir.resolve("20260101T000000-alpha.md").writeText("---\nid: alpha\n---\n\n")
+            // review.md is absent — must return null regardless of other .md files.
+            assertNull(ReviewLoader.findReviewPath(dir))
         } finally {
             runCatching { rmrf(dir) }
         }

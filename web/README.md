@@ -10,7 +10,7 @@ GitHub-style dark-mode review viewer.
 ## Goals (Phase 1 step 1)
 
 - Read-only renderer of the current branch's diff (`<base>..HEAD`) and the
-  most recent review .md under `~/.sitatame/<project-slug>/reviews/<branch-slug>/`.
+  review file at `~/.sitatame/<project-slug>/<branch-slug>/review.md`.
 - GitHub Dimmed Dark-style colour scheme, 2-pane layout (sidebar +
   unified-diff main pane).
 - UI skeleton for write actions (resolve/reopen buttons) — wired in step 2.

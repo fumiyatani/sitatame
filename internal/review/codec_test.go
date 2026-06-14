@@ -404,6 +404,103 @@ func TestEncode_ExtrasEverywherePreserved(t *testing.T) {
 	}
 }
 
+// TestEncode_RoundtripWithProblematicBodies guards against the class of
+// yaml re-decode failures reported in issue #76: bodies with YAML special
+// characters (`:`, `?`, `[`, `{`, Japanese brackets, embedded `key: value`
+// lines) must survive an Encode→Decode round-trip without data loss.
+// The old Encode implementation used yaml.Marshal→yaml.Unmarshal as an
+// intermediate step; that path can fail with "did not find expected key" for
+// certain input shapes. The new Encode uses Node.Encode directly, eliminating
+// the fragile bytes round-trip. This test guards against regressions.
+func TestEncode_RoundtripWithProblematicBodies(t *testing.T) {
+	t.Parallel()
+	baseReview := Review{
+		Schema:    1,
+		ID:        "20260614T000000-test",
+		Branch:    "feature/test",
+		Base:      Ref{Ref: "origin/main", SHA: "aaa"},
+		Head:      Ref{Ref: "HEAD", SHA: "bbb"},
+		CreatedAt: time.Date(2026, 6, 14, 0, 0, 0, 0, time.UTC),
+	}
+
+	cases := []struct {
+		name string
+		body string
+	}{
+		{
+			name: "multiline_body",
+			body: "first line\nsecond line\nthird line\n",
+		},
+		{
+			name: "colon_near_start",
+			body: "note: this is important\nalso: another key-like line\n",
+		},
+		{
+			name: "question_mark_start",
+			body: "? this looks like a YAML key\nnormal line\n",
+		},
+		{
+			name: "square_brackets",
+			body: "see [section 1] and [section 2] for details\n",
+		},
+		{
+			name: "curly_braces",
+			body: "{inline: value} style content\n",
+		},
+		{
+			name: "japanese_brackets",
+			body: "「重要」このコメントを確認してください。\n『参照』ドキュメントを参照してください。\n",
+		},
+		{
+			name: "embedded_yaml_like",
+			body: "The fix should:\n  key: value\n  another_key: another_value\nEnd of comment.\n",
+		},
+		{
+			name: "complex_mixed",
+			body: "「バグ修正」\nこの変更では:\n  - [重要] セキュリティ修正\n  - {優先度: 高} パフォーマンス改善\n? 本当に必要か確認してください\nkey: value の形式も含む\n",
+		},
+	}
+
+	for _, tc := range cases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			r := baseReview
+			r.Comments = []Comment{
+				{
+					Anchor: Anchor{
+						AnchorID: "11111111-1111-1111-1111-111111111111",
+						Kind:     KindLine,
+						Path:     "src/main.go",
+						Side:     SideHead,
+						Blob:     "bbb",
+						Line:     10,
+					},
+					State: StateOpen,
+					Body:  tc.body,
+				},
+			}
+
+			out, err := Encode(r)
+			if err != nil {
+				t.Fatalf("Encode failed: %v", err)
+			}
+
+			r2, err := Decode(out)
+			if err != nil {
+				t.Fatalf("Decode after Encode failed: %v\nEncoded output:\n%s", err, out)
+			}
+
+			if len(r2.Comments) != 1 {
+				t.Fatalf("round-trip: got %d comments, want 1", len(r2.Comments))
+			}
+			if r2.Comments[0].Body != tc.body {
+				t.Errorf("round-trip body mismatch:\ngot:  %q\nwant: %q", r2.Comments[0].Body, tc.body)
+			}
+		})
+	}
+}
+
 func TestDecode_RejectsMissingDelim(t *testing.T) {
 	t.Parallel()
 	cases := []string{
@@ -417,3 +514,4 @@ func TestDecode_RejectsMissingDelim(t *testing.T) {
 		}
 	}
 }
+
