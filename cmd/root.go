@@ -46,6 +46,10 @@ type Env struct {
 	// LookPath resolves a binary name like exec.LookPath. Tests stub it to
 	// force the search fallback path even when the host has ripgrep installed.
 	LookPath func(name string) (string, error)
+	// Clipboard copies text to the system clipboard. When nil, the real
+	// clipboard.Copy implementation is used. Tests inject a stub to verify
+	// clipboard interaction without spawning real processes.
+	Clipboard func(text string) error
 }
 
 // DefaultEnv binds the process streams, the platform TTY check, and the real
@@ -83,11 +87,12 @@ func defaultRunTUI(env Env, opts TUIOptions) (TUIResult, error) {
 // rootOpts is the parsed form of the positional + flag arguments to
 // `sitatame [base]` / `sitatame --staged` / `sitatame --working`.
 type rootOpts struct {
-	Staged   bool
-	Working  bool
-	BaseArg  string
-	New      bool // --new: refuse if review.md already exists
-	ForceNew bool // --force-new: back up review.md and start fresh
+	Staged      bool
+	Working     bool
+	BaseArg     string
+	New         bool // --new: refuse if review.md already exists
+	ForceNew    bool // --force-new: back up review.md and start fresh
+	NoClipboard bool // --no-clipboard: skip copying the review path to clipboard
 }
 
 // parseRootArgs splits args into the rootOpts shape, enforcing the rule that
@@ -105,6 +110,8 @@ func parseRootArgs(args []string) (rootOpts, error) {
 			opts.New = true
 		case a == "--force-new":
 			opts.ForceNew = true
+		case a == "--no-clipboard":
+			opts.NoClipboard = true
 		case len(a) > 0 && a[0] == '-':
 			return rootOpts{}, fmt.Errorf("unknown flag: %s", a)
 		default:
@@ -328,7 +335,8 @@ func RunRoot(env Env, args []string) int {
 		return 1
 	}
 
-	return finalizeReview(env, store, result)
+	noClipboard := opts.NoClipboard || os.Getenv("SITATAME_NO_CLIPBOARD") != ""
+	return finalizeReview(env, store, result, noClipboard)
 }
 
 // loadReviewForResume reads `path` and decodes it as a review.Review. The
