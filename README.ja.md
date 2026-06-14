@@ -103,10 +103,23 @@ make build-all  # dist/sitatame-{darwin,linux}-{amd64,arm64} を生成
 
 ## Web UI
 
-[`web/`](web/) の Web UI は、レビューを read-only で確認するための Kotlin
+[`web/`](web/) の Web UI は、sitatame レビューインターフェースの Kotlin
 Multiplatform 実装です。JVM target の Ktor backend が現在のリポジトリを読み、
 `git diff origin/main..HEAD` と共有 sitatame storage 内の最新 review Markdown
 を JSON として返します。Wasm target はそのデータを Compose for Web で表示します。
+
+**機能一覧** (Phase 1 step 2):
+
+- **読み取り**: unified diff 表示、ファイル / hunk ナビゲーション、コメント表示
+- **書き込み**:
+  - line / range / file / overall の各粒度でコメントを追加
+  - コメントの resolve / reopen（optimistic UI）
+  - review-level のサマリーコメントを編集
+  - 同時編集検知: ETag ベースの 412 ハンドリング（Reload + retry または Discard）
+
+range コメントは **long-press** で range モードを開始し、同じ hunk 内の終了行を
+クリックして確定します。ファイルヘッダの "Add range comment" ボタンからも同じ
+フローに入れます。
 
 必要なもの:
 
@@ -128,7 +141,8 @@ server は localhost の空き port に bind し、stdout に URL を出力し�
 SITATAME_WEB_URL=http://127.0.0.1:<port>
 ```
 
-Wasm frontend の dev server は別 shell で起動します:
+出力された URL をブラウザで開くと操作できます。UI 開発時のホットリロードが必要な
+場合は別 shell で Wasm frontend の dev server も起動します:
 
 ```sh
 cd web
@@ -153,9 +167,17 @@ make web-fixtures
 現時点の制約:
 
 - diff base は `origin/main` に hard-code されています。
-- viewer は read-only です。resolve / reopen controls は UI scaffold のみです。
 - production Wasm distribution は Ktor static resources にまだ自動連携されて
   いないため、local UI development では `:wasmJsBrowserDevelopmentRun` を使います。
+- Compose for Web (CMP 1.7.x) の制約により Shift+click での range モード開始は
+  未対応です。long-press を使ってください。
+- コメント削除 (DELETE) と conflict 時の force overwrite は未実装です。
+- WebSocket/SSE push はありません。TUI や IntelliJ Plugin による変更はブラウザを
+  手動でリロードするか、次の write 操作時の 412 で初めて検知されます。
+
+詳細な write 経路の仕様は
+[`docs/web-ui-phase1-step2-spec.md`](docs/web-ui-phase1-step2-spec.md) を参照して
+ください。
 
 module layout、API routes、environment variables、既知の制約は
 [`web/README.md`](web/README.md) にまとめています。

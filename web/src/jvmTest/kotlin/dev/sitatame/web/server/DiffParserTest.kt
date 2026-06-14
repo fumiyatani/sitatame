@@ -162,4 +162,98 @@ class DiffParserTest {
         assertEquals(12, hunk.headStart)
         assertEquals(3, hunk.headLines)
     }
+
+    // -----------------------------------------------------------------------
+    // Blob index header parsing (Phase C)
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun `blob SHAs are parsed from index header`() {
+        val diff = """
+            diff --git a/foo.go b/foo.go
+            index aaaaaaa..bbbbbbb 100644
+            --- a/foo.go
+            +++ b/foo.go
+            @@ -1,3 +1,4 @@
+             package foo
+            -import "fmt"
+            +import "context"
+        """.trimIndent()
+
+        val files = DiffParser.parse(diff)
+        assertEquals(1, files.size)
+        assertEquals("aaaaaaa", files[0].blobBase)
+        assertEquals("bbbbbbb", files[0].blobHead)
+    }
+
+    @Test
+    fun `new file has all-zeros base blob`() {
+        val diff = """
+            diff --git a/new.go b/new.go
+            new file mode 100644
+            index 0000000..abcdef1
+            --- /dev/null
+            +++ b/new.go
+            @@ -0,0 +1 @@
+            +package new
+        """.trimIndent()
+
+        val files = DiffParser.parse(diff)
+        assertEquals(1, files.size)
+        assertEquals("0000000", files[0].blobBase)
+        assertEquals("abcdef1", files[0].blobHead)
+    }
+
+    @Test
+    fun `deleted file has all-zeros head blob`() {
+        val diff = """
+            diff --git a/old.go b/old.go
+            deleted file mode 100644
+            index abcdef0..0000000
+            --- a/old.go
+            +++ /dev/null
+            @@ -1,1 +0,0 @@
+            -package old
+        """.trimIndent()
+
+        val files = DiffParser.parse(diff)
+        assertEquals(1, files.size)
+        assertEquals("abcdef0", files[0].blobBase)
+        assertEquals("0000000", files[0].blobHead)
+    }
+
+    @Test
+    fun `index header without mode is parsed correctly`() {
+        // Some git versions omit the mode from the index line.
+        val diff = """
+            diff --git a/foo.go b/foo.go
+            index abc1234..def5678
+            --- a/foo.go
+            +++ b/foo.go
+            @@ -1 +1 @@
+            -old
+            +new
+        """.trimIndent()
+
+        val files = DiffParser.parse(diff)
+        assertEquals(1, files.size)
+        assertEquals("abc1234", files[0].blobBase)
+        assertEquals("def5678", files[0].blobHead)
+    }
+
+    @Test
+    fun `file without index header has null blob SHAs`() {
+        // Rename-only diffs may omit the index line entirely.
+        val diff = """
+            diff --git a/old.go b/new.go
+            similarity index 100%
+            rename from old.go
+            rename to new.go
+        """.trimIndent()
+
+        val files = DiffParser.parse(diff)
+        assertEquals(1, files.size)
+        assertNull(files[0].blobBase)
+        assertNull(files[0].blobHead)
+    }
 }
