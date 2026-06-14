@@ -48,44 +48,81 @@ func mainView(m Model) string {
 			b.WriteByte('\n')
 		}
 	} else {
-		end := m.top + height
-		if end > len(m.rows) {
-			end = len(m.rows)
-		}
 		// Width budget for the row body excludes the 2-col cursor gutter, the
 		// 1-col overlay marker gutter, and the line-number gutter (which is 0
 		// when no side has any line numbers).
 		gw := gutterWidth(m.lnBaseW, m.lnHeadW)
 		bodyMax := m.width - len(cursorMarker) - 1 - gw
-		for i := m.top; i < end; i++ {
-			switch {
-			case i == m.cursor:
-				b.WriteString(cursorMarker)
-			case m.selection != nil && m.selection.Contains(i):
-				b.WriteString("| ")
-			default:
-				b.WriteString(cursorPad)
-			}
+
+		// Render rows starting at m.top, consuming at most `height` screen
+		// lines. Each source row may wrap into multiple screen lines when its
+		// body is wider than bodyMax.
+		screenUsed := 0
+		for i := m.top; i < len(m.rows) && screenUsed < height; i++ {
+			isCursor := i == m.cursor
+			inSelection := m.selection != nil && m.selection.Contains(i)
+			hasCommentFlag := hasComment(m.overlay[i])
+
 			marker := overlayMarker(m.overlay[i], m.Review.Comments)
 			gutter := lineNumberGutter(m.rows[i], m.Files, m.lnBaseW, m.lnHeadW)
-			body := colorizeRow(m.rows[i], renderRow(m.rows[i], bodyMax))
-			if hasComment(m.overlay[i]) {
-				// lineNumberGutter は rowLine 以外やガター幅 0 で空白を返すため、
-				// 文字色だけだと不可視になる。そのケースは marker/body 側に逃がす。
-				if m.rows[i].kind == rowLine && gw > 0 {
-					gutter = applyCommentHighlight(gutter)
-				} else {
-					marker = applyCommentHighlight(marker)
-					body = applyCommentHighlight(body)
+
+			// Compute wrap segments for this source row.
+			segments := wrapRow(m.rows[i], bodyMax)
+
+			for si, seg := range segments {
+				if screenUsed >= height {
+					break
 				}
+				coloredSeg := colorizeRow(m.rows[i], seg)
+
+				// Cursor / selection gutter: only first segment gets the
+				// meaningful marker; continuation lines get a plain pad so
+				// the body stays left-aligned.
+				var lineMarker, lineGutter string
+				if si == 0 {
+					lineGutter = gutter
+					switch {
+					case isCursor:
+						lineMarker = cursorMarker
+					case inSelection:
+						lineMarker = "| "
+					default:
+						lineMarker = cursorPad
+					}
+				} else {
+					// Continuation: blank gutter (same width) + plain pad.
+					lineMarker = cursorPad
+					lineGutter = blanks(gw)
+				}
+
+				// Apply comment highlight on first segment only.
+				lineBody := coloredSeg
+				lineGutterOut := lineGutter
+				if si == 0 && hasCommentFlag {
+					if m.rows[i].kind == rowLine && gw > 0 {
+						lineGutterOut = applyCommentHighlight(lineGutter)
+					} else {
+						marker = applyCommentHighlight(marker)
+						lineBody = applyCommentHighlight(coloredSeg)
+					}
+				}
+
+				lineOverlayMarker := " " // overlay marker col
+				if si == 0 {
+					lineOverlayMarker = marker
+				}
+
+				b.WriteString(lineMarker)
+				b.WriteString(lineOverlayMarker)
+				b.WriteString(lineGutterOut)
+				b.WriteString(lineBody)
+				b.WriteByte('\n')
+				screenUsed++
 			}
-			b.WriteString(marker)
-			b.WriteString(gutter)
-			b.WriteString(body)
-			b.WriteByte('\n')
 		}
-		for i := end - m.top; i < height; i++ {
+		for screenUsed < height {
 			b.WriteByte('\n')
+			screenUsed++
 		}
 	}
 	b.WriteString(hintLine(m))
