@@ -9,13 +9,16 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -31,6 +34,10 @@ import dev.sitatame.web.api.FileDto
  * Left sidebar (~320dp). Mirrors the TUI file picker: a flat list of all
  * changed files with status indicator, +adds/-dels, and an "open comment"
  * badge.
+ *
+ * [onToggleState] is called when the user clicks the Resolve/Reopen button on
+ * an inline comment.  [pendingToggleIds] is the set of anchorIds whose PATCH
+ * call is still in-flight — those show a spinner instead of a button.
  */
 @Composable
 fun Sidebar(
@@ -38,23 +45,40 @@ fun Sidebar(
     comments: List<CommentDto>,
     selectedPath: String?,
     onSelect: (String) -> Unit,
+    onToggleState: (CommentDto) -> Unit = {},
+    pendingToggleIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
     Column(modifier = modifier) {
         SidebarHeader(fileCount = files.size)
         LazyColumn(modifier = Modifier.fillMaxWidth()) {
             items(files, key = { it.path }) { file ->
-                val openCount = comments.count { it.path == file.path && it.state == "open" }
+                val fileComments = comments.filter { it.path == file.path }
+                val openCount = fileComments.count { it.state == "open" }
                 SidebarRow(
                     file = file,
                     openCount = openCount,
                     selected = file.path == selectedPath,
                     onClick = { onSelect(file.path) },
                 )
+                // Inline comment list under each selected file row
+                if (file.path == selectedPath && fileComments.isNotEmpty()) {
+                    fileComments.forEach { comment ->
+                        SidebarCommentRow(
+                            comment = comment,
+                            pending = comment.anchorId in pendingToggleIds,
+                            onToggle = { onToggleState(comment) },
+                        )
+                    }
+                }
             }
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SidebarHeader
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun SidebarHeader(fileCount: Int) {
@@ -84,6 +108,10 @@ private fun SidebarHeader(fileCount: Int) {
             .padding(horizontal = 0.dp, vertical = 0.dp),
     )
 }
+
+// ---------------------------------------------------------------------------
+// SidebarRow
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun SidebarRow(
@@ -132,6 +160,76 @@ private fun SidebarRow(
         }
     }
 }
+
+// ---------------------------------------------------------------------------
+// SidebarCommentRow — resolve toggle (B6)
+// ---------------------------------------------------------------------------
+
+/**
+ * A compact comment row shown under the selected file's entry in the sidebar.
+ *
+ * The Resolve/Reopen button triggers an optimistic state update via
+ * [onToggle].  While [pending] is true, a spinner replaces the button.
+ */
+@Composable
+private fun SidebarCommentRow(
+    comment: CommentDto,
+    pending: Boolean,
+    onToggle: () -> Unit,
+) {
+    val colors = LocalSitatameColors.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(MaterialTheme.colorScheme.background)
+            .padding(start = 24.dp, end = 8.dp, top = 2.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        StateBadge(comment.state)
+        Spacer(Modifier.width(6.dp))
+        Text(
+            text = buildString {
+                when (comment.kind) {
+                    "line" -> append("L${comment.line}")
+                    "range" -> append("L${comment.lineStart}-${comment.lineEnd}")
+                    "file" -> append("file")
+                    "review" -> append("review")
+                    else -> append(comment.kind)
+                }
+                append(": ")
+                append(comment.body.take(30))
+                if (comment.body.length > 30) append("…")
+            },
+            modifier = Modifier.weight(1f),
+            color = colors.mutedText,
+            fontFamily = FontFamily.Monospace,
+            fontSize = 11.sp,
+            maxLines = 1,
+        )
+        if (pending) {
+            CircularProgressIndicator(
+                modifier = Modifier.size(16.dp),
+                strokeWidth = 2.dp,
+                color = MaterialTheme.colorScheme.primary,
+            )
+        } else {
+            TextButton(
+                onClick = onToggle,
+                modifier = Modifier.padding(horizontal = 0.dp),
+            ) {
+                Text(
+                    text = if (comment.state == "open") "Resolve" else "Reopen",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// StatusGlyph / OpenBadge
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun StatusGlyph(status: String) {

@@ -107,11 +107,24 @@ make build-all  # writes dist/sitatame-{darwin,linux}-{amd64,arm64}
 
 ## Web UI
 
-The Web UI in [`web/`](web/) is a Kotlin Multiplatform implementation of a
-read-only review viewer. The JVM target runs a Ktor backend that reads the
+The Web UI in [`web/`](web/) is a Kotlin Multiplatform implementation of the
+sitatame review interface.  The JVM target runs a Ktor backend that reads the
 current repository, runs `git diff origin/main..HEAD`, loads the latest review
 Markdown from the shared sitatame storage directory, and exposes the result as
-JSON. The Wasm target renders that data with Compose for Web.
+JSON.  The Wasm target renders that data with Compose for Web.
+
+**Capabilities** (Phase 1 step 2):
+
+- **Read**: unified diff view with file/hunk navigation and comment display
+- **Write**:
+  - Add line, range, file, or overall comments
+  - Resolve / reopen comments with optimistic UI
+  - Edit the review-level narrative comment
+  - Conflict detection: ETag-based 412 handling with Reload + retry or Discard
+
+Range comments use **long-press** to start range mode, then click the end line
+(both must be in the same hunk).  An "Add range comment" button in the file
+header provides an alternative entry point.
 
 Requirements:
 
@@ -133,7 +146,8 @@ The server binds to a random local port and prints the URL on stdout:
 SITATAME_WEB_URL=http://127.0.0.1:<port>
 ```
 
-Run the Wasm frontend dev server in another shell:
+Open the printed URL in your browser.  To also run the Wasm frontend dev server
+(hot-reload during UI development):
 
 ```sh
 cd web
@@ -158,13 +172,18 @@ make web-fixtures
 Current limitations:
 
 - The diff base is hard-coded to `origin/main`.
-- The viewer is read-only; resolve/reopen controls are UI scaffolding only.
 - The production Wasm distribution is not yet wired into the Ktor static
-  resources automatically, so use `:wasmJsBrowserDevelopmentRun` for local UI
-  development.
+  resources automatically; use `:wasmJsBrowserDevelopmentRun` for local UI
+  development or run `:wasmJsBrowserDistribution` then `:run`.
+- Shift+click for range mode is not yet supported (Compose for Web CMP 1.7.x
+  limitation); use long-press instead.
+- DELETE comment and force-overwrite on conflict are not yet implemented.
+- No WebSocket/SSE push: changes from TUI or IntelliJ Plugin are visible only
+  after a manual browser refresh or the next write conflict (412).
 
 See [`web/README.md`](web/README.md) for the full module layout, API routes,
-environment variables, and known limitations.
+environment variables, and known limitations.  The full write-path specification
+is at [`docs/web-ui-phase1-step2-spec.md`](docs/web-ui-phase1-step2-spec.md).
 
 ## IntelliJ Plugin
 

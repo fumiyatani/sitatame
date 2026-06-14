@@ -156,6 +156,10 @@ object DiffParser {
         val hunks: MutableList<HunkDto> = mutableListOf(),
         var adds: Int = 0,
         var dels: Int = 0,
+        /** Abbreviated blob SHA for base side; parsed from `index <a>..<b>` header. */
+        var blobBase: String? = null,
+        /** Abbreviated blob SHA for head side; parsed from `index <a>..<b>` header. */
+        var blobHead: String? = null,
     )
 
     fun parse(diff: String): List<FileDto> {
@@ -195,6 +199,17 @@ object DiffParser {
                     cur.status = "R"
                     cur.renameTo = line.removePrefix("rename to ")
                 }
+                line.startsWith("index ") -> {
+                    // `index <blobBase>..<blobHead>[ <mode>]`
+                    // Example: `index caab94d..f02d7d6 100644`
+                    // Deleted files have `0000000` as blobHead; new files have
+                    // `0000000` as blobBase. We store them as-is so the Frontend
+                    // can choose the correct SHA for the anchor side.
+                    parseBlobIndex(line)?.let { (base, head) ->
+                        cur.blobBase = base
+                        cur.blobHead = head
+                    }
+                }
                 line.startsWith("Binary files ") -> {
                     // Leave hunks empty; the FE will fall back to a "binary"
                     // hint when it sees zero hunks but a non-context status.
@@ -232,7 +247,30 @@ object DiffParser {
             adds = b.adds,
             dels = b.dels,
             hunks = b.hunks.toList(),
+            blobBase = b.blobBase,
+            blobHead = b.blobHead,
         )
+    }
+
+    /**
+     * Parses the `index <blobBase>..<blobHead>[ <mode>]` line.
+     *
+     * Returns `(blobBase, blobHead)` on success, or null when the line does not
+     * match the expected format.  The all-zeros SHA (`0000000` / `0000000000...`)
+     * is returned as-is: the caller (Frontend) can discard it when needed.
+     */
+    private fun parseBlobIndex(line: String): Pair<String, String>? {
+        // Strip the "index " prefix and optional trailing " <mode>".
+        val rest = line.removePrefix("index ").trim()
+        val dotDot = rest.indexOf("..")
+        if (dotDot < 0) return null
+        val base = rest.substring(0, dotDot)
+        val afterDot = rest.substring(dotDot + 2)
+        // The head SHA is followed by an optional space + mode; take everything
+        // up to the first space (or end of string).
+        val head = afterDot.substringBefore(' ')
+        if (base.isEmpty() || head.isEmpty()) return null
+        return base to head
     }
 
     /**
