@@ -7,20 +7,21 @@
         Author and consume sitatame code reviews directly inside IntelliJ
         Community / IDEA Ultimate / Android Studio.<br/>
         <br/>
-        Phase 1 (this release) covers the write path: select a range, add a
-        comment, list everything in a tool window, and copy an AI-ready prompt
-        to the clipboard. Reviews and drafts live under
-        <code>~/.sitatame/&lt;project-slug&gt;/{reviews,drafts}/&lt;branch-slug&gt;/</code>
-        so the CLI, Web UI and IntelliJ plugin all see the same files.<br/>
+        This release covers the write path: select a range, add a comment,
+        list everything in a tool window, and copy an AI-ready prompt to the
+        clipboard. Reviews are stored under
+        <code>~/.sitatame/&lt;project-slug&gt;/&lt;branch-slug&gt;/review.md</code>
+        so the CLI, Web UI and IntelliJ plugin all see the same file.<br/>
         <br/>
         Status: experimental. Not yet on JetBrains Marketplace; install from
-        disk via <code>./gradlew :intellij:buildPlugin</code>.
+        disk via <code>./gradlew buildPlugin</code>.
     ]]></description>
 
     <change-notes><![CDATA[
+        <b>0.2.0</b> — new 1-branch-1-file layout (#76). Single review.md per
+        branch with automatic .bak backup. PromoteReview action removed.<br/>
         <b>0.1.0</b> — initial scaffold. Range / line comment actions,
-        tool window listing, AI prompt copy, draft → review promotion,
-        SITATAME_HOME override in Settings.
+        tool window listing, AI prompt copy, SITATAME_HOME override in Settings.
     ]]></change-notes>
 
     <depends>com.intellij.modules.platform</depends>
@@ -76,10 +77,5 @@
                 class="dev.sitatame.intellij.actions.CopyAIPromptAction"
                 text="sitatame: Copy AI Prompt"
                 description="Copy an AI-ready prompt for the selected or all open comments"/>
-
-        <action id="sitatame.PromoteReview"
-                class="dev.sitatame.intellij.actions.PromoteReviewAction"
-                text="sitatame: Promote Draft to Review"
-                description="Promote the current draft to reviews/ and notify the IDE"/>
     </actions>
 </idea-plugin>

@@ -13,16 +13,22 @@ import (
 type QuitReason int
 
 const (
-	// QuitNone is the initial value before the user has chosen to leave. The
-	// runner treats it like QuitDraft: any uncommitted in-memory review should
-	// still be persisted as a draft so work isn't lost on unexpected exits.
+	// QuitNone is the initial value before the user has chosen to leave.
+	// The caller treats it as a no-op: no file is written.
 	QuitNone QuitReason = iota
-	// QuitDraft is set by `q`; the caller saves the review to drafts/ and
-	// returns a non-zero exit code.
-	QuitDraft
-	// QuitPromote is set by `s`; the caller saves a draft, atomically promotes
-	// it to reviews/, and prints `SITATAME_REVIEW=<abs>` on stdout.
-	QuitPromote
+	// QuitDiscard is set by `q`; the caller discards the in-memory review
+	// (working memory is lost) and exits without writing anything.
+	QuitDiscard
+	// QuitSave is set by `s`; the caller writes review.md atomically and
+	// prints `SITATAME_REVIEW=<abs>` on stdout. If the review is empty the
+	// caller exits cleanly without writing.
+	QuitSave
+
+	// Deprecated aliases kept so we can rename incrementally.
+	// QuitDraft is kept so cmd tests that still reference it compile.
+	QuitDraft = QuitDiscard
+	// QuitPromote is kept so cmd tests that still reference it compile.
+	QuitPromote = QuitSave
 )
 
 // Model is the bubbletea model for the diff review TUI.
@@ -171,18 +177,22 @@ func (m *Model) updateMain(msg tea.Msg) tea.Cmd {
 		switch msg.String() {
 		case KeyQuit, KeyQuitCtrl:
 			m.quitting = true
-			m.quitReason = QuitDraft
+			m.quitReason = QuitDiscard
 			return tea.Quit
 		case KeySave:
 			m.quitting = true
-			m.quitReason = QuitPromote
+			m.quitReason = QuitSave
 			return tea.Quit
 		case KeyHelp:
 			m.showHelp = !m.showHelp
 			return nil
 		case KeyEsc:
+			// Esc at top-level (no modal, no file picker open) is a no-op.
+			// It only acts when help or a selection is active — this prevents
+			// accidental discard of in-memory work via a miskey.
 			if m.showHelp {
 				m.showHelp = false
+				return nil
 			}
 			m.clearSelection()
 			return nil
