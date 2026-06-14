@@ -5,6 +5,8 @@ plugins {
     // bundles. Keep the two lines in sync so a future codec change doesn't
     // accidentally drift between routes.
     kotlin("jvm") version "2.1.10"
+    // Required for @Serializable annotation processing used in RescuePayload.
+    kotlin("plugin.serialization") version "2.1.10"
     id("org.jetbrains.intellij.platform") version "2.1.0"
 }
 
@@ -36,6 +38,17 @@ dependencies {
     // If this turns out to clash in practice we can switch to a relocated
     // shadow JAR in Phase 2.
     implementation("org.snakeyaml:snakeyaml-engine:2.9")
+
+    // kotlinx-serialization-json is used to marshal RescuePayload (the rescue
+    // JSON written on Codec.encode failure). We use a DTO class rather than
+    // annotating the mutable Review model directly, because Review holds
+    // snakeyaml Node references that are not serializable.
+    //
+    // IntelliJ 2024.3 bundles kotlinx-serialization-core internally.
+    // The PluginClassLoader gives plugin classes priority over platform classes,
+    // so declaring an explicit implementation dependency here takes precedence.
+    // The version is pinned to match the Kotlin 2.1.x compiler plugin above.
+    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.7.3")
 
     intellijPlatform {
         // Target IntelliJ IDEA Community 2024.3. Build number 243.x. Android

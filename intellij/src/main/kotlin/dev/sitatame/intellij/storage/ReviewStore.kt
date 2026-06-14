@@ -271,6 +271,13 @@ class ReviewStore {
      *
      * Mirrors Go's `store.writeRescue`.
      */
+    /**
+     * Write an in-memory Review as rescue JSON when Codec.encode fails.
+     * Returns the written path, or an empty string on failure.
+     *
+     * Uses [RescuePayload] + kotlinx.serialization-json for full Review
+     * serialization, matching the schema produced by Go's `store.writeRescue`.
+     */
     private fun writeRescue(p: SitatamePaths, review: Review, encodeErr: Exception): String {
         return try {
             val branchDir = toPath(p.branchDir())
@@ -284,20 +291,17 @@ class ReviewStore {
             val nanos = String.format(Locale.ROOT, "%09d", now.nano)
             val filename = "review.md.rescue.$ts-$nanos.json"
             val rescuePath = branchDir.resolve(filename)
-            val payload = mapOf(
-                "schema" to "rescue/1",
-                "saved_at" to LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
-                    .format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
-                "reason" to "yaml encode failed",
-                "original_encode_error" to encodeErr.message,
-                "review_id" to review.id,
-                "branch" to review.branch,
-                "comment_count" to review.comments.size,
+
+            val payload = RescuePayload(
+                schema = "rescue/1",
+                savedAt = now.format(DateTimeFormatter.ISO_OFFSET_DATE_TIME),
+                reason = "yaml encode failed",
+                originalEncodeError = encodeErr.message ?: "",
+                review = review.toDto(),
             )
-            val json = payload.entries.joinToString(",\n  ", "{\n  ", "\n}") { (k, v) ->
-                "\"$k\": ${if (v is String?) "\"${v?.replace("\"", "\\\"") ?: ""}\"" else v}"
-            }
+            val json = rescueJson.encodeToString(RescuePayload.serializer(), payload)
             Files.writeString(rescuePath, json)
+
             // Apply 0600 permissions to the rescue file so its content is
             // owner-private, matching Go's os.WriteFile(path, b, 0o600).
             // On Windows, POSIX permissions are unsupported; skip silently.
