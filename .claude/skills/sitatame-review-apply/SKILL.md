@@ -1,35 +1,51 @@
 ---
 name: sitatame-review-apply
-description: sitatame が .sitatame/reviews/（または ~/.sitatame/<project-slug>/reviews/）に書き出したレビューを読み、open のコメントごとにコードを修正して resolved にマークする
+description: sitatame が ~/.sitatame/<project-slug>/<branch-slug>/review.md に書き出したレビューを読み、open のコメントごとにコードを修正して resolved にマークする
 ---
 
 # sitatame review apply
 
-sitatame は TUI でレビューを記録し、Markdown + YAML フロントマターの 1 ファイルに固めて出力する。この skill は出力された最新レビューを読み込み、`state: open` のコメントに対応する修正を順次適用していき、適用が終わったコメントを `state: resolved` に書き換える役割を担う。
+sitatame は TUI でレビューを記録し、Markdown + YAML フロントマターの 1 ファイルに固めて出力する。この skill は出力された review.md を読み込み、`state: open` のコメントに対応する修正を順次適用していき、適用が終わったコメントを `state: resolved` に書き換える役割を担う。
 
 ## 1. 対象ファイルの探し方
 
-レビューファイルは `s`（保存 & promote）で確定したものと、`q`（途中離脱）で書き出される下書きの 2 系統がある。さらに置き場所は今後変わる予定があるため、複数パスを探索する。
+issue #76 以降、レビューファイルは **1-branch-1-file** レイアウトに移行した。探す場所は 1 つだけ:
 
-**確定 (promoted) — 優先して処理する側:**
+```
+~/.sitatame/<project-slug>/<branch-slug>/review.md
+```
 
-- 現状（issue #38 マージ前）: `<repo-root>/.sitatame/reviews/<branch-slug>/<id>.md` が標準
-- 将来（issue #38 マージ後）: `~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md` に切り替わる
+`$SITATAME_HOME` が設定されている場合は `~/.sitatame` の代わりにその値が使われる（解決順: `$SITATAME_HOME` → `~/.sitatame` → `<tmp>/sitatame`）。
 
-**下書き (draft) — 処理前にユーザー確認が必要:**
+最新レビューを選ぶ手順:
 
-- 現状: `<repo-root>/.sitatame/drafts/<branch-slug>/<id>.md`
-- 将来: `~/.sitatame/<project-slug>/drafts/<branch-slug>/<id>.md`
+1. 上記パスに `review.md` が存在するか確認する（`stat` で十分）
+2. 存在すれば、それが処理対象の 1 ファイルである。選択不要
+3. ユーザーから具体的なファイル名 / `SITATAME_REVIEW=<abs>` の値が提示されている場合はそれを最優先する
 
-スキーマは promoted / drafts どちらも同じなので処理ロジックは変わらない。ただし drafts は「ユーザーがレビュー途中で離脱したもの」なので、見つけたら勝手に処理せず「下書きですが処理しますか？」と確認する。
+### 旧 layout を見つけた場合
 
-最新レビュー 1 件を選ぶ手順:
+以下のパスを検出したら **migration 漏れ** なので処理を中断し、ユーザーに案内する:
 
-1. promoted 側（`reviews/`）を両レイアウト分探索する（`ls` などで存在チェック）
-2. promoted が 1 件以上あれば、mtime 最新の 1 件を採用する
-3. promoted が 0 件のときに限り、drafts 側も探索する。候補が見つかったら「下書きですが処理しますか？」と確認したうえで採用する
-4. ユーザーから具体的なファイル名 / `SITATAME_REVIEW=<abs>` の値が提示されている場合はそれを最優先する
-5. promoted / drafts の両方が同時に存在する場合は promoted を優先（drafts はその promote 元かもしれないため）
+- `~/.sitatame/<project-slug>/reviews/<branch-slug>/*.md`（pre-#76 の旧 reviews/ layout）
+- `~/.sitatame/<project-slug>/drafts/<branch-slug>/*.md`（pre-#76 の旧 drafts/ layout）
+
+案内文:
+> "sitatame を一度起動して migration を完了させてください（旧 `reviews/` / `drafts/` layout が残っています）。"
+
+`<repo-root>/.sitatame/` を検出した場合も同様: PR #42 以前の legacy です。同じ案内を出してください。
+
+### Rescue file を検出した場合
+
+`~/.sitatame/<project-slug>/<branch-slug>/review.md.rescue.*.json` を検出したら **apply せず abort** する:
+
+> "Rescue file detected at `<path>`. This means the previous save failed. Please open the rescue file (JSON) and manually recover your comments before re-running this skill."
+
+`review.md` と rescue file が共存している場合も rescue を優先して abort する。
+
+### `.legacy-<YYYYMMDDTHHMMSS>/` ディレクトリ
+
+`~/.sitatame/<project-slug>/.legacy-<ts>/` は migration が退避させた旧データ。走査対象外とする（無視）。
 
 ## 2. ファイル構造
 
@@ -80,7 +96,16 @@ comments:
 - `side: base` の場合は「修正対象は HEAD 側ではなく BASE 側の行」という意味なので、現行コードを base 側の行番号で探してはいけない（後述）
 - 上記サンプルは sitatame 本体の Encode 出力順（anchor_id → kind → path → side → blob → line → line_start → line_end → rename_from → rename_to → similarity → state → body）に揃えている。保存し直すと未指定キーが落ちる点と、state が anchor 群の **後** に並ぶ点に注意（手書きの古いファイルでは state が anchor_id 直下にある可能性もあるが、書き戻すときは Encode 順を尊重するのが安全）
 
-## 3. 適用の手順
+## 3. Pruning 契約
+
+**`state: open` のコメントのみ処理対象** とする。
+
+- `state: resolved`: 無視する（スキップ）
+- `state: stale`: 無視する（anchor が壊れているため）
+
+この契約により、一度 resolved にしたコメントを skill が誤って再処理することはない。
+
+## 4. 適用の手順
 
 各 `state: open` のコメントについて、以下を順に実行する:
 
@@ -97,7 +122,7 @@ comments:
 5. 適用後、当該コメントの YAML を `state: open` → `state: resolved` に書き換える（**フロントマター部分だけ**いじり、本文 Markdown は触らない）
 6. 1 ファイル 1 コミットを目安に区切る（複数コメントが同一ファイルにあるならまとめて 1 コミットでよい）
 
-## 4. resolve しない判断
+## 5. resolve しない判断
 
 以下のケースでは `state` を **触らない** か、別途 review_comment にメモを足す:
 
@@ -108,7 +133,7 @@ comments:
 
 resolve をスキップした場合は、ユーザーに「なぜスキップしたか」を 1 行で伝える。
 
-## 5. YAML 書き換えの注意
+## 6. YAML 書き換えの注意
 
 フロントマターは `---` で囲まれた YAML ブロック。書き換える時は次を守る:
 
@@ -128,16 +153,28 @@ resolve をスキップした場合は、ユーザーに「なぜスキップし
 
 インデントは 4 スペースが基本だが、ファイルに合わせて確認する。
 
-## 6. ガードレール（再掲）
+## 7. ガードレール（再掲）
 
 - 修正は **diff としてプレビュー** → ユーザー承認 → 適用、の順序を崩さない
 - 行番号や anchor を見失ったら resolve しない
 - 「意図的」と読める body は resolve しない
-- `kind: review` / `state: stale` は触らない
+- `kind: review` / `state: stale` / `state: resolved` は触らない
 - 1 ファイル単位でコミットを刻む（メッセージは「resolve sitatame:<anchor_id>」程度で十分）
 - 修正後の検証として、関連するテストがあれば走らせる
 
-## 7. 出力
+## 8. キーバインド（参考）
+
+TUI 終了時の挙動（`internal/tui/model.go`）:
+
+| キー | 定数 | 挙動 |
+| ---- | ---- | ---- |
+| `s` | `QuitSave` | `review.md` に直接書き込んで終了（promote 概念なし） |
+| `q` | `QuitDiscard` | **保存せず破棄**。`review.md` には触らない |
+| top-level `Esc` | — | 何もしない（modal cancel のみ） |
+
+draft / promote の概念は issue #76 で廃止済み。
+
+## 9. 出力
 
 最後に以下をまとめてユーザーへ報告する:
 
