@@ -93,7 +93,7 @@ issue #76 (1-branch-1-file layout) 以降、レビューは
 |---|---|
 | `review.md` | ブランチの現行レビュー (`s` で書き込み) |
 | `review.md.bak` | `review.md` を上書きする直前に 1 世代だけ保持するバックアップ (`internal/review/paths.go` の `BakFile`) |
-| `review.md.rescue.<YYYYMMDDTHHMMSS>.json` | Encode 失敗時の緊急退避ファイル。フォーマットは `rescuePayload` (schema `"rescue/1"`)。複数回失敗しても別タイムスタンプで重複せず蓄積される (`internal/review/store.go` の `writeRescue`) |
+| `review.md.rescue.<YYYYMMDDTHHMMSS>-<nanos>.json` | Encode 失敗時の緊急退避ファイル。フォーマットは `rescuePayload` (schema `"rescue/1"`)。ファイル名はタイムスタンプ (秒精度) にナノ秒 9 桁を付加し、同一秒内の連続失敗でも別ファイルに蓄積される。glob `review.md.rescue.*.json` で一括参照可能 (`internal/review/store.go` の `writeRescue`) |
 
 ### Migration (pre-#76 からの移行)
 
@@ -358,6 +358,26 @@ context 行 (` ` 行) は head 側の既存行として扱うため、`-` 行と
 / context) が混ざったら mixed=yes」です。mixed=yes のとき、ステータス
 バーに `range spans add+delete — anchored to head side` という警告を
 出します。
+
+### side=base anchor の消費上の注意 (AI tool / 外部 reader 向け)
+
+`side: base` の anchor が記録されている場合、**その行番号は HEAD ファイルには存在しない** ことに注意してください。削除行は修正前のファイルにのみ存在します。外部ツール / AI agent が修正を適用しようとする際は、HEAD ファイルを `line` 番号で直接開いても対応行は見つかりません。
+
+- `blob` フィールドが埋まっている場合: `git show <blob>:<path>` で削除前のファイルを取得し、`line` 行を確認できます
+- 修正方針は `body` と diff の文脈から HEAD 側の対応箇所を推定することになります
+- 確信が持てない場合は resolve しないのが正しい動作です
+
+### Legacy anchor の警告 (issues #36 / #19)
+
+PR #36 / #19 以前の sitatame が保存した draft には、削除行 (`-` row) へのコメントが
+`side: head` + `line=<BaseLine>` + `blob=<BlobHead>` という不整合な形で記録された
+ものがあります。sitatame は起動時にこの形状を検出し、stderr に警告を出します:
+
+```
+sitatame: detected legacy head-side anchor pointing to a deleted line (id=<anchor_id>); side may be incorrect — please re-save.
+```
+
+この警告が出た場合は、対象コメントを一度削除して再入力することで正しい形 (`side: base`) で保存し直せます。外部 reader がこの形状を検出したい場合は `internal/review/validate.go` の `ValidateWithWarnings` / `emitLegacyAnchorWarning` を参照してください。
 
 ## 7. State と遷移
 

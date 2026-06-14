@@ -24,6 +24,8 @@ Flags:
                                the current branch (use --force-new to overwrite)
   --force-new                  Back up the existing review.md to review.md.bak
                                and start a fresh session
+  --no-clipboard               Do not copy the review path to the clipboard
+                               after saving (also: SITATAME_NO_CLIPBOARD=1)
   -h, --help                   Show this help
 
 Notes:

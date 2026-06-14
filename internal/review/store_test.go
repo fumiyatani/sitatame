@@ -256,6 +256,55 @@ func TestStore_SaveReview_RescueOnEncodeFailure(t *testing.T) {
 	}
 }
 
+// TestStore_SaveReview_RescueFilenameCollisionAvoided verifies that two
+// back-to-back Encode failures at the same wall-clock second produce two
+// distinct rescue files instead of overwriting each other.
+func TestStore_SaveReview_RescueFilenameCollisionAvoided(t *testing.T) {
+	t.Parallel()
+	// Fix the clock to a second boundary so both calls share the same
+	// second-precision timestamp (YYYYMMDDTHHMMSS). The nanos component
+	// must differentiate them.
+	fixedSec := time.Date(2026, 6, 14, 12, 0, 0, 0, time.UTC)
+	callCount := 0
+	outputRoot := t.TempDir()
+	repoRoot := t.TempDir()
+	s := NewStore(NewPathsWithRoot(outputRoot, repoRoot, "feature/auth"))
+	// Return the same second each call but alternate nanos to simulate
+	// sub-second resolution: first call 0ns, second call 500000000ns.
+	nanoValues := []int{0, 500_000_000}
+	s.Now = func() time.Time {
+		ns := nanoValues[callCount%2]
+		callCount++
+		return fixedSec.Add(time.Duration(ns))
+	}
+	encodeErr := fmt.Errorf("injected encode failure")
+	s.encodeFunc = func(r Review) ([]byte, error) { return nil, encodeErr }
+
+	r := &Review{
+		Schema:        1,
+		Branch:        "feature/auth",
+		ReviewComment: "collide-test",
+	}
+
+	_, err1 := s.SaveReview(r)
+	_, err2 := s.SaveReview(r)
+
+	var re1, re2 *RescueError
+	if !errors.As(err1, &re1) || !errors.As(err2, &re2) {
+		t.Fatal("expected RescueError for both calls")
+	}
+	if re1.RescuePath == re2.RescuePath {
+		t.Errorf("both rescue files share the same path %q; collision was not avoided", re1.RescuePath)
+	}
+
+	// Both files must exist on disk.
+	for _, path := range []string{re1.RescuePath, re2.RescuePath} {
+		if _, err := os.Stat(path); err != nil {
+			t.Errorf("rescue file missing at %s: %v", path, err)
+		}
+	}
+}
+
 // TestStore_DetectReview verifies DetectReview returns the path when review.md
 // exists and "" when it does not.
 func TestStore_DetectReview(t *testing.T) {

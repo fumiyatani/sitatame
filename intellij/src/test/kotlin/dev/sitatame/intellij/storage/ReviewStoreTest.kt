@@ -1,18 +1,24 @@
 package dev.sitatame.intellij.storage
 
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.jsonPrimitive
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Before
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Unit tests for [ReviewStore] using [ReviewStore.pathsOverride] to bypass the
@@ -194,6 +200,152 @@ class ReviewStoreTest {
         store.recoverFromCrash("", "")
 
         assertFalse("orphaned .tmp should be deleted", Files.exists(orphan))
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue JSON content: full Review + Go key-name parity
+    // -----------------------------------------------------------------------
+
+    /**
+     * The rescue JSON must include a full "review" object with the same
+     * top-level key names as Go's rescuePayload, and the review sub-object
+     * must carry all comments, not just a comment_count summary.
+     */
+    @Test
+    fun writeRescue_containsFullReviewJson() {
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure") }
+
+        val review = store.loadOrInit("", "")
+        review.branch = "feature/test"
+        review.reviewComment = "overall comment"
+        review.comments.add(sampleComment("src/main.kt", 42, "rename this method"))
+        review.comments.add(sampleComment("src/util.kt", 7, "extract helper"))
+
+        val result = store.saveReview("", "")
+        assertNotNull("rescue error expected", result.error)
+
+        val rescuePath = java.nio.file.Paths.get(result.error!!.rescuePath)
+        val raw = String(Files.readAllBytes(rescuePath))
+        val root = Json.parseToJsonElement(raw).jsonObject
+
+        // Top-level Go-compatible keys.
+        assertEquals("schema", "rescue/1", root["schema"]?.jsonPrimitive?.content)
+        assertTrue("saved_at must be present", root.containsKey("saved_at"))
+        assertEquals("reason", "yaml encode failed", root["reason"]?.jsonPrimitive?.content)
+        assertTrue("original_encode_error must be present", root.containsKey("original_encode_error"))
+        assertTrue("review must be present", root.containsKey("review"))
+
+        // review sub-object must carry comments array, not just comment_count.
+        val reviewObj = root["review"]!!.jsonObject
+        assertTrue("review.branch must be present", reviewObj.containsKey("branch"))
+        assertTrue("review.comments must be present", reviewObj.containsKey("comments"))
+
+        val commentsArr = reviewObj["comments"]!!.let {
+            kotlinx.serialization.json.Json.parseToJsonElement(it.toString())
+                .let { e -> e as? kotlinx.serialization.json.JsonArray }
+        }
+        assertNotNull("comments should be a JSON array", commentsArr)
+        assertEquals("comment count in JSON", 2, commentsArr!!.size)
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue filename collision avoidance
+    // -----------------------------------------------------------------------
+
+    /**
+     * Two back-to-back Encode failures at the same wall-clock second must
+     * produce two distinct rescue files. The nanos suffix differentiates them.
+     *
+     * The clock advances by 1ns per call so that the second component is
+     * always the same (both share "20260614T120000") but the nanos component
+     * differs. This is independent of how many times the clock is consulted
+     * internally (freshReview, writeRescue filename, writeRescue saved_at).
+     */
+    @Test
+    fun writeRescue_nanosSuffixPreventsFilenameCollision() {
+        // Always-incrementing nanos clock: each call returns +1ns so any two
+        // calls in the same second will have different nanos values.
+        val nanoCounter = AtomicInteger(0)
+        val baseSecond = Instant.parse("2026-06-14T12:00:00Z")
+        store.clock = object : Clock() {
+            override fun getZone() = ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId) = this
+            override fun instant(): Instant =
+                baseSecond.plusNanos(nanoCounter.getAndIncrement().toLong())
+        }
+        // Inject a broken encoder to trigger writeRescue.
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure") }
+
+        // Pre-populate cache so loadOrInit does not consult clock again during save.
+        val review = store.loadOrInit("", "")
+        review.comments.add(sampleComment("x.kt", 1, "collision-test"))
+        val result1 = store.saveReview("", "")
+
+        store.invalidate()
+        val review2 = store.loadOrInit("", "")
+        review2.comments.add(sampleComment("y.kt", 2, "collision-test-2"))
+        val result2 = store.saveReview("", "")
+
+        // Both should have produced a rescue error.
+        assertNotNull("first save should have rescue error", result1.error)
+        assertNotNull("second save should have rescue error", result2.error)
+
+        val path1 = result1.error!!.rescuePath
+        val path2 = result2.error!!.rescuePath
+
+        assertTrue("first rescue file must exist", Files.isRegularFile(java.nio.file.Paths.get(path1)))
+        assertTrue("second rescue file must exist", Files.isRegularFile(java.nio.file.Paths.get(path2)))
+        assertTrue("rescue paths must be distinct (nanos suffix prevents collision)", path1 != path2)
+
+        // Both filenames must match the pattern review.md.rescue.<ts>-<nanos>.json
+        for (p in listOf(path1, path2)) {
+            val name = java.nio.file.Paths.get(p).fileName.toString()
+            assertTrue(
+                "filename '$name' must match review.md.rescue.<ts>-<nanos>.json",
+                name.matches(Regex("review\\.md\\.rescue\\.\\d{8}T\\d{6}-\\d{9}\\.json"))
+            )
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue file permission (POSIX-only)
+    // -----------------------------------------------------------------------
+
+    /**
+     * On POSIX filesystems, the rescue file must have permissions rw-------
+     * (0600) to keep contents owner-private, mirroring Go's os.WriteFile
+     * with 0o600. On Windows this test is skipped via [Assume].
+     */
+    @Test
+    fun writeRescue_rescueFileHas0600Permissions() {
+        // Skip on non-POSIX filesystems (Windows).
+        val branchDir = java.nio.file.Paths.get(paths.branchDir())
+        Files.createDirectories(branchDir)
+        val isPosix = try {
+            Files.getPosixFilePermissions(branchDir)
+            true
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
+        Assume.assumeTrue("Skipping 0600 permission test on non-POSIX filesystem", isPosix)
+
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure for perm test") }
+        val review = store.loadOrInit("", "")
+        review.comments.add(sampleComment("p.kt", 1, "perm-test"))
+
+        val result = store.saveReview("", "")
+
+        assertNotNull("rescue error expected", result.error)
+        val rescuePath = java.nio.file.Paths.get(result.error!!.rescuePath)
+        assertTrue("rescue file must exist", Files.isRegularFile(rescuePath))
+
+        val perms = Files.getPosixFilePermissions(rescuePath)
+        val expected = PosixFilePermissions.fromString("rw-------")
+        assertEquals(
+            "rescue file must have 0600 permissions (rw-------)",
+            expected,
+            perms,
+        )
     }
 
     // -----------------------------------------------------------------------

@@ -152,7 +152,12 @@ func (s *Store) writeRescue(r *Review, encodeErr error) (string, error) {
 
 	now := s.Now().UTC()
 	ts := now.Format("20060102T150405")
-	filename := "review.md.rescue." + ts + ".json"
+	// Append nanoseconds to prevent filename collision when two Encode failures
+	// occur within the same second (e.g. rapid retry or parallel goroutines).
+	// The nanos component is zero-padded to 9 digits to keep lexicographic order
+	// meaningful. The glob pattern `review.md.rescue.*.json` is still satisfied.
+	nanos := fmt.Sprintf("%09d", now.Nanosecond())
+	filename := "review.md.rescue." + ts + "-" + nanos + ".json"
 	rescuePath := filepath.Join(branchDir, filename)
 
 	payload := rescuePayload{
