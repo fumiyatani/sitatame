@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -9,11 +10,39 @@ import (
 	"time"
 )
 
+// RescueError is returned by SaveDraft when Encode fails. It carries the path
+// of the rescue JSON file that was written so callers can surface it to the
+// user with actionable information.
+type RescueError struct {
+	// RescuePath is the absolute path of the written rescue file.
+	RescuePath string
+	// EncodeErr is the original Encode failure.
+	EncodeErr error
+}
+
+func (e *RescueError) Error() string {
+	return fmt.Sprintf("encode failed (%v); rescue written to %s", e.EncodeErr, e.RescuePath)
+}
+
+func (e *RescueError) Unwrap() error { return e.EncodeErr }
+
+// rescuePayload is the JSON structure written to the rescue file.
+type rescuePayload struct {
+	Schema              string  `json:"schema"`
+	SavedAt             string  `json:"saved_at"`
+	Reason              string  `json:"reason"`
+	OriginalEncodeError string  `json:"original_encode_error"`
+	Review              *Review `json:"review"`
+}
+
 // Store handles atomic draft writes and promotion to reviews/.
 type Store struct {
 	Paths Paths
 	// Now lets tests inject a deterministic clock.
 	Now func() time.Time
+	// encodeFunc is the encode implementation. Nil means use the package-level
+	// Encode function. Tests may replace this to inject failures.
+	encodeFunc func(Review) ([]byte, error)
 }
 
 func NewStore(p Paths) *Store {
@@ -74,9 +103,18 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 		return "", fmt.Errorf("mkdir drafts: %w", err)
 	}
 	final := s.Paths.DraftFile(r.ID)
-	body, err := Encode(*r)
+	encode := s.encodeFunc
+	if encode == nil {
+		encode = Encode
+	}
+	body, err := encode(*r)
 	if err != nil {
-		return "", err
+		rescuePath, rescueErr := s.writeRescue(r, err)
+		if rescueErr != nil {
+			// If rescue write also fails, surface both errors.
+			return "", fmt.Errorf("encode failed (%w); rescue write also failed: %v", err, rescueErr)
+		}
+		return "", &RescueError{RescuePath: rescuePath, EncodeErr: err}
 	}
 	tmp, err := os.CreateTemp(s.Paths.DraftsDir(), "."+r.ID+".*.tmp")
 	if err != nil {
@@ -103,6 +141,32 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 		return "", fmt.Errorf("rename tmp -> draft: %w", err)
 	}
 	return final, nil
+}
+
+// writeRescue writes an in-memory Review as a JSON rescue file under DraftsDir
+// when Encode fails. The filename encodes the timestamp so multiple failures in
+// the same session produce distinct files. Returns the written path on success.
+func (s *Store) writeRescue(r *Review, encodeErr error) (string, error) {
+	now := s.Now().UTC()
+	ts := now.Format("20060102T150405")
+	filename := "review.md.rescue." + ts + ".json"
+	rescuePath := filepath.Join(s.Paths.DraftsDir(), filename)
+
+	payload := rescuePayload{
+		Schema:              "rescue/1",
+		SavedAt:             now.Format(time.RFC3339),
+		Reason:              "yaml encode failed",
+		OriginalEncodeError: encodeErr.Error(),
+		Review:              r,
+	}
+	b, err := json.MarshalIndent(payload, "", "  ")
+	if err != nil {
+		return "", fmt.Errorf("json marshal rescue: %w", err)
+	}
+	if err := os.WriteFile(rescuePath, b, 0o600); err != nil {
+		return "", fmt.Errorf("write rescue file: %w", err)
+	}
+	return rescuePath, nil
 }
 
 // Promote moves a draft file to reviews/<slug>/<id>.md atomically.

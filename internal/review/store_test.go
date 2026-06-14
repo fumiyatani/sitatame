@@ -1,6 +1,9 @@
 package review
 
 import (
+	"encoding/json"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -252,5 +255,107 @@ func TestStore_LatestReview_PicksNewest(t *testing.T) {
 	}
 	if got != newer {
 		t.Errorf("LatestReview = %q, want %q", got, newer)
+	}
+}
+
+// TestSaveDraft_RescueOnEncodeFailure verifies that when Encode fails,
+// SaveDraft writes a rescue JSON file under DraftsDir and returns a
+// RescueError containing the rescue path. The draft file itself must NOT
+// be created; the rescue file must contain the full Review as JSON.
+func TestSaveDraft_RescueOnEncodeFailure(t *testing.T) {
+	t.Parallel()
+	ts := time.Date(2026, 6, 14, 10, 57, 20, 0, time.UTC)
+	s := newTestStore(t, ts)
+
+	// Inject a broken encode function to simulate the #76 failure mode.
+	encodeErr := fmt.Errorf("yaml re-decode: did not find expected key at line 49")
+	s.encodeFunc = func(r Review) ([]byte, error) {
+		return nil, encodeErr
+	}
+
+	r := &Review{
+		Schema:        1,
+		Branch:        "feature/auth",
+		Base:          Ref{Ref: "origin/main", SHA: "aaa"},
+		Head:          Ref{Ref: "HEAD", SHA: "bbb"},
+		ReviewComment: "fix-auth",
+		Comments: []Comment{
+			{
+				Anchor: Anchor{
+					AnchorID: "11111111-1111-1111-1111-111111111111",
+					Kind:     KindLine,
+					Path:     "src/main.go",
+					Side:     SideHead,
+					Blob:     "bbb",
+					Line:     10,
+				},
+				State: StateOpen,
+				Body:  "「重要」このコメントを確認してください。\n: colon at line start\n",
+			},
+		},
+	}
+
+	draftPath, err := s.SaveDraft(r)
+
+	// Must return an error — no draft path.
+	if draftPath != "" {
+		t.Errorf("draftPath = %q, want empty (draft must not be created on encode failure)", draftPath)
+	}
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+
+	// The error must be a RescueError.
+	var re *RescueError
+	if !errors.As(err, &re) {
+		t.Fatalf("error is %T (%v), want *RescueError", err, err)
+	}
+	if re.RescuePath == "" {
+		t.Fatal("RescueError.RescuePath is empty")
+	}
+
+	// Unwrapped error must chain to the original encode error.
+	if !errors.Is(re, encodeErr) {
+		t.Errorf("RescueError does not wrap original encode error: %v", re)
+	}
+
+	// The rescue file must exist and contain valid JSON with the expected schema.
+	raw, err := os.ReadFile(re.RescuePath)
+	if err != nil {
+		t.Fatalf("rescue file not found at %s: %v", re.RescuePath, err)
+	}
+	var payload rescuePayload
+	if err := json.Unmarshal(raw, &payload); err != nil {
+		t.Fatalf("rescue file is not valid JSON: %v\ncontent: %s", err, raw)
+	}
+	if payload.Schema != "rescue/1" {
+		t.Errorf("schema = %q, want rescue/1", payload.Schema)
+	}
+	if payload.OriginalEncodeError == "" {
+		t.Error("original_encode_error is empty")
+	}
+	if payload.Review == nil {
+		t.Fatal("review field is nil in rescue payload")
+	}
+	if len(payload.Review.Comments) != 1 {
+		t.Errorf("rescue review.comments count = %d, want 1", len(payload.Review.Comments))
+	}
+
+	// The rescue file must be under DraftsDir.
+	if !strings.HasPrefix(re.RescuePath, s.Paths.DraftsDir()) {
+		t.Errorf("rescue path %q is not under DraftsDir %q", re.RescuePath, s.Paths.DraftsDir())
+	}
+
+	// The rescue filename must match the expected pattern.
+	base := filepath.Base(re.RescuePath)
+	if !strings.HasPrefix(base, "review.md.rescue.") || !strings.HasSuffix(base, ".json") {
+		t.Errorf("rescue filename %q does not match pattern review.md.rescue.<timestamp>.json", base)
+	}
+
+	// The draft file must NOT exist: rescue is the only output.
+	draftGlob := filepath.Join(s.Paths.DraftsDir(), "*.md")
+	matches, _ := filepath.Glob(draftGlob)
+	if len(matches) > 0 {
+		t.Errorf("draft files found when none expected: %v", matches)
 	}
 }
