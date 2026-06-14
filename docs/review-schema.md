@@ -41,15 +41,14 @@ reader 用のフィールドを落とさないこと、が schema 全体の不�
 
 ## 2. ファイル配置と命名規則
 
-レビューは `~/.sitatame/<project-slug>/{reviews,drafts}/<branch-slug>/<id>.md`
-に書き出されます。出力ルート (`~/.sitatame` 部分) は次の順で解決します:
+issue #76 (1-branch-1-file layout) 以降、レビューは
+`~/.sitatame/<project-slug>/<branch-slug>/review.md` の固定パスに書き出されます。
+1 ブランチにつき 1 ファイルです。出力ルート (`~/.sitatame` 部分) は次の順で
+解決します:
 
 1. `$SITATAME_HOME` が設定されていればそれ
 2. `~/.sitatame` (既定)
 3. `$TMPDIR/sitatame` (最終フォールバック、stderr に警告)
-
-`reviews/` は `s` キーで promote されたもの、`drafts/` は `q` キーで
-途中保存されたもので、どちらも同じ schema です。
 
 ### project-slug
 
@@ -88,30 +87,40 @@ reader 用のフィールドを落とさないこと、が schema 全体の不�
   (cmd/root.go では detached HEAD は `detached/<sha[:12]>` に正規化
   してからここに渡される)
 
-### id
+### 常設ファイル
 
-レビューファイル名 (の拡張子を除いた部分) です。生成規則は
+| ファイル名 | 用途 |
+|---|---|
+| `review.md` | ブランチの現行レビュー (`s` で書き込み) |
+| `review.md.bak` | `review.md` を上書きする直前に 1 世代だけ保持するバックアップ (`internal/review/paths.go` の `BakFile`) |
+| `review.md.rescue.<YYYYMMDDTHHMMSS>.json` | Encode 失敗時の緊急退避ファイル。フォーマットは `rescuePayload` (schema `"rescue/1"`)。複数回失敗しても別タイムスタンプで重複せず蓄積される (`internal/review/store.go` の `writeRescue`) |
 
-```
-yyyyMMddTHHmmss + "-" + slug(review_comment の先頭行)
-```
+### Migration (pre-#76 からの移行)
 
-- タイムスタンプは保存時の UTC、`20060102T150405` フォーマット
-- slug は `review_comment` の先頭 1 行から `[a-zA-Z0-9._-]` 以外を `_`
-  に置換し、最大 32 byte に切ったもの。前後の `_` / 先頭の `.` は除去。
-  空または unsafe しか無いときは `review` にフォールバック
-- 置換は **rune 単位の iter** で行ない、unsafe な rune (非 ASCII 含む)
-  は `_` **1 byte** に置換される。日本語のように非 ASCII で始まる先頭行
-  だと、先頭が `____...` で埋まった slug になり、本文の意味が id から
-  読み取れないケースがある。32 文字 / 32 byte の truncate は最終出力に
-  対して **byte 単位** で適用される (`slugifyReviewComment`)
-- 同じ (timestamp, slug) のファイルが既に存在する場合は `-1`, `-2`, ...
-  サフィックスが追加される (`internal/review/store.go` の `GenerateID`)
+起動時に `<output-root>/<project-slug>/drafts/` または
+`<output-root>/<project-slug>/reviews/` が存在すると、`MigrateLegacyLayout`
+が自動実行されます:
+
+- 旧 `drafts/` / `reviews/` は `<project-slug>/.legacy-<YYYYMMDDTHHMMSS>/` に
+  **移動** (rename) されます。データは削除されません
+- 旧 `reviews/<branch-slug>/` 内の最新 `.md` ファイルが新 `<branch-slug>/review.md`
+  にコピーされます
+- 新 `review.md` が既に存在するブランチはスキップされます (上書きなし)
+- 移行の途中で中断した場合、次回起動時に再実行できます
+
+### Pruning 契約
+
+`state: resolved` および `state: stale` のコメントは、sitatame TUI 本体が
+`x` のトグル対象から除外する (`stale` のみ) か保持する (`resolved`) かを
+制御するだけです。**外部 AI agent (`sitatame-review-apply` 等) が自動処理
+するコメントは `state: open` のものに限定してください。** `state: resolved`
+/ `state: stale` のエントリは agent の処理対象外として扱うことが
+相互運用性の前提条件です。
 
 最終的なフルパスの例:
 
 ```
-~/.sitatame/sitatame__a1b2c3d4/reviews/feature_auth__9f8e7d6c/20260501T152300-fix_auth.md
+~/.sitatame/sitatame__a1b2c3d4/feature_auth__9f8e7d6c/review.md
 ```
 
 ## 3. ファイル形式: YAML frontmatter + Markdown body
@@ -168,7 +177,7 @@ comments:
 | フィールド       | 型                          | 必須 | 意味 |
 |------------------|-----------------------------|------|------|
 | `schema`         | int                         | 必須 | スキーマバージョン。現行は `1` 固定。reader は値を読み取って保持するだけで、v1 reader が未知の値 (`2` 以降) を **積極的には reject しない** (10 節参照) |
-| `id`             | string                      | 必須 | ファイル名 (拡張子無し) と同一の id |
+| `id`             | string                      | 任意 | レビューを識別する id。issue #76 以降はファイル名が `review.md` 固定になったため、`id` はフロントマター上の識別子としてのみ使われる。後方互換のため保持 |
 | `created_at`     | RFC 3339 timestamp          | 必須 | 最初に保存した時刻 (UTC)。再保存時は維持される。writer は常に `Z` suffix (UTC) で出力する。decoder は RFC 3339 互換で `+09:00` 等の他オフセットも受理する |
 | `branch`         | string                      | 必須 | レビュー対象のブランチ名。`branch-slug` の元 |
 | `base`           | `{ref, sha}`                | 必須 | 比較元 (`git diff base..head` の base) |

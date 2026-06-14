@@ -18,16 +18,17 @@ import (
 // a Go regexp. Results are printed in `path:line:text` form, one per line, so
 // downstream tools can pipe into editors.
 //
-// When ripgrep is on $PATH we shell out to `rg -n -- <pattern> <reviewsRoot>`
+// When ripgrep is on $PATH we shell out to `rg -n -- <pattern> <projectRoot>`
 // for parity with the user's grep workflow; otherwise we fall back to a Go
-// implementation that walks the project's reviews/ tree under SITATAME_HOME.
+// implementation that walks the per-project root under SITATAME_HOME.
 // Both code paths are deliberately exclusive — tests can disable rg via
 // Env.LookPath to exercise the fallback even when rg is locally installed.
 //
-// Search is branch-independent: we resolve the per-project reviews root (which
-// contains <branch-slug>/<id>.md trees for every branch reviewed) and walk it
+// Search is branch-independent: we resolve the per-project root (which
+// contains <branch-slug>/review.md for every branch reviewed) and walk it
 // as a whole. Building Paths with an empty branch is intentional — Paths.Slug
-// is unused here.
+// is unused here. As of issue #76 the layout is 1-branch-1-file so there is
+// no separate reviews/ subtree; searching the project root covers all branches.
 func RunSearch(env Env, args []string) int {
 	if len(args) < 1 {
 		fmt.Fprintln(env.Stderr, "usage: sitatame search <pattern>")
@@ -45,7 +46,7 @@ func RunSearch(env Env, args []string) int {
 		fmt.Fprintf(env.Stderr, "sitatame: %v\n", err)
 		return 1
 	}
-	reviewsRoot := review.NewPaths(repo.Workdir, "").ReviewsRoot()
+	reviewsRoot := review.NewPaths(repo.Workdir, "").Root()
 	if _, err := os.Stat(reviewsRoot); err != nil {
 		// Nothing to search yet — don't treat that as an error.
 		return 0
@@ -62,7 +63,9 @@ func RunSearch(env Env, args []string) int {
 }
 
 func runSearchRg(env Env, rgPath, pattern, root string) int {
-	cmd := exec.Command(rgPath, "-n", "--no-heading", "--color=never", "--", pattern, root)
+	// --glob '!.legacy-*' excludes legacy migration directories created by
+	// MigrateLegacyLayout so migrated data does not surface in search results.
+	cmd := exec.Command(rgPath, "-n", "--no-heading", "--color=never", "--glob", "!.legacy-*", "--", pattern, root)
 	cmd.Stdout = env.Stdout
 	cmd.Stderr = env.Stderr
 	if err := cmd.Run(); err != nil {

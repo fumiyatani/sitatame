@@ -7,42 +7,36 @@ import org.snakeyaml.engine.v2.api.LoadSettings
 import java.nio.file.Files
 import java.nio.file.Path
 import kotlin.io.path.isRegularFile
-import kotlin.io.path.name
 
 /**
- * Reads the most recent review .md from
- * <SitatamePaths.reviewsDir()>/<id>.md and parses the YAML front matter into a
- * [ReviewDto].
+ * Reads the review file from <SitatamePaths.branchDir()>/review.md and parses
+ * the YAML front matter into a [ReviewDto].
+ *
+ * As of issue #76, the layout is 1-branch-1-file: each branch has exactly one
+ * review.md under its branchDir. The previous "pick the newest timestamped
+ * <id>.md" logic no longer applies; we simply check whether review.md exists.
  *
  * The Go side (internal/review/codec.go) uses a Node-tree codec to preserve
  * unknown keys for round-trip. The Web UI never writes the file back through
  * Kotlin, so we use a plain `Load` here and drop unknown keys silently — the
- * frontend only needs what's modelled in [ReviewDto]. Write-path support
- * (Phase 1 step 2) will route through the existing snakeyaml-engine Node tree
- * round-trip path or, more likely, through the Go CLI shelled out from the
- * backend, to keep the schema-drift contract intact.
+ * frontend only needs what's modelled in [ReviewDto]. Write-path support will
+ * route through the existing snakeyaml-engine Node tree round-trip path or,
+ * more likely, through the Go CLI shelled out from the backend, to keep the
+ * schema-drift contract intact.
  */
 object ReviewLoader {
 
     /**
-     * Returns the newest .md path under [reviewsDir], or null.
+     * Returns the review.md path under [branchDir] if it exists as a regular
+     * file, or null otherwise.
      *
-     * "Newest" is defined as the lexicographically greatest filename, which
-     * matches the Go TUI side (see `internal/review/loader.go`). Filenames are
-     * `<yyyyMMddTHHmmss>-<slug>.md`, so lex order coincides with creation
-     * order while staying stable under `git checkout` / `git restore` and
-     * other operations that touch mtime. Using `lastModifiedTime` here was a
-     * parity bug — two clients on the same repo could disagree on "latest"
-     * after a checkout drifted mtimes.
+     * This replaces the old `findLatestPath(reviewsDir)` which scanned for the
+     * lexicographically greatest timestamped `<id>.md`. In the new 1-branch-1-file
+     * layout there is no selection needed: Go core always writes to `review.md`.
      */
-    fun findLatestPath(reviewsDir: Path): Path? {
-        if (!Files.isDirectory(reviewsDir)) return null
-        return Files.list(reviewsDir).use { stream ->
-            stream
-                .filter { it.isRegularFile() && it.name.endsWith(".md") }
-                .max(compareBy { it.fileName.toString() })
-                .orElse(null)
-        }
+    fun findReviewPath(branchDir: Path): Path? {
+        val candidate = branchDir.resolve("review.md")
+        return if (candidate.isRegularFile()) candidate else null
     }
 
     /** Load [path] and parse its YAML front matter into a [ReviewDto]. */

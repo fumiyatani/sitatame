@@ -26,8 +26,15 @@ data class SitatamePaths(
 ) {
     /** <outputRoot>/<projectSlug> */
     fun root(): Path = outputRoot.resolve(projectSlug)
-    fun reviewsRoot(): Path = root().resolve("reviews")
-    fun reviewsDir(): Path = reviewsRoot().resolve(branchSlug)
+
+    /** <outputRoot>/<projectSlug>/<branchSlug>/  — all review artifacts for this branch */
+    fun branchDir(): Path = root().resolve(branchSlug)
+
+    /** <outputRoot>/<projectSlug>/<branchSlug>/review.md */
+    fun reviewFile(): Path = branchDir().resolve("review.md")
+
+    /** <outputRoot>/<projectSlug>/<branchSlug>/review.md.bak */
+    fun bakFile(): Path = branchDir().resolve("review.md.bak")
 
     companion object {
         const val ENV_OUTPUT_ROOT = "SITATAME_HOME"

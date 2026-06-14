@@ -105,22 +105,18 @@ func Decode(b []byte) (Review, error) {
 // Encode serializes a Review back into the front-matter + Markdown form.
 // Unknown keys held in Extras are merged back into the corresponding mappings.
 func Encode(r Review) ([]byte, error) {
-	// Marshal known fields via the struct, then re-decode to a Node so we can
-	// inject Extras at each level without hand-rolling a serializer.
-	knownBytes, err := yaml.Marshal(&r)
-	if err != nil {
-		return nil, fmt.Errorf("yaml marshal: %w", err)
+	// Encode the struct directly into a yaml.Node without going through an
+	// intermediate bytes representation. The old approach of Marshal→Unmarshal
+	// (bytes round-trip) was fragile: certain body strings caused go-yaml to
+	// emit a scalar form that the same library could not re-parse (issue #76).
+	// Node.Encode(v) populates the receiver as a MappingNode in one step,
+	// avoiding the round-trip path entirely.
+	root := &yaml.Node{}
+	if err := root.Encode(&r); err != nil {
+		return nil, fmt.Errorf("yaml encode to node: %w", err)
 	}
-	var doc yaml.Node
-	if err := yaml.Unmarshal(knownBytes, &doc); err != nil {
-		return nil, fmt.Errorf("yaml re-decode: %w", err)
-	}
-	if doc.Kind != yaml.DocumentNode || len(doc.Content) == 0 {
-		return nil, fmt.Errorf("yaml re-decode: empty document")
-	}
-	root := doc.Content[0]
 	if root.Kind != yaml.MappingNode {
-		return nil, fmt.Errorf("yaml re-decode: not a mapping")
+		return nil, fmt.Errorf("yaml encode: top-level node is not a mapping (kind=%v)", root.Kind)
 	}
 
 	mergeExtras(root, r.Extras)
