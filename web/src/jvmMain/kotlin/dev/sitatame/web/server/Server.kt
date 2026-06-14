@@ -149,15 +149,15 @@ class WorkspaceService(
         }
 
         val paths = SitatamePaths.resolve(repoRoot, branch)
-        val latestPath = ReviewLoader.findLatestPath(paths.reviewsDir())
-        val review = latestPath?.let { ReviewLoader.load(it) }
+        val reviewPath = ReviewLoader.findReviewPath(paths.branchDir())
+        val review = reviewPath?.let { ReviewLoader.load(it) }
 
         return WorkspaceResponse(
             projectSlug = paths.projectSlug,
             branch = branch,
             files = files,
             review = review,
-            sourcePath = latestPath?.toAbsolutePath()?.toString(),
+            sourcePath = reviewPath?.toAbsolutePath()?.toString(),
         )
     }
 }

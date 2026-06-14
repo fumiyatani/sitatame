@@ -7,7 +7,7 @@ import java.security.MessageDigest
  *
  * MUST stay bit-for-bit equivalent to the Go side because the Web UI and the
  * TUI read/write the same on-disk directory structure
- * (~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md). Any divergence
+ * (~/.sitatame/<project-slug>/<branch-slug>/review.md). Any divergence
  * here means the two clients silently look at different review files for the
  * same branch.
  *
