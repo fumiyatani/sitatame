@@ -7,8 +7,12 @@ import java.nio.file.Paths as NioPaths
 /**
  * Port of `internal/review/paths.go`.
  *
- * Lays out where reviews and drafts live on disk:
- *   `<OutputRoot>/<ProjectSlug>/{reviews,drafts}/<BranchSlug>/...`
+ * As of issue #76 all review artifacts for a branch live under a single
+ * per-branch directory:
+ *   `<OutputRoot>/<ProjectSlug>/<BranchSlug>/`
+ *
+ * with a single canonical review file (`review.md`), an automatic backup
+ * (`review.md.bak`), and rescue JSON files on encode failure.
  *
  * The OutputRoot resolution order — `SITATAME_HOME` env → user home →
  * tempdir fallback — must match the Go side exactly so the CLI, Web UI and
@@ -22,12 +26,21 @@ data class SitatamePaths(
     val slug: String,
 ) {
     fun root(): String = joinPath(outputRoot, projectSlug)
-    fun reviewsRoot(): String = joinPath(root(), PathsFactory.REVIEWS_DIR)
-    fun draftsRoot(): String = joinPath(root(), PathsFactory.DRAFTS_DIR)
-    fun reviewsDir(): String = joinPath(reviewsRoot(), slug)
-    fun draftsDir(): String = joinPath(draftsRoot(), slug)
-    fun reviewFile(id: String): String = joinPath(reviewsDir(), "$id.md")
-    fun draftFile(id: String): String = joinPath(draftsDir(), "$id.md")
+
+    /** Per-branch directory: `<OutputRoot>/<ProjectSlug>/<BranchSlug>/` */
+    fun branchDir(): String = joinPath(root(), slug)
+
+    /** Canonical review file: `<branchDir>/review.md` */
+    fun reviewFile(): String = joinPath(branchDir(), "review.md")
+
+    /** Backup review file: `<branchDir>/review.md.bak` */
+    fun bakFile(): String = joinPath(branchDir(), "review.md.bak")
+
+    /**
+     * Glob pattern matching rescue JSON files:
+     * `<branchDir>/review.md.rescue.*.json`
+     */
+    fun rescueFilePattern(): String = joinPath(branchDir(), "review.md.rescue.*.json")
 
     /**
      * Pre-#38 in-repo storage path (<repo>/.sitatame). Kept so the UI can warn
@@ -41,8 +54,6 @@ object PathsFactory {
 
     const val ENV_OUTPUT_ROOT = "SITATAME_HOME"
     const val ROOT_DIR = ".sitatame"
-    const val REVIEWS_DIR = "reviews"
-    const val DRAFTS_DIR = "drafts"
 
     /**
      * Build [SitatamePaths] using the default OutputRoot resolution. Override
