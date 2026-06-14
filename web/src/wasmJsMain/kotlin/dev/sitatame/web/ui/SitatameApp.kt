@@ -11,6 +11,9 @@ import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
@@ -21,21 +24,31 @@ import androidx.compose.runtime.Stable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.unit.sp
+import dev.sitatame.web.api.CommentDto
+import dev.sitatame.web.api.CreateCommentRequest
+import dev.sitatame.web.api.UpdateCommentStateRequest
+import dev.sitatame.web.api.UpdateReviewCommentRequest
 import dev.sitatame.web.api.WorkspaceResponse
+import kotlinx.coroutines.launch
 
 /**
  * Root composable. Owns the load -> render state machine and the GitHub-style
  * 2-pane layout.
  *
- *  - top bar (branch + base/head refs)
+ *  - top bar (branch + base/head refs + "Add overall comment" button)
+ *  - ReviewSummaryPanel (review-level feedback + edit button)
  *  - row { sidebar | main pane }
  *  - status bar
+ *  - ConflictModal (shown on 412)
+ *  - Toast (shown on mutation error)
  */
 @Composable
 fun SitatameApp() {
@@ -44,21 +57,23 @@ fun SitatameApp() {
             modifier = Modifier.fillMaxSize(),
             color = MaterialTheme.colorScheme.background,
         ) {
-            var state by remember { mutableStateOf<WorkspaceState>(WorkspaceState.Loading) }
+            val holder = remember { ReviewStateHolder() }
+            var loadError by remember { mutableStateOf<String?>(null) }
 
             LaunchedEffect(Unit) {
-                state = try {
-                    val response = fetchWorkspace()
-                    WorkspaceState.Loaded(response)
+                try {
+                    val resp = fetchWorkspace()
+                    holder.applyWorkspace(resp)
                 } catch (e: Throwable) {
-                    WorkspaceState.Error(e.message ?: "unknown error")
+                    loadError = e.message ?: "unknown error"
                 }
             }
 
-            when (val s = state) {
-                WorkspaceState.Loading -> LoadingView()
-                is WorkspaceState.Error -> ErrorView(s.message)
-                is WorkspaceState.Loaded -> LoadedView(s.workspace)
+            val snap = holder.snapshot
+            when {
+                loadError != null -> ErrorView(loadError!!)
+                snap == null -> LoadingView()
+                else -> LoadedView(workspace = snap, holder = holder)
             }
         }
     }
@@ -102,53 +117,302 @@ private fun ErrorView(message: String) {
 }
 
 @Composable
-private fun LoadedView(workspace: WorkspaceResponse) {
+private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) {
     var selectedPath by remember(workspace.files) {
         mutableStateOf(workspace.files.firstOrNull()?.path)
     }
     val colors = LocalSitatameColors.current
+    val scope = rememberCoroutineScope()
 
-    val allComments = workspace.review?.comments.orEmpty()
-    // "review"-kind anchorless comments and the overall review_comment live
-    // on the review document itself, not on any single file; without this
-    // panel the read-only viewer would silently drop them.
-    val reviewLevelComments = allComments.filter { it.kind == "review" }
-    Column(modifier = Modifier.fillMaxSize()) {
-        TopBar(workspace)
-        ReviewSummaryPanel(
-            reviewComment = workspace.review?.reviewComment,
-            reviewLevelComments = reviewLevelComments,
-        )
-        Row(modifier = Modifier.fillMaxSize().weight(1f)) {
-            Sidebar(
-                files = workspace.files,
-                comments = allComments,
-                selectedPath = selectedPath,
-                onSelect = { selectedPath = it },
-                modifier = Modifier
-                    .width(320.dp)
-                    .fillMaxSize()
-                    .background(MaterialTheme.colorScheme.surface),
+    // Active CommentModal target (null = modal closed).
+    var activeModalTarget by remember { mutableStateOf<CommentTarget?>(null) }
+
+    val effectiveComments = holder.effectiveComments()
+    val reviewLevelComments = effectiveComments.filter { it.kind == "review" }
+
+    // Gather blob info for the selected file to pass to CommentTarget
+    val selectedFile = workspace.files.firstOrNull { it.path == selectedPath }
+
+    // --- mutation handlers ---
+
+    fun submitComment(target: CommentTarget, body: String) {
+        val req = buildCreateCommentRequest(target, body, workspace)
+        scope.launch {
+            when (val result = postComment(req, holder.etag)) {
+                is MutationResult.Success -> {
+                    val newEtag = result.response.etag
+                    val anchorId = (result.response.value["anchor_id"] ?: "")
+                    // Build a minimal CommentDto from the request so the UI
+                    // updates without a full GET /workspace.
+                    val newComment = CommentDto(
+                        anchorId = anchorId,
+                        kind = req.kind,
+                        path = req.path ?: "",
+                        side = req.side,
+                        line = req.line,
+                        lineStart = req.lineStart,
+                        lineEnd = req.lineEnd,
+                        state = "open",
+                        body = req.body,
+                    )
+                    holder.applyNewComment(newComment, newEtag)
+                }
+                is MutationResult.EtagMismatch -> {
+                    holder.conflict = ConflictState.EtagConflict(
+                        error = result.error,
+                        serverEtag = result.currentEtag,
+                        pending = PendingMutation.AddComment(req),
+                    )
+                }
+                is MutationResult.ValidationError -> {
+                    holder.toastMessage = "Validation error: ${result.errors.take(120)}"
+                }
+                is MutationResult.Unexpected -> {
+                    holder.toastMessage = "Unexpected error (HTTP ${result.status})"
+                }
+            }
+        }
+    }
+
+    fun toggleCommentState(comment: CommentDto) {
+        val newState = if (comment.state == "open") "resolved" else "open"
+        holder.setOptimistic(comment.anchorId, newState, comment.state)
+        scope.launch {
+            when (val result = patchCommentState(
+                comment.anchorId,
+                UpdateCommentStateRequest(newState),
+                holder.etag,
+            )) {
+                is MutationResult.Success -> {
+                    holder.confirmOptimistic(comment.anchorId, result.response.etag)
+                }
+                is MutationResult.EtagMismatch -> {
+                    holder.rollbackOptimistic(comment.anchorId, "Conflict: review was updated by another client")
+                    holder.conflict = ConflictState.EtagConflict(
+                        error = result.error,
+                        serverEtag = result.currentEtag,
+                        pending = PendingMutation.ToggleState(comment.anchorId, newState),
+                    )
+                }
+                is MutationResult.ValidationError -> {
+                    holder.rollbackOptimistic(comment.anchorId, "Validation error: ${result.errors.take(80)}")
+                }
+                is MutationResult.Unexpected -> {
+                    holder.rollbackOptimistic(comment.anchorId, "Server error (HTTP ${result.status})")
+                }
+            }
+        }
+    }
+
+    fun submitReviewComment(text: String) {
+        scope.launch {
+            when (val result = putReviewComment(UpdateReviewCommentRequest(text), holder.etag)) {
+                is MutationResult.Success -> {
+                    holder.applyReviewCommentUpdate(text, result.response.etag)
+                }
+                is MutationResult.EtagMismatch -> {
+                    holder.conflict = ConflictState.EtagConflict(
+                        error = result.error,
+                        serverEtag = result.currentEtag,
+                        pending = PendingMutation.UpdateReviewComment(text),
+                    )
+                }
+                is MutationResult.ValidationError -> {
+                    holder.toastMessage = "Validation error: ${result.errors.take(120)}"
+                }
+                is MutationResult.Unexpected -> {
+                    holder.toastMessage = "Server error (HTTP ${result.status})"
+                }
+            }
+        }
+    }
+
+    // Conflict resolution handlers
+    fun reloadAndRetry() {
+        val pending = (holder.conflict as? ConflictState.EtagConflict)?.pending ?: run {
+            holder.clearConflict()
+            return
+        }
+        holder.clearConflict()
+        scope.launch {
+            try {
+                val resp = fetchWorkspace()
+                holder.applyWorkspace(resp)
+                // Retry the pending mutation with the new ETag.
+                when (pending) {
+                    is PendingMutation.AddComment -> {
+                        when (val result = postComment(pending.request, holder.etag)) {
+                            is MutationResult.Success -> {
+                                val comment = CommentDto(
+                                    anchorId = result.response.value["anchor_id"] ?: "",
+                                    kind = pending.request.kind,
+                                    path = pending.request.path ?: "",
+                                    side = pending.request.side,
+                                    line = pending.request.line,
+                                    lineStart = pending.request.lineStart,
+                                    lineEnd = pending.request.lineEnd,
+                                    state = "open",
+                                    body = pending.request.body,
+                                )
+                                holder.applyNewComment(comment, result.response.etag)
+                            }
+                            else -> holder.toastMessage = "Retry failed after reload"
+                        }
+                    }
+                    is PendingMutation.ToggleState -> {
+                        when (val result = patchCommentState(
+                            pending.anchorId,
+                            UpdateCommentStateRequest(pending.newState),
+                            holder.etag,
+                        )) {
+                            is MutationResult.Success ->
+                                holder.confirmOptimistic(pending.anchorId, result.response.etag)
+                            else -> holder.toastMessage = "Retry failed after reload"
+                        }
+                    }
+                    is PendingMutation.UpdateReviewComment -> {
+                        when (val result = putReviewComment(
+                            UpdateReviewCommentRequest(pending.text),
+                            holder.etag,
+                        )) {
+                            is MutationResult.Success ->
+                                holder.applyReviewCommentUpdate(pending.text, result.response.etag)
+                            else -> holder.toastMessage = "Retry failed after reload"
+                        }
+                    }
+                }
+            } catch (e: Throwable) {
+                holder.toastMessage = "Reload failed: ${e.message}"
+            }
+        }
+    }
+
+    Box(modifier = Modifier.fillMaxSize()) {
+        Column(modifier = Modifier.fillMaxSize()) {
+            TopBar(
+                workspace = workspace,
+                onAddOverallComment = { activeModalTarget = CommentTarget.Review },
             )
-            // Vertical divider.
-            Box(
-                modifier = Modifier
-                    .width(1.dp)
-                    .fillMaxSize()
-                    .background(colors.border),
+            ReviewSummaryPanel(
+                reviewComment = holder.snapshot?.review?.reviewComment,
+                reviewLevelComments = reviewLevelComments,
+                onEditReviewComment = { text -> submitReviewComment(text) },
             )
-            MainPane(
-                file = workspace.files.firstOrNull { it.path == selectedPath },
-                comments = allComments,
-                modifier = Modifier.weight(1f).fillMaxSize(),
+            Row(modifier = Modifier.fillMaxSize().weight(1f)) {
+                Sidebar(
+                    files = workspace.files,
+                    comments = effectiveComments,
+                    selectedPath = selectedPath,
+                    onSelect = { selectedPath = it },
+                    onToggleState = { comment -> toggleCommentState(comment) },
+                    pendingToggleIds = holder.pendingToggleIds,
+                    modifier = Modifier
+                        .width(320.dp)
+                        .fillMaxSize()
+                        .background(MaterialTheme.colorScheme.surface),
+                )
+                Box(
+                    modifier = Modifier
+                        .width(1.dp)
+                        .fillMaxSize()
+                        .background(colors.border),
+                )
+                MainPane(
+                    file = selectedFile,
+                    comments = effectiveComments,
+                    onAddComment = { target -> activeModalTarget = target },
+                    modifier = Modifier.weight(1f).fillMaxSize(),
+                )
+            }
+            StatusBar(holder.snapshot ?: workspace)
+        }
+
+        // CommentModal overlay
+        activeModalTarget?.let { target ->
+            CommentModal(
+                target = target,
+                onSubmit = { body ->
+                    submitComment(target, body)
+                    activeModalTarget = null
+                },
+                onCancel = { activeModalTarget = null },
             )
         }
-        StatusBar(workspace)
+
+        // ConflictModal overlay
+        (holder.conflict as? ConflictState.EtagConflict)?.let { conflict ->
+            ConflictModal(
+                conflict = conflict,
+                onReloadAndRetry = { reloadAndRetry() },
+                onDiscard = { holder.clearConflict() },
+            )
+        }
+
+        // Toast
+        holder.toastMessage?.let { msg ->
+            Toast(
+                message = msg,
+                onDismiss = { holder.dismissToast() },
+            )
+        }
     }
 }
 
+// ---------------------------------------------------------------------------
+// Helper: build CreateCommentRequest from CommentTarget
+// ---------------------------------------------------------------------------
+
+private fun buildCreateCommentRequest(
+    target: CommentTarget,
+    body: String,
+    workspace: WorkspaceResponse,
+): CreateCommentRequest = when (target) {
+    is CommentTarget.Line -> {
+        val file = workspace.files.firstOrNull { it.path == target.path }
+        val blob = when (target.side) {
+            "base" -> file?.hunks?.firstOrNull()?.let { null } // blob not carried in HunkDto
+            else -> null
+        }
+        CreateCommentRequest(
+            kind = "line",
+            path = target.path,
+            side = target.side,
+            blob = blob,
+            line = target.line,
+            body = body,
+        )
+    }
+    is CommentTarget.Range -> {
+        CreateCommentRequest(
+            kind = "range",
+            path = target.path,
+            side = target.side,
+            lineStart = target.lineStart,
+            lineEnd = target.lineEnd,
+            body = body,
+        )
+    }
+    is CommentTarget.File -> {
+        CreateCommentRequest(
+            kind = "file",
+            path = target.path,
+            body = body,
+        )
+    }
+    CommentTarget.Review -> {
+        CreateCommentRequest(
+            kind = "review",
+            body = body,
+        )
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Top bar
+// ---------------------------------------------------------------------------
+
 @Composable
-private fun TopBar(workspace: WorkspaceResponse) {
+private fun TopBar(workspace: WorkspaceResponse, onAddOverallComment: () -> Unit) {
     val colors = LocalSitatameColors.current
     Row(
         modifier = Modifier
@@ -169,6 +433,16 @@ private fun TopBar(workspace: WorkspaceResponse) {
             color = colors.mutedText,
             fontFamily = FontFamily.Monospace,
         )
+        Spacer(Modifier.weight(1f))
+        Button(
+            onClick = onAddOverallComment,
+            colors = ButtonDefaults.buttonColors(
+                containerColor = MaterialTheme.colorScheme.primary,
+                contentColor = MaterialTheme.colorScheme.onPrimary,
+            ),
+        ) {
+            Text("Add overall comment", fontSize = 12.sp)
+        }
     }
     Box(
         modifier = Modifier
@@ -177,6 +451,10 @@ private fun TopBar(workspace: WorkspaceResponse) {
             .background(colors.border),
     )
 }
+
+// ---------------------------------------------------------------------------
+// Status bar
+// ---------------------------------------------------------------------------
 
 @Composable
 private fun StatusBar(workspace: WorkspaceResponse) {
@@ -211,4 +489,43 @@ private fun StatusBar(workspace: WorkspaceResponse) {
             fontFamily = FontFamily.Monospace,
         )
     }
+}
+
+// ---------------------------------------------------------------------------
+// Toast
+// ---------------------------------------------------------------------------
+
+@Composable
+private fun Toast(message: String, onDismiss: () -> Unit) {
+    Box(modifier = Modifier.fillMaxSize(), contentAlignment = Alignment.BottomCenter) {
+        Surface(
+            modifier = Modifier.padding(16.dp),
+            color = MaterialTheme.colorScheme.error,
+            shape = RoundedCornerShape(8.dp),
+        ) {
+            Row(
+                modifier = Modifier.padding(horizontal = 16.dp, vertical = 10.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    text = message,
+                    color = MaterialTheme.colorScheme.onError,
+                    fontFamily = FontFamily.Monospace,
+                    fontSize = 13.sp,
+                )
+                Spacer(Modifier.width(16.dp))
+                Button(
+                    onClick = onDismiss,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = MaterialTheme.colorScheme.onError,
+                        contentColor = MaterialTheme.colorScheme.error,
+                    ),
+                ) {
+                    Text("Dismiss", fontSize = 11.sp)
+                }
+            }
+        }
+    }
+    // Auto-dismiss via LaunchedEffect is not wired here (would need kotlinx-coroutines
+    // delay); the user can dismiss manually. Phase C can add auto-dismiss.
 }

@@ -16,7 +16,12 @@ import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontFamily
@@ -33,16 +38,24 @@ import dev.sitatame.web.api.CommentDto
  * Sits above the sidebar/main split so the user sees the top-level summary
  * before drilling into per-file diffs. Renders nothing when both inputs are
  * empty so the layout doesn't grow a phantom strip on review-less branches.
+ *
+ * [onEditReviewComment] is called when the user submits an edit of the overall
+ * review comment (PUT /api/v1/review-comment).  Pass `null` to disable editing
+ * (read-only mode, e.g. when no write API is available).
  */
 @Composable
 fun ReviewSummaryPanel(
     reviewComment: String?,
     reviewLevelComments: List<CommentDto>,
+    onEditReviewComment: ((String) -> Unit)? = null,
     modifier: Modifier = Modifier,
 ) {
     val hasComment = !reviewComment.isNullOrBlank()
     val hasReviewLevel = reviewLevelComments.isNotEmpty()
     if (!hasComment && !hasReviewLevel) return
+
+    // Whether the inline edit textarea is open
+    var editing by remember { mutableStateOf(false) }
 
     val colors = LocalSitatameColors.current
     Surface(
@@ -67,14 +80,40 @@ fun ReviewSummaryPanel(
                     fontFamily = FontFamily.Monospace,
                     fontSize = 12.sp,
                 )
+                // Edit button (B9) — only when write path is available
+                if (onEditReviewComment != null && !editing) {
+                    Spacer(Modifier.weight(1f))
+                    TextButton(onClick = { editing = true }) {
+                        Text(
+                            text = if (hasComment) "Edit" else "Add summary",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.primary,
+                        )
+                    }
+                }
             }
-            if (hasComment) {
-                Spacer(Modifier.height(8.dp))
-                ReviewCommentCard(reviewComment!!)
-            }
-            if (hasReviewLevel) {
-                Spacer(Modifier.height(8.dp))
-                reviewLevelComments.forEach { CommentCard(it) }
+
+            if (editing && onEditReviewComment != null) {
+                // Inline edit modal using EditTextModal composable
+                Spacer(Modifier.height(4.dp))
+                EditTextModal(
+                    title = "Edit review summary",
+                    initialText = reviewComment.orEmpty(),
+                    onSubmit = { text ->
+                        onEditReviewComment(text)
+                        editing = false
+                    },
+                    onCancel = { editing = false },
+                )
+            } else {
+                if (hasComment) {
+                    Spacer(Modifier.height(8.dp))
+                    ReviewCommentCard(reviewComment!!)
+                }
+                if (hasReviewLevel) {
+                    Spacer(Modifier.height(8.dp))
+                    reviewLevelComments.forEach { CommentCard(it) }
+                }
             }
         }
         Box(
