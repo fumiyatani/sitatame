@@ -95,6 +95,75 @@ func needsControlScrub(s string) bool {
 	return false
 }
 
+// wrapBody wraps a sanitized diff body string into multiple lines, each at
+// most `budget` display columns wide. Tabs are expanded to spaces and control
+// bytes are dropped (same rules as writeBody). budget <= 0 returns the whole
+// body as a single element without any wrapping.
+//
+// The returned slice always has at least one element (even for an empty body).
+// Every element has a column width <= budget.
+func wrapBody(body string, budget int) []string {
+	runes, total := sanitizeRunes(body)
+	if budget <= 0 || total <= budget {
+		var b strings.Builder
+		for _, e := range runes {
+			b.WriteRune(e.r)
+		}
+		return []string{b.String()}
+	}
+	var lines []string
+	var b strings.Builder
+	used := 0
+	for _, e := range runes {
+		if used+e.w > budget {
+			lines = append(lines, b.String())
+			b.Reset()
+			used = 0
+		}
+		b.WriteRune(e.r)
+		used += e.w
+	}
+	if b.Len() > 0 || len(lines) == 0 {
+		lines = append(lines, b.String())
+	}
+	return lines
+}
+
+// wrapRow wraps a diff row into one or more screen lines each of at most
+// bodyMax display columns. The prefix byte ('+'/'-'/' ') is prepended to the
+// first screen line only; continuation lines receive a space prefix so they
+// align with content. maxWidth covers the prefix + body together.
+//
+// Returns at least one element.
+func wrapRow(r row, maxWidth int) []string {
+	if maxWidth <= 1 {
+		return []string{string([]byte{' '})}
+	}
+	var prefix byte = ' '
+	var body string
+	if r.kind == rowLine && len(r.text) > 0 {
+		prefix = r.text[0]
+		body = r.text[1:]
+	} else {
+		body = r.text
+	}
+	body = stripANSI(body)
+	budget := maxWidth - 1 // 1 col for prefix
+	segments := wrapBody(body, budget)
+	out := make([]string, len(segments))
+	for i, seg := range segments {
+		var b strings.Builder
+		if i == 0 {
+			b.WriteByte(prefix)
+		} else {
+			b.WriteByte(' ') // continuation indent
+		}
+		b.WriteString(seg)
+		out[i] = b.String()
+	}
+	return out
+}
+
 // renderLine sanitizes a diff content line and clips it to maxWidth columns.
 // `prefix` is one of ' ', '+', '-' and is always emitted; the remaining width
 // is filled with the body. Tabs are expanded to a single space and other
