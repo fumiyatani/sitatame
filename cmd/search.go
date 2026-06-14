@@ -63,7 +63,9 @@ func RunSearch(env Env, args []string) int {
 }
 
 func runSearchRg(env Env, rgPath, pattern, root string) int {
-	cmd := exec.Command(rgPath, "-n", "--no-heading", "--color=never", "--", pattern, root)
+	// --glob '!.legacy-*' excludes legacy migration directories created by
+	// MigrateLegacyLayout so migrated data does not surface in search results.
+	cmd := exec.Command(rgPath, "-n", "--no-heading", "--color=never", "--glob", "!.legacy-*", "--", pattern, root)
 	cmd.Stdout = env.Stdout
 	cmd.Stderr = env.Stderr
 	if err := cmd.Run(); err != nil {
