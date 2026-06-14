@@ -86,3 +86,57 @@ data class WorkspaceResponse(
     /** Absolute path of the review .md file, or null. */
     val sourcePath: String? = null,
 )
+
+// ---------------------------------------------------------------------------
+// Write-path DTOs (Phase 1 step 2)
+// ---------------------------------------------------------------------------
+
+/**
+ * Request body for `POST /api/v1/comments`.
+ *
+ * [kind] must be one of "line" | "range" | "file" | "review".
+ * [side] must be "head" (default) or "base".
+ * [blob] is the git blob SHA that identifies the file version the comment
+ * is anchored to. The Frontend should pass the BlobHead / BlobBase it
+ * received from GET /workspace. Omit when kind == "review".
+ */
+@Serializable
+data class CreateCommentRequest(
+    val kind: String,
+    val path: String? = null,
+    val side: String = "head",
+    val blob: String? = null,
+    val line: Int? = null,
+    val lineStart: Int? = null,
+    val lineEnd: Int? = null,
+    val body: String,
+)
+
+/**
+ * Request body for `PATCH /api/v1/comments/{anchorId}/state`.
+ *
+ * [state] must be one of "open" | "resolved" | "stale".
+ */
+@Serializable
+data class UpdateCommentStateRequest(val state: String)
+
+/**
+ * Request body for `PUT /api/v1/review-comment`.
+ *
+ * [text] is the new review-level comment. An empty string clears the field.
+ */
+@Serializable
+data class UpdateReviewCommentRequest(val text: String)
+
+/**
+ * Response body for HTTP 412 Precondition Failed (ETag mismatch).
+ *
+ * [expected] is the ETag the client sent in `If-Match`.
+ * [actual] is the current ETag of the review file on disk.
+ */
+@Serializable
+data class EtagMismatchError(
+    val error: String = "etag_mismatch",
+    val expected: String,
+    val actual: String,
+)
