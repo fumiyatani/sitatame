@@ -77,14 +77,28 @@ contract a maintenance fix must preserve. Every binding is sourced from
 
 ### Persistence
 
-- `s` saves and promotes the review to
-  `~/.sitatame/<project-slug>/reviews/<branch-slug>/<id>.md` and prints
-  `SITATAME_REVIEW=<abs path>` on stdout (`QuitPromote`)
-- `q` saves a draft to `~/.sitatame/<project-slug>/drafts/...` and exits
-  with status 1 (`QuitDraft`)
+- `s` writes `~/.sitatame/<project-slug>/<branch-slug>/review.md` atomically
+  and prints `SITATAME_REVIEW=<abs path>` on stdout, then exits 0 (`QuitSave`).
+  If the review is empty (no comments, blank `review_comment`), the write is
+  skipped and `sitatame` still exits 0 cleanly.
+- `q` discards the in-memory review and exits 1 without writing anything
+  (`QuitDiscard`). The on-disk `review.md` from the previous session is
+  untouched.
 - `Ctrl+C` is an alias of `q` (`KeyQuitCtrl`)
+- `Esc` at the top level (no modal, no file picker open) is a no-op — it
+  only closes help or clears a range selection. This prevents accidentally
+  discarding work with a miskey (`KeyEsc` in `updateMain`).
+- On resume, `sitatame` auto-loads the existing `review.md` for the branch
+  so prior comments reappear in the TUI.
 - YAML front matter + Markdown body; unknown front-matter keys round-trip
   via `yaml.Node` so external agents can extend the schema
+
+#### Flags
+
+- `--new`: refuse to launch if `review.md` already exists for the branch;
+  use `--force-new` to overwrite.
+- `--force-new`: back up `review.md` to `review.md.bak` and start a fresh
+  review. `--new` and `--force-new` are mutually exclusive.
 
 ### Help
 
@@ -100,8 +114,10 @@ contract a maintenance fix must preserve. Every binding is sourced from
 - `sitatame --working` — review the worktree against HEAD (staged +
   unstaged)
 - `sitatame search <pattern>` — grep saved reviews under
-  `~/.sitatame/<project-slug>/reviews/`. Uses `ripgrep` when present and
-  falls back to the Go regexp implementation in `internal/search/`
+  `~/.sitatame/<project-slug>/` (the per-project root; contains
+  `<branch-slug>/review.md` for every reviewed branch). Uses `ripgrep`
+  when present and falls back to the Go regexp implementation in
+  `internal/search/`
 
 ## TUI ↔ Web UI ↔ IntelliJ Plugin feature parity
 
@@ -145,8 +161,8 @@ exist on `main`.
 | Comment gutter markers (`*` / `~`)       | Shipped       | Phase 2 (heatmap planned for Phase 1)                                                       | Phase 2 (gutter bar)                                                      |
 | Split / side-by-side layout (`Tab`)      | Shipped       | Phase 2                                                                                     | N/A (IDE diff viewer covers this)                                         |
 | Help overlay (`?`)                       | Shipped       | Phase 2 (keyboard shortcuts panel)                                                          | Native (IDE Keymap)                                                       |
-| Save & promote (`s`)                     | Shipped       | Phase 2 (Phase 1 is read-only)                                                              | Phase 1 (in flight; `Promote Review` action)                              |
-| Save as draft (`q`)                      | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; automatic on `Add Comment`)                           |
+| Save & exit (`s`)                        | Shipped       | Phase 2 (Phase 1 is read-only)                                                              | Phase 1 (in flight; `Promote Review` action)                              |
+| Discard & exit (`q`)                     | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; automatic on `Add Comment`)                           |
 | `SITATAME_REVIEW=` stdout handoff        | Shipped       | Phase 2                                                                                     | Phase 1 (in flight; IDE Notification)                                     |
 | Read latest review                       | Shipped       | Phase 1 (in flight; `GET /api/v1/reviews/latest`)                                           | Phase 1 (in flight; Tool Window list)                                     |
 | Auto-detect base (`origin/HEAD`, …)      | Shipped       | Phase 2                                                                                     | Phase 2 (Git4Idea)                                                        |
