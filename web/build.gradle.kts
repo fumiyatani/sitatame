@@ -122,9 +122,26 @@ tasks.named<Test>("jvmTest") {
 // `./gradlew :web:run` runs the Ktor backend. The Kotlin Multiplatform plugin
 // does not register the `application` plugin automatically; we wire a JavaExec
 // task directly against the JVM compilation outputs to avoid the friction.
+// Bundle the Compose Wasm distribution into the JVM server's resources so a
+// single `:run` serves BOTH the UI (static "/") and the API (/api/v1/...) on
+// one localhost port. Wiring it through jvmProcessResources means the output
+// lands under build/ (build/processedResources/jvm/main/static) — src/ stays
+// clean, so the 12MB+ of generated wasm/js never needs gitignoring.
+//
+// Because the JavaExec `run` task's classpath includes the JVM compilation's
+// resource output, depending on this task transitively pulls the wasm build,
+// giving the desired `:run` -> dist build -> serve chain with no extra step.
+val wasmJsBrowserDistribution = tasks.named("wasmJsBrowserDistribution")
+tasks.named<Copy>(kotlin.jvm().compilations.getByName("main").processResourcesTaskName) {
+    dependsOn(wasmJsBrowserDistribution)
+    from(wasmJsBrowserDistribution.map { it.outputs.files }) {
+        into("static")
+    }
+}
+
 tasks.register<JavaExec>("run") {
     group = "application"
-    description = "Run the Ktor backend on a random localhost port."
+    description = "Build the Compose Wasm UI, then run the Ktor server (UI + API on one port)."
     mainClass.set("dev.sitatame.web.server.ServerKt")
     val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
     classpath = files(
