@@ -2,7 +2,7 @@
 
 A first-class IDE surface for sitatame code reviews. Authors and consumers
 can add comments, browse a tool window of all open / resolved / stale
-comments, promote a draft to the reviews/ directory, and copy an AI-ready
+comments, save the review directly to `review.md`, and copy an AI-ready
 prompt to the clipboard — all without leaving the editor.
 
 **Status**: experimental. Not on JetBrains Marketplace yet; install from
@@ -62,7 +62,7 @@ emitter immediately fails one or both routes.
 | Toggle resolved/open          | Editor right-click               | Cmd+Shift+R / Ctrl+Shift+R |
 | List comments + jump to line  | Tool window "sitatame review"    | —                    |
 | Copy AI prompt                | Tool window toolbar              | —                    |
-| Promote draft → review        | Tool window toolbar              | —                    |
+| Save review                   | Tool window toolbar              | —                    |
 | Configure `SITATAME_HOME`     | Settings → Tools → sitatame review | —                  |
 
 ## Storage
@@ -70,21 +70,26 @@ emitter immediately fails one or both routes.
 The plugin reads and writes:
 
 ```
-$SITATAME_HOME/<project-slug>/{reviews,drafts}/<branch-slug>/*.md
+$SITATAME_HOME/<project-slug>/<branch-slug>/review.md
 ```
 
-…which is exactly what the Go CLI and the Web UI PoC use. The slug
-algorithms are byte-for-byte ports of `internal/review/slug.go` so
-multiple tools see the same files for the same repo + branch.
+…which is exactly what the Go CLI and the Web UI PoC use (1-branch-1-file
+layout introduced in issue #76). The slug algorithms are byte-for-byte ports
+of `internal/review/slug.go` so multiple tools see the same file for the
+same repo + branch.
+
+An automatic backup (`review.md.bak`) is written before each save. If the
+encoder fails, a rescue JSON (`review.md.rescue.<timestamp>.json`) is
+written instead so no in-memory state is lost.
 
 The Settings panel exposes a `SITATAME_HOME` override that takes precedence
 over the environment variable; leave it blank to honour the shell.
 
 ## Known limitations
 
-- Phase 1 does no concurrency control on drafts. If the CLI and the IDE
-  both append to the same draft simultaneously, last-write-wins. Phase 2
-  will add an inode-based mtime check and conflict prompt.
+- Phase 1 does no concurrency control. If the CLI and the IDE both write to
+  the same `review.md` simultaneously, last-write-wins. Phase 2 will add an
+  inode-based mtime check and conflict prompt.
 - The "copy AI prompt" body's `関連 diff (要約)` section is a placeholder;
   Phase 2 wires it up to `git diff --stat` via Git4Idea.
 - Plugin Verifier is configured but only runs against the primary target
