@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 
@@ -27,7 +28,7 @@ func finalizeReview(env Env, store *review.Store, result TUIResult) int {
 	case tui.QuitPromote:
 		draftPath, err := store.SaveDraft(&result.Review)
 		if err != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
+			printSaveDraftError(env, err)
 			return 1
 		}
 		finalPath, err := store.Promote(draftPath)
@@ -40,7 +41,7 @@ func finalizeReview(env Env, store *review.Store, result TUIResult) int {
 		return 0
 	case tui.QuitDraft:
 		if _, err := store.SaveDraft(&result.Review); err != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
+			printSaveDraftError(env, err)
 			return 1
 		}
 		return 1
@@ -49,4 +50,19 @@ func finalizeReview(env Env, store *review.Store, result TUIResult) int {
 	// cleanly without touching the filesystem. In production this only happens
 	// if the TUI is short-circuited (e.g. test stubs).
 	return 0
+}
+
+// printSaveDraftError writes a human-readable error to env.Stderr. When the
+// error is a RescueError (i.e. Encode failed but rescue file was written), a
+// prominent message with the rescue file path is emitted so the user can
+// recover their work manually.
+func printSaveDraftError(env Env, err error) {
+	var re *review.RescueError
+	if errors.As(err, &re) {
+		fmt.Fprintf(env.Stderr,
+			"sitatame: SAVE FAILED. Rescue file written to: %s. Open this file and recover manually.\n",
+			re.RescuePath)
+		return
+	}
+	fmt.Fprintf(env.Stderr, "sitatame: save draft: %v\n", err)
 }
