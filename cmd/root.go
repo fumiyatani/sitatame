@@ -83,14 +83,16 @@ func defaultRunTUI(env Env, opts TUIOptions) (TUIResult, error) {
 // rootOpts is the parsed form of the positional + flag arguments to
 // `sitatame [base]` / `sitatame --staged` / `sitatame --working`.
 type rootOpts struct {
-	Staged  bool
-	Working bool
-	BaseArg string
+	Staged   bool
+	Working  bool
+	BaseArg  string
+	New      bool // --new: refuse if review.md already exists
+	ForceNew bool // --force-new: back up review.md and start fresh
 }
 
 // parseRootArgs splits args into the rootOpts shape, enforcing the rule that
 // --staged and --working are mutually exclusive and cannot be combined with a
-// positional base argument.
+// positional base argument. --new and --force-new are mutually exclusive.
 func parseRootArgs(args []string) (rootOpts, error) {
 	var opts rootOpts
 	for _, a := range args {
@@ -99,6 +101,10 @@ func parseRootArgs(args []string) (rootOpts, error) {
 			opts.Staged = true
 		case a == "--working":
 			opts.Working = true
+		case a == "--new":
+			opts.New = true
+		case a == "--force-new":
+			opts.ForceNew = true
 		case len(a) > 0 && a[0] == '-':
 			return rootOpts{}, fmt.Errorf("unknown flag: %s", a)
 		default:
@@ -113,6 +119,9 @@ func parseRootArgs(args []string) (rootOpts, error) {
 	}
 	if (opts.Staged || opts.Working) && opts.BaseArg != "" {
 		return rootOpts{}, fmt.Errorf("--staged/--working cannot be combined with an explicit base")
+	}
+	if opts.New && opts.ForceNew {
+		return rootOpts{}, fmt.Errorf("--new and --force-new are mutually exclusive")
 	}
 	return opts, nil
 }
@@ -215,23 +224,66 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	paths := review.NewPaths(repo.Workdir, branch)
-	warnLegacySitatameDir(env, paths.LegacyRoot(), paths.DraftsRoot())
+	// Only warn about the repo-local .sitatame/ legacy directory (pre-#38
+	// in-repo storage). The output-root drafts/reviews layout (pre-#76) is
+	// handled automatically by MigrateLegacyLayout below, so we pass an
+	// empty newDraftsRoot to suppress the now-redundant migration hint.
+	warnLegacySitatameDir(env, paths.LegacyRoot(), "")
 	store := review.NewStore(paths)
-	if existing, derr := store.DetectDraft(); derr == nil && existing != "" {
-		fmt.Fprintf(env.Stderr, "sitatame: draft exists: %s\n", existing)
-		// Auto-load the previously-saved draft so a re-run on the same
+
+	// Crash recovery: if review.md was lost mid-write but review.md.bak
+	// exists, restore it before trying to load. Orphaned .tmp files are
+	// also cleaned up here. Best-effort: a recovery failure must not block
+	// startup.
+	if rerr := store.RecoverFromCrash(); rerr != nil {
+		fmt.Fprintf(env.Stderr, "sitatame: crash recovery failed: %v (continuing)\n", rerr)
+	}
+
+	// Phase 4: one-time migration from drafts/reviews to 1-branch-1-file layout.
+	// Must run after RecoverFromCrash (so BranchDir is clean) and before
+	// autoload (so the migrated review.md is visible to DetectReview).
+	// Migration failure is non-fatal: the user can still operate on the new layout.
+	if migrated, legacyDir, merr := store.MigrateLegacyLayout(); merr != nil {
+		fmt.Fprintf(env.Stderr, "sitatame: migration warning: %v\n", merr)
+	} else if migrated > 0 {
+		fmt.Fprintf(env.Stderr,
+			"sitatame: migrated %d branch(es) to new layout; legacy data preserved in %s\n",
+			migrated, legacyDir)
+	}
+
+	// --new: refuse if review.md already exists.
+	if opts.New {
+		if existing, _ := store.DetectReview(); existing != "" {
+			fmt.Fprintf(env.Stderr,
+				"sitatame: review already exists for branch: %s; use --force-new to overwrite\n", existing)
+			return 1
+		}
+	}
+
+	// --force-new: back up existing review.md and start fresh.
+	if opts.ForceNew {
+		if existing, _ := store.DetectReview(); existing != "" {
+			if err := os.Rename(existing, paths.BakFile()); err != nil {
+				fmt.Fprintf(env.Stderr, "sitatame: --force-new: backup review: %v\n", err)
+				return 1
+			}
+			fmt.Fprintf(env.Stderr, "sitatame: --force-new: backed up %s to %s\n", existing, paths.BakFile())
+		}
+	}
+
+	if existing, derr := store.DetectReview(); derr == nil && existing != "" {
+		fmt.Fprintf(env.Stderr, "sitatame: review exists: %s\n", existing)
+		// Auto-load the previously-saved review so a re-run on the same
 		// branch surfaces the user's prior comments instead of starting
-		// from an empty Review. Without this load step the overlay path
-		// looked correct (DetectDraft printed the file) yet the TUI was
-		// always handed a freshly constructed `r` — see issue #18.
+		// from an empty Review.
 		//
-		// Failures here are best-effort: a corrupt or unreadable draft
+		// Failures here are best-effort: a corrupt or unreadable review
 		// should not block a fresh session, so we surface the reason on
 		// stderr and continue with the empty Review.
 		//
 		// Why we start from `loaded` and only overwrite the
 		// diff-derived fields, rather than copying a handful of fields
-		// off the loaded draft onto a freshly-built Review:
+		// off the loaded review onto a freshly-built Review:
 		//
 		//   * PR #65 introduced top-level / file / comment `Extras`
 		//     maps that hold YAML keys we don't model — AI agents lean
@@ -241,25 +293,15 @@ func RunRoot(env Env, args []string) int {
 		//     Markdown `Body` are the same story: dropping them on
 		//     resume mutates the very file we then re-save.
 		//   * Branch / Base / Head must reflect the *current* diff
-		//     snapshot, not the one the draft was saved against, so we
+		//     snapshot, not the one the review was saved against, so we
 		//     unconditionally overwrite them after the value copy.
 		//
 		// Files is preserved as-loaded by design (PR #70 round-2 P2
-		// fix): the on-disk draft is the only source of per-FileMeta
+		// fix): the on-disk review is the only source of per-FileMeta
 		// `Extras` (forward-compat keys AI agents stash there) and of
-		// the original diff snapshot. Wiping `r.Files = nil` and
-		// letting SaveDraft/Encode re-serialise an empty `files:` list
-		// silently dropped those Extras on every resume -> save cycle.
-		// Tracked as a follow-up: refreshing `r.Files` against the
-		// *current* diff (merging Extras by path) so the saved draft
-		// matches the diff the user is actively reviewing.
-		//
-		// Map sharing: `r = *loaded` is a value copy, so the Extras
-		// maps end up shared by reference with the on-disk-derived
-		// struct. That is fine because SaveDraft → Encode only reads
-		// from those maps; nothing in the TUI session mutates them.
-		if loaded, lerr := loadDraftForResume(existing); lerr != nil {
-			fmt.Fprintf(env.Stderr, "sitatame: draft load failed: %v (starting empty)\n", lerr)
+		// the original diff snapshot.
+		if loaded, lerr := loadReviewForResume(existing); lerr != nil {
+			fmt.Fprintf(env.Stderr, "sitatame: review load failed: %v (starting empty)\n", lerr)
 		} else {
 			r = loaded
 			r.Branch = branch
@@ -269,7 +311,7 @@ func RunRoot(env Env, args []string) int {
 				r.Schema = 1
 			}
 			// Run validation with stderr warnings so the PR #61 legacy
-			// anchor detector flags drafts saved before issue #36 / #19
+			// anchor detector flags reviews saved before issue #36 / #19
 			// were fixed. Validate also re-classifies comment state vs.
 			// the freshly-loaded diff (open / stale).
 			review.ValidateWithWarnings(&r, files, env.Stderr)
@@ -289,7 +331,7 @@ func RunRoot(env Env, args []string) int {
 	return finalizeReview(env, store, result)
 }
 
-// loadDraftForResume reads `path` and decodes it as a review.Review. The
+// loadReviewForResume reads `path` and decodes it as a review.Review. The
 // caller adopts the returned value wholesale (preserving Extras / CreatedAt /
 // Body / Files etc.) and only overwrites the fields tied to the *current*
 // diff snapshot (Branch / Base / Head). Files is kept as-loaded so per-
@@ -297,16 +339,16 @@ func RunRoot(env Env, args []string) int {
 // diff is left as a follow-up.
 //
 // Returned errors are surfaced on stderr by the caller and the session
-// continues with an empty Review — a corrupt or unreadable draft must not
+// continues with an empty Review — a corrupt or unreadable review must not
 // block startup.
-func loadDraftForResume(path string) (review.Review, error) {
+func loadReviewForResume(path string) (review.Review, error) {
 	b, err := os.ReadFile(path)
 	if err != nil {
-		return review.Review{}, fmt.Errorf("read draft: %w", err)
+		return review.Review{}, fmt.Errorf("read review: %w", err)
 	}
 	r, err := review.Decode(b)
 	if err != nil {
-		return review.Review{}, fmt.Errorf("decode draft: %w", err)
+		return review.Review{}, fmt.Errorf("decode review: %w", err)
 	}
 	return r, nil
 }
@@ -553,7 +595,7 @@ func shellQuote(s string) string {
 // the original panic so the caller / test sees it. The terminal restore is
 // owned by bubbletea's own panic handler.
 func runTUIWithShutdown(runner func(Env, TUIOptions) (TUIResult, error), env Env, opts TUIOptions, store *review.Store) (result TUIResult, runErr error) {
-	result = TUIResult{Review: opts.Review, Reason: tui.QuitDraft}
+	result = TUIResult{Review: opts.Review, Reason: tui.QuitDiscard}
 	var panicVal any
 	func() {
 		defer func() {
@@ -562,10 +604,11 @@ func runTUIWithShutdown(runner func(Env, TUIOptions) (TUIResult, error), env Env
 		result, runErr = runner(env, opts)
 	}()
 	if panicVal != nil {
-		// Best-effort draft save with the last known good state.
+		// Best-effort review save with the last known good state so the
+		// user doesn't lose their work on an unexpected crash.
 		func() {
 			defer func() { _ = recover() }()
-			_, _ = store.SaveDraft(&result.Review)
+			_, _ = store.SaveReview(&result.Review)
 		}()
 		panic(panicVal)
 	}

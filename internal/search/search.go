@@ -34,6 +34,12 @@ func Walk(root string, re *regexp.Regexp) ([]Hit, error) {
 			return nil
 		}
 		if d.IsDir() {
+			// Skip .legacy-<ts>/ directories so migrated data is not included
+			// in search results. The check uses the directory base name so it
+			// matches at any depth (e.g. <project-root>/.legacy-20260614T105720/).
+			if strings.HasPrefix(d.Name(), ".legacy-") {
+				return filepath.SkipDir
+			}
 			return nil
 		}
 		if !d.Type().IsRegular() {
