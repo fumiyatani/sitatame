@@ -20,11 +20,16 @@ Usage:
 Flags:
   --staged                     Review the index against HEAD
   --working                    Review the working tree against HEAD
+  --new                        Refuse to start if review.md already exists for
+                               the current branch (use --force-new to overwrite)
+  --force-new                  Back up the existing review.md to review.md.bak
+                               and start a fresh session
   -h, --help                   Show this help
 
 Notes:
   --staged and --working are mutually exclusive and cannot be combined
   with an explicit base argument.
+  --new and --force-new are mutually exclusive.
 `
 
 func main() {
