@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bytes"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -39,6 +40,9 @@ func teaKeyRunes(s string) tea.KeyMsg {
 }
 
 // envWithRunner wires a TUI runner stub plus capture buffers and TTY=true.
+// Clipboard is stubbed to a no-op so tests do not touch the real system
+// clipboard and do not fail in headless environments (Linux CI without
+// wl-copy / xclip / xsel).
 func envWithRunner(stdin *os.File, run func(Env, TUIOptions) (TUIResult, error)) (Env, *bytes.Buffer, *bytes.Buffer) {
 	stdout := &bytes.Buffer{}
 	stderr := &bytes.Buffer{}
@@ -48,6 +52,7 @@ func envWithRunner(stdin *os.File, run func(Env, TUIOptions) (TUIResult, error))
 		Stderr:     stderr,
 		IsTerminal: func(uintptr) bool { return true },
 		RunTUI:     run,
+		Clipboard:  func(string) error { return nil },
 	}, stdout, stderr
 }
 
@@ -161,5 +166,145 @@ func TestModel_KeyQSetsQuitDiscard(t *testing.T) {
 	mm := updated.(tui.Model)
 	if got := mm.QuitReason(); got != tui.QuitDiscard {
 		t.Errorf("QuitReason = %v, want QuitDiscard", got)
+	}
+}
+
+// TestRunRoot_Save_CopiesPathToClipboard verifies that on QuitSave with a
+// non-empty review, the clipboard function is called with the review path and
+// a success message is written to stderr.
+func TestRunRoot_Save_CopiesPathToClipboard(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+
+	var copiedText string
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			opts.Review.ReviewComment = "lgtm"
+			return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
+		},
+		Clipboard: func(text string) error {
+			copiedText = text
+			return nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	// The copied text must match the path printed on stdout.
+	pathLine := strings.TrimSpace(strings.TrimPrefix(stdout.String(), "SITATAME_REVIEW="))
+	if copiedText == "" {
+		t.Fatal("clipboard function was not called")
+	}
+	if copiedText != pathLine {
+		t.Errorf("clipboard text = %q, want %q", copiedText, pathLine)
+	}
+	if !strings.Contains(stderr.String(), "path copied to clipboard") {
+		t.Errorf("stderr missing clipboard confirmation; got %q", stderr.String())
+	}
+}
+
+// TestRunRoot_Save_NoClipboardFlag_SkipsClipboard verifies that --no-clipboard
+// prevents the clipboard function from being called.
+func TestRunRoot_Save_NoClipboardFlag_SkipsClipboard(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+
+	clipboardCalled := false
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			opts.Review.ReviewComment = "lgtm"
+			return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
+		},
+		Clipboard: func(string) error {
+			clipboardCalled = true
+			return nil
+		},
+	}
+	if code := RunRoot(env, []string{"--no-clipboard"}); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if clipboardCalled {
+		t.Error("clipboard must not be called when --no-clipboard is set")
+	}
+	if strings.Contains(stderr.String(), "clipboard") {
+		t.Errorf("stderr must not mention clipboard when --no-clipboard is set; got %q", stderr.String())
+	}
+}
+
+// TestRunRoot_Save_NoClipboardEnv_SkipsClipboard verifies that
+// SITATAME_NO_CLIPBOARD=1 suppresses clipboard copy without needing the flag.
+func TestRunRoot_Save_NoClipboardEnv_SkipsClipboard(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	t.Setenv("SITATAME_NO_CLIPBOARD", "1")
+
+	clipboardCalled := false
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			opts.Review.ReviewComment = "lgtm"
+			return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
+		},
+		Clipboard: func(string) error {
+			clipboardCalled = true
+			return nil
+		},
+	}
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0", code)
+	}
+	if clipboardCalled {
+		t.Error("clipboard must not be called when SITATAME_NO_CLIPBOARD is set")
+	}
+}
+
+// TestRunRoot_Save_ClipboardError_DoesNotChangeExitCode verifies that a
+// clipboard copy failure does not change the exit code (0) — clipboard is
+// best-effort and must not fail the overall save operation.
+func TestRunRoot_Save_ClipboardError_DoesNotChangeExitCode(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+
+	stdout := &bytes.Buffer{}
+	stderr := &bytes.Buffer{}
+	env := Env{
+		Stdin:      os.Stdin,
+		Stdout:     stdout,
+		Stderr:     stderr,
+		IsTerminal: func(uintptr) bool { return true },
+		RunTUI: func(_ Env, opts TUIOptions) (TUIResult, error) {
+			opts.Review.ReviewComment = "lgtm"
+			return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
+		},
+		Clipboard: func(string) error {
+			return fmt.Errorf("no clipboard command found")
+		},
+	}
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 even when clipboard copy fails", code)
+	}
+	if !strings.Contains(stderr.String(), "clipboard copy failed") {
+		t.Errorf("stderr should mention clipboard failure; got %q", stderr.String())
+	}
+	// SITATAME_REVIEW must still be printed even when clipboard fails.
+	if !strings.HasPrefix(stdout.String(), "SITATAME_REVIEW=") {
+		t.Errorf("stdout missing SITATAME_REVIEW even though save succeeded: %q", stdout.String())
 	}
 }
