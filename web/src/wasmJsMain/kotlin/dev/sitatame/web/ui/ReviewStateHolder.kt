@@ -72,6 +72,12 @@ class ReviewStateHolder {
     /** Toast messages to display briefly (error feedback). */
     var toastMessage by mutableStateOf<String?>(null)
 
+    /**
+     * Current thread filter selection.  Defaults to [StateFilter.All].
+     * UI wiring (StateFilterControl composable) is Phase B.
+     */
+    var filterState by mutableStateOf(StateFilter.All)
+
     /** True while a resolve-toggle PATCH is in flight for a specific anchorId. */
     var pendingToggleIds by mutableStateOf<Set<String>>(emptySet())
 
