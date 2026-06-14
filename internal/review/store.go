@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 	"time"
 )
 
-// RescueError is returned by SaveDraft when Encode fails. It carries the path
+// RescueError is returned by SaveReview when Encode fails. It carries the path
 // of the rescue JSON file that was written so callers can surface it to the
 // user with actionable information.
 type RescueError struct {
@@ -35,7 +34,8 @@ type rescuePayload struct {
 	Review              *Review `json:"review"`
 }
 
-// Store handles atomic draft writes and promotion to reviews/.
+// Store handles atomic review writes under the 1-branch-1-file layout
+// introduced in issue #76.
 type Store struct {
 	Paths Paths
 	// Now lets tests inject a deterministic clock.
@@ -49,60 +49,35 @@ func NewStore(p Paths) *Store {
 	return &Store{Paths: p, Now: time.Now}
 }
 
-// GenerateID builds an id of the form `yyyyMMddTHHmmss-<slug>`. When the same
-// (timestamp, slug) pair already has a file in either drafts/ or reviews/, a
-// `-1`, `-2`, ... suffix is appended (up to -99). Returns an error if all
-// suffixes are taken — extremely unlikely outside pathological tests.
-func (s *Store) GenerateID(reviewComment string) (string, error) {
-	ts := s.Now().UTC().Format("20060102T150405")
-	slug := slugifyReviewComment(reviewComment)
-	base := ts + "-" + slug
-	if !s.idTaken(base) {
-		return base, nil
-	}
-	for i := 1; i <= 99; i++ {
-		cand := fmt.Sprintf("%s-%d", base, i)
-		if !s.idTaken(cand) {
-			return cand, nil
-		}
-	}
-	return "", fmt.Errorf("could not allocate id under %q after 99 tries", base)
+// isEmpty reports whether a Review has no content worth persisting.
+// An empty Review is one with no comments and a blank top-level review comment.
+func isEmpty(r *Review) bool {
+	return len(r.Comments) == 0 && strings.TrimSpace(r.ReviewComment) == ""
 }
 
-func (s *Store) idTaken(id string) bool {
-	if _, err := os.Stat(s.Paths.DraftFile(id)); err == nil {
-		return true
+// SaveReview atomically persists r to <BranchDir>/review.md using a
+// tmp-write + rename sequence. An existing review.md is backed up to
+// review.md.bak before the new version lands.
+//
+// If r is empty (no comments, blank review_comment), SaveReview is a no-op
+// and returns ("", nil). This prevents creating an empty file when the user
+// quits without writing anything.
+//
+// On Encode failure the Rescue mechanism fires: the in-memory Review is
+// written as JSON to review.md.rescue.<timestamp>.json and a *RescueError
+// is returned so the caller can surface the rescue path to the user.
+func (s *Store) SaveReview(r *Review) (string, error) {
+	if isEmpty(r) {
+		return "", nil
 	}
-	if _, err := os.Stat(s.Paths.ReviewFile(id)); err == nil {
-		return true
-	}
-	return false
-}
 
-// SaveDraft writes the review to drafts/<slug>/<id>.md atomically (write to a
-// tmp file in the same directory, then rename). Returns the final path.
-// If r.ID is empty, a new id is generated and assigned to r in-place.
-func (s *Store) SaveDraft(r *Review) (string, error) {
-	if r.ID == "" {
-		id, err := s.GenerateID(r.ReviewComment)
-		if err != nil {
-			return "", err
-		}
-		r.ID = id
+	branchDir := s.Paths.BranchDir()
+	// 0o700 keeps reviews owner-private: review notes can contain unreleased
+	// implementation notes the user does not want world- or group-readable.
+	if err := os.MkdirAll(branchDir, 0o700); err != nil {
+		return "", fmt.Errorf("mkdir branch dir: %w", err)
 	}
-	// Stamp first-save time so external tools can sort/filter by created_at.
-	// Existing drafts (e.g. auto-loaded) keep their original value.
-	if r.CreatedAt.IsZero() {
-		r.CreatedAt = s.Now().UTC()
-	}
-	// 0o700 keeps drafts owner-private: reviews can contain unreleased
-	// implementation notes the user does not want world- or group-readable
-	// on shared machines. os.CreateTemp below produces 0o600 files, so the
-	// combined effect is "owner-only" for both the dir and the file.
-	if err := os.MkdirAll(s.Paths.DraftsDir(), 0o700); err != nil {
-		return "", fmt.Errorf("mkdir drafts: %w", err)
-	}
-	final := s.Paths.DraftFile(r.ID)
+
 	encode := s.encodeFunc
 	if encode == nil {
 		encode = Encode
@@ -111,17 +86,19 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 	if err != nil {
 		rescuePath, rescueErr := s.writeRescue(r, err)
 		if rescueErr != nil {
-			// If rescue write also fails, surface both errors.
 			return "", fmt.Errorf("encode failed (%w); rescue write also failed: %v", err, rescueErr)
 		}
 		return "", &RescueError{RescuePath: rescuePath, EncodeErr: err}
 	}
-	tmp, err := os.CreateTemp(s.Paths.DraftsDir(), "."+r.ID+".*.tmp")
+
+	// Step 1: write to a tmp file in branchDir (same filesystem as review.md).
+	tmp, err := os.CreateTemp(branchDir, ".review.*.tmp")
 	if err != nil {
 		return "", fmt.Errorf("create tmp: %w", err)
 	}
 	tmpPath := tmp.Name()
 	cleanup := func() { _ = os.Remove(tmpPath) }
+
 	if _, err := tmp.Write(body); err != nil {
 		_ = tmp.Close()
 		cleanup()
@@ -136,21 +113,47 @@ func (s *Store) SaveDraft(r *Review) (string, error) {
 		cleanup()
 		return "", fmt.Errorf("close tmp: %w", err)
 	}
+
+	// Step 2: back up the existing review.md as review.md.bak (overwriting any
+	// previous .bak — we keep only 1 generation).
+	final := s.Paths.ReviewFile()
+	bak := s.Paths.BakFile()
+	if _, err := os.Stat(final); err == nil {
+		if err := os.Rename(final, bak); err != nil {
+			cleanup()
+			return "", fmt.Errorf("rename review.md -> review.md.bak: %w", err)
+		}
+	}
+
+	// Step 3: atomic rename tmp -> review.md.
 	if err := os.Rename(tmpPath, final); err != nil {
 		cleanup()
-		return "", fmt.Errorf("rename tmp -> draft: %w", err)
+		return "", fmt.Errorf("rename tmp -> review.md: %w", err)
 	}
+
+	// Step 4: fsync the directory so the rename is durable.
+	if dir, err := os.Open(branchDir); err == nil {
+		_ = dir.Sync()
+		_ = dir.Close()
+	}
+
 	return final, nil
 }
 
-// writeRescue writes an in-memory Review as a JSON rescue file under DraftsDir
+// writeRescue writes an in-memory Review as a JSON rescue file under BranchDir
 // when Encode fails. The filename encodes the timestamp so multiple failures in
 // the same session produce distinct files. Returns the written path on success.
 func (s *Store) writeRescue(r *Review, encodeErr error) (string, error) {
+	branchDir := s.Paths.BranchDir()
+	// Ensure the dir exists even if SaveReview failed before MkdirAll.
+	if err := os.MkdirAll(branchDir, 0o700); err != nil {
+		return "", fmt.Errorf("mkdir branch dir for rescue: %w", err)
+	}
+
 	now := s.Now().UTC()
 	ts := now.Format("20060102T150405")
 	filename := "review.md.rescue." + ts + ".json"
-	rescuePath := filepath.Join(s.Paths.DraftsDir(), filename)
+	rescuePath := filepath.Join(branchDir, filename)
 
 	payload := rescuePayload{
 		Schema:              "rescue/1",
@@ -169,89 +172,54 @@ func (s *Store) writeRescue(r *Review, encodeErr error) (string, error) {
 	return rescuePath, nil
 }
 
-// Promote moves a draft file to reviews/<slug>/<id>.md atomically.
-// The draft directory is left in place even if empty afterwards.
-func (s *Store) Promote(draftPath string) (string, error) {
-	id := strings.TrimSuffix(filepath.Base(draftPath), ".md")
-	// See SaveDraft: 0o700 keeps promoted reviews owner-private to match the
-	// 0o600 perm os.CreateTemp gave the draft file before it was renamed in.
-	if err := os.MkdirAll(s.Paths.ReviewsDir(), 0o700); err != nil {
-		return "", fmt.Errorf("mkdir reviews: %w", err)
-	}
-	final := s.Paths.ReviewFile(id)
-	if err := os.Rename(draftPath, final); err != nil {
-		return "", fmt.Errorf("rename draft -> review: %w", err)
-	}
-	return final, nil
-}
-
-// DetectDraft returns the most recently modified draft path for the current
-// branch slug, or "" if no draft exists.
-func (s *Store) DetectDraft() (string, error) {
-	dir := s.Paths.DraftsDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
+// DetectReview returns the path of the review file for the current branch slug
+// if it exists, or "" if no review file is present.
+func (s *Store) DetectReview() (string, error) {
+	p := s.Paths.ReviewFile()
+	if _, err := os.Stat(p); err != nil {
 		if os.IsNotExist(err) {
 			return "", nil
 		}
 		return "", err
 	}
-	type cand struct {
-		path string
-		mod  time.Time
-	}
-	var cands []cand
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		cands = append(cands, cand{
-			path: filepath.Join(dir, e.Name()),
-			mod:  info.ModTime(),
-		})
-	}
-	if len(cands) == 0 {
-		return "", nil
-	}
-	sort.Slice(cands, func(i, j int) bool { return cands[i].mod.After(cands[j].mod) })
-	return cands[0].path, nil
+	return p, nil
 }
 
-// LatestReview returns the most recently modified review file path for the
-// current branch slug, or "" if none exists.
-func (s *Store) LatestReview() (string, error) {
-	dir := s.Paths.ReviewsDir()
-	entries, err := os.ReadDir(dir)
-	if err != nil {
-		if os.IsNotExist(err) {
-			return "", nil
-		}
-		return "", err
-	}
-	var newest string
-	var newestMod time.Time
-	for _, e := range entries {
-		if e.IsDir() || !strings.HasSuffix(e.Name(), ".md") {
-			continue
-		}
-		info, err := e.Info()
-		if err != nil {
-			continue
-		}
-		if info.ModTime().After(newestMod) {
-			newestMod = info.ModTime()
-			newest = filepath.Join(dir, e.Name())
+// RecoverFromCrash is called at startup to repair an incomplete write that
+// left review.md missing but review.md.bak present (the crash window between
+// steps 2 and 3 of SaveReview). It also cleans up any leftover .tmp files.
+//
+// Safe to call when no crash occurred: if review.md exists or review.md.bak
+// doesn't exist, the function is a no-op.
+func (s *Store) RecoverFromCrash() error {
+	branchDir := s.Paths.BranchDir()
+
+	// Clean up orphaned .tmp files from a previous interrupted write.
+	tmpGlob := filepath.Join(branchDir, ".review.*.tmp")
+	if tmps, err := filepath.Glob(tmpGlob); err == nil {
+		for _, t := range tmps {
+			_ = os.Remove(t)
 		}
 	}
-	return newest, nil
+
+	final := s.Paths.ReviewFile()
+	bak := s.Paths.BakFile()
+
+	_, errFinal := os.Stat(final)
+	_, errBak := os.Stat(bak)
+
+	if os.IsNotExist(errFinal) && errBak == nil {
+		// Crash window: review.md gone but .bak exists — restore it.
+		if err := os.Rename(bak, final); err != nil {
+			return fmt.Errorf("crash recovery: rename review.md.bak -> review.md: %w", err)
+		}
+	}
+	return nil
 }
 
 // slugifyReviewComment turns the first line of `s` into a filesystem-safe slug
 // up to 32 chars. Falls back to "review" when the input is empty or all-unsafe.
+// Retained for backward compatibility with GenerateID callers.
 func slugifyReviewComment(s string) string {
 	first := strings.TrimSpace(strings.SplitN(s, "\n", 2)[0])
 	if first == "" {
