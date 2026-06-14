@@ -82,48 +82,59 @@ so first builds need network access to Adoptium.
 
 ## Running locally
 
+### One-shot (recommended)
+
 From the repository root:
 
 ```sh
-make web-fixtures              # regenerate the YAML round-trip fixtures
+make web
 ```
 
-### Backend (Ktor server)
-
-```sh
-cd web
-./gradlew :run
-```
-
-The server binds `127.0.0.1:0` (random free port) and prints a single line on
-stdout:
+This is just `cd web && ./gradlew :run`. The `:run` task builds the Compose
+Wasm UI, bundles it into the Ktor server's resources (`build/`-only — `src/`
+stays clean), and starts a single process that serves **both** the UI at `/`
+and the API at `/api/v1/...` on one port. The server binds `127.0.0.1:0`
+(random free port) and prints a single line on stdout:
 
 ```
 SITATAME_WEB_URL=http://127.0.0.1:<port>
 ```
 
-Production builds:
+Open that URL. The first build is slow (Wasm compilation is memory-hungry —
+see [Build memory](#build-memory)); reruns are cached and start in seconds.
 
-```sh
-./gradlew :jvmJar :wasmJsBrowserDistribution
-```
+The YAML round-trip fixtures (`make web-fixtures`) are only needed for
+`RoundtripTest`, not for running the UI.
 
-The Wasm dist is intended to be copied into `src/jvmMain/resources/static/`
-before launching the jvm jar — that wiring lands in Phase 1 step 2 alongside
-a `:jvmFatJar` task. For now the Ktor server still serves `/api/v1/...`
-useful in isolation.
+### Build memory
 
-### Frontend (hot reload)
+The Compose Wasm compile (`WasmIrToBinary`) can OOM the Kotlin daemon with its
+default heap. `gradle.properties` raises `kotlin.daemon.jvmargs=-Xmx4g`; lower
+it if you are tight on RAM, raise it if the build still reports
+`GC overhead limit exceeded`. This cost is build-time only — a shipped build
+embeds the prebuilt dist, so end users never recompile.
+
+### Frontend hot reload (optional)
 
 ```sh
 cd web
 ./gradlew :wasmJsBrowserDevelopmentRun
 ```
 
-This serves the Compose Wasm bundle from webpack-dev-server. The backend must
-also be running so `/api/v1/workspace` resolves — Compose uses a relative path
-and webpack-dev-server proxies, but for the simplest setup just run the Ktor
-server too and open its URL.
+This serves the Compose Wasm bundle from webpack-dev-server (default
+`http://localhost:8080`) with hot reload. NOTE: the dev-server does **not**
+proxy `/api/v1/...` to the backend, so `/api/v1/workspace` returns 404 there —
+hot reload is only useful for pure UI/layout iteration. For a working UI with
+live data, use `make web` (single-port `:run`) above.
+
+### Production builds
+
+```sh
+./gradlew :jvmJar :wasmJsBrowserDistribution
+```
+
+A self-contained `:jvmFatJar` (dist embedded, launched via the Go CLI) lands in
+Phase 1 step 2.
 
 ### Tests
 
@@ -175,9 +186,8 @@ review directory.
 - Keyboard navigation (arrow keys, `?` help) and split layout are not wired.
 - The unified-diff parser is intentionally minimal — combined diffs (merge
   commits) and quoted paths fall outside its scope.
-- The Wasm dist is not yet auto-copied into the Ktor static resources; serve
-  it via `:wasmJsBrowserDevelopmentRun` until step 2 wires the production
-  bundling.
+- No self-contained fat jar yet — `make web` runs from the Gradle build tree.
+  The `:jvmFatJar` (dist embedded) for distribution lands in step 2.
 
 ### Large diffs
 
