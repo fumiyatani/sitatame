@@ -1,15 +1,22 @@
 package dev.sitatame.web.server
 
 import dev.sitatame.web.api.CreateCommentRequest
+import dev.sitatame.web.api.FileDto
 
 /**
  * Input validation for write-path requests.
  *
  * Shape + semantic rules are ported from Go `internal/review/validate.go`
- * and `internal/tui/modal.go`. The Backend trusts that the Frontend sends
- * correct side/blob metadata (Frontend controls the diff view), so blob
- * semantic checks (stale detection) are not performed here; they run at
- * GET /workspace time via ReviewLoader.
+ * and `internal/tui/modal.go`.
+ *
+ * Blob semantic checks: when [files] is provided, the [CreateCommentRequest.blob]
+ * value is compared against the file entry's [FileDto.blobBase] or
+ * [FileDto.blobHead] (depending on [CreateCommentRequest.side]).  A mismatch
+ * indicates a stale comment anchor (the diff has changed since the Frontend
+ * loaded it) and is returned as a 422 error.  The comparison uses a
+ * prefix-match strategy because the diff `index` header uses abbreviated SHAs
+ * (typically 7 characters) while clients may supply the full 40-character SHA
+ * or vice-versa.
  */
 object Validation {
 
@@ -27,8 +34,14 @@ object Validation {
      *
      * Returns an empty list on success. Non-empty list contains human-readable
      * error strings suitable for a 422 response body.
+     *
+     * [files] is optional.  When provided and [CreateCommentRequest.blob] is
+     * non-null, a blob-integrity check is performed: the supplied blob SHA must
+     * be a prefix of (or equal to) the current diff's blob SHA for the same
+     * path/side.  A mismatch means the diff has changed since the Frontend
+     * loaded the workspace and the anchor is stale.
      */
-    fun validate(req: CreateCommentRequest): List<String> {
+    fun validate(req: CreateCommentRequest, files: List<FileDto>? = null): List<String> {
         val errors = mutableListOf<String>()
 
         // kind
@@ -105,7 +118,37 @@ object Validation {
             }
         }
 
+        // Blob integrity check: when the caller supplies a blob SHA and we have
+        // workspace file data, verify the blob matches the current diff.
+        if (req.blob != null && files != null && req.path != null) {
+            val fileEntry = files.firstOrNull { it.path == req.path }
+            if (fileEntry != null) {
+                val currentBlob = if (req.side == "base") fileEntry.blobBase else fileEntry.blobHead
+                if (currentBlob != null && !blobShasCompatible(req.blob, currentBlob)) {
+                    errors.add(
+                        "blob mismatch for ${req.path} (side=${req.side}): " +
+                            "client sent ${req.blob}, current diff has $currentBlob — " +
+                            "the diff may have changed since you opened the page (stale anchor)"
+                    )
+                }
+            }
+        }
+
         return errors
+    }
+
+    /**
+     * Returns true when two blob SHAs refer to the same object.
+     *
+     * Git abbreviated SHAs are prefixes of the full 40-character SHA. We
+     * accept a match when either value is a prefix of the other. This covers
+     * the case where the diff index line yields 7-char abbreviations and the
+     * client sends them back as-is.
+     */
+    internal fun blobShasCompatible(a: String, b: String): Boolean {
+        if (a == b) return true
+        val (shorter, longer) = if (a.length <= b.length) a to b else b to a
+        return longer.startsWith(shorter, ignoreCase = true)
     }
 
     /**

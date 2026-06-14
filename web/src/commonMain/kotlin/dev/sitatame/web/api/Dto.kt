@@ -62,6 +62,21 @@ data class FileDto(
     val adds: Int,
     val dels: Int,
     val hunks: List<HunkDto>,
+    /**
+     * Abbreviated git blob SHA for the base side of the diff. Sourced from the
+     * `index <blobBase>..<blobHead>` line in the unified-diff output.  Null when
+     * the file is new (no base-side blob) or when the index line is absent.
+     * The Frontend uses this value to populate [CreateCommentRequest.blob] when
+     * [CreateCommentRequest.side] is "base".
+     */
+    val blobBase: String? = null,
+    /**
+     * Abbreviated git blob SHA for the head side of the diff. Null when the file
+     * is deleted (no head-side blob).
+     * The Frontend uses this value to populate [CreateCommentRequest.blob] when
+     * [CreateCommentRequest.side] is "head".
+     */
+    val blobHead: String? = null,
 )
 
 /** The latest review document for the current branch (or null when none). */

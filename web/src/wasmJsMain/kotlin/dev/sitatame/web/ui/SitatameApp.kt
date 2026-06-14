@@ -369,9 +369,11 @@ private fun buildCreateCommentRequest(
 ): CreateCommentRequest = when (target) {
     is CommentTarget.Line -> {
         val file = workspace.files.firstOrNull { it.path == target.path }
+        // Use the blob SHA from the diff index header. Deletion lines have
+        // side="base" and use blobBase; all other lines use blobHead.
         val blob = when (target.side) {
-            "base" -> file?.hunks?.firstOrNull()?.let { null } // blob not carried in HunkDto
-            else -> null
+            "base" -> file?.blobBase
+            else -> file?.blobHead
         }
         CreateCommentRequest(
             kind = "line",
@@ -383,10 +385,16 @@ private fun buildCreateCommentRequest(
         )
     }
     is CommentTarget.Range -> {
+        val file = workspace.files.firstOrNull { it.path == target.path }
+        val blob = when (target.side) {
+            "base" -> file?.blobBase
+            else -> file?.blobHead
+        }
         CreateCommentRequest(
             kind = "range",
             path = target.path,
             side = target.side,
+            blob = blob,
             lineStart = target.lineStart,
             lineEnd = target.lineEnd,
             body = body,

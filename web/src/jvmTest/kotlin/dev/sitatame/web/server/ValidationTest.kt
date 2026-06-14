@@ -1,6 +1,7 @@
 package dev.sitatame.web.server
 
 import dev.sitatame.web.api.CreateCommentRequest
+import dev.sitatame.web.api.FileDto
 import org.junit.jupiter.api.Assertions.assertEquals
 import org.junit.jupiter.api.Assertions.assertFalse
 import org.junit.jupiter.api.Assertions.assertTrue
@@ -226,6 +227,174 @@ class ValidationTest {
         @Test
         fun `arbitrary string fails`() {
             assertTrue(Validation.validateState("INVALID").isNotEmpty())
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // Blob integrity
+    // -----------------------------------------------------------------------
+
+    @Nested
+    inner class BlobIntegrity {
+
+        private fun fileDto(
+            path: String,
+            blobBase: String? = "abc1234",
+            blobHead: String? = "def5678",
+        ) = FileDto(
+            path = path,
+            status = "M",
+            adds = 1,
+            dels = 1,
+            hunks = emptyList(),
+            blobBase = blobBase,
+            blobHead = blobHead,
+        )
+
+        @Test
+        fun `blob matches head side passes`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "head",
+                line = 5,
+                blob = "def5678",
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            assertTrue(Validation.validate(req, files).isEmpty())
+        }
+
+        @Test
+        fun `blob matches base side passes`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "base",
+                line = 3,
+                blob = "abc1234",
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            assertTrue(Validation.validate(req, files).isEmpty())
+        }
+
+        @Test
+        fun `abbreviated client blob is prefix of full server blob passes`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "head",
+                line = 1,
+                blob = "def567",  // shorter than server "def5678"
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go", blobHead = "def5678abcd1234"))
+            assertTrue(Validation.validate(req, files).isEmpty())
+        }
+
+        @Test
+        fun `blob mismatch fails with stale anchor message`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "head",
+                line = 1,
+                blob = "aaaaaa1",  // wrong blob
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            val errors = Validation.validate(req, files)
+            assertTrue(errors.any { "blob mismatch" in it || "stale" in it }, "expected stale error, got: $errors")
+        }
+
+        @Test
+        fun `base side blob mismatch fails`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "base",
+                line = 1,
+                blob = "xxxxxxx",  // wrong base blob
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            val errors = Validation.validate(req, files)
+            assertTrue(errors.any { "blob mismatch" in it || "stale" in it })
+        }
+
+        @Test
+        fun `blob check skipped when files is null`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "head",
+                line = 1,
+                blob = "totally_wrong_sha",
+                body = "ok",
+            )
+            // No files provided — blob check must be skipped entirely.
+            assertTrue(Validation.validate(req, files = null).isEmpty())
+        }
+
+        @Test
+        fun `blob check skipped when blob is null`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "foo.go",
+                side = "head",
+                line = 1,
+                blob = null,
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            // Null blob → no blob check, should pass shape validation.
+            assertTrue(Validation.validate(req, files).isEmpty())
+        }
+
+        @Test
+        fun `blob check skipped when path not in file list`() {
+            val req = CreateCommentRequest(
+                kind = "line",
+                path = "other.go",
+                side = "head",
+                line = 1,
+                blob = "completely_wrong",
+                body = "ok",
+            )
+            val files = listOf(fileDto("foo.go"))
+            // other.go not in files list → no blob check.
+            assertTrue(Validation.validate(req, files).isEmpty())
+        }
+    }
+
+    // -----------------------------------------------------------------------
+    // blobShasCompatible
+    // -----------------------------------------------------------------------
+
+    @Nested
+    inner class BlobShasCompatible {
+
+        @Test
+        fun `identical strings match`() {
+            assertTrue(Validation.blobShasCompatible("abc1234", "abc1234"))
+        }
+
+        @Test
+        fun `shorter is prefix of longer`() {
+            assertTrue(Validation.blobShasCompatible("abc", "abc1234"))
+            assertTrue(Validation.blobShasCompatible("abc1234", "abc"))
+        }
+
+        @Test
+        fun `non-prefix strings do not match`() {
+            assertFalse(Validation.blobShasCompatible("abc1234", "def5678"))
+            assertFalse(Validation.blobShasCompatible("abc", "def1234"))
+        }
+
+        @Test
+        fun `case insensitive match`() {
+            assertTrue(Validation.blobShasCompatible("ABC1234", "abc1234"))
         }
     }
 
