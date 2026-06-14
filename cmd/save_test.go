@@ -51,15 +51,15 @@ func envWithRunner(stdin *os.File, run func(Env, TUIOptions) (TUIResult, error))
 	}, stdout, stderr
 }
 
-func TestRunRoot_SaveAndPromote_PrintsMachineLine(t *testing.T) {
+func TestRunRoot_SaveAndPrintsMachineLine(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
 	_, projectRoot := withSitatameHome(t, dir)
 
 	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
-		// Add a comment so SaveDraft serialises non-trivial state.
+		// Add a comment so SaveReview serialises non-trivial state.
 		opts.Review.ReviewComment = "looks good"
-		return TUIResult{Review: opts.Review, Reason: tui.QuitPromote}, nil
+		return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
 	})
 	if code := RunRoot(env, nil); code != 0 {
 		t.Fatalf("exit = %d, want 0", code)
@@ -75,75 +75,73 @@ func TestRunRoot_SaveAndPromote_PrintsMachineLine(t *testing.T) {
 	if _, err := os.Stat(pathLine); err != nil {
 		t.Errorf("review file missing at printed path: %v", err)
 	}
-	// Promotion lands the file under <SITATAME_HOME>/<project-slug>/reviews/,
-	// not drafts/, and not anywhere inside the repository tree.
-	wantReviewsRoot := filepath.Join(projectRoot, "reviews")
-	if !strings.HasPrefix(pathLine, wantReviewsRoot+string(filepath.Separator)) {
-		t.Errorf("promoted path should live under %s, got %q", wantReviewsRoot, pathLine)
+	// Saved file lives under <SITATAME_HOME>/<project-slug>/<branch-slug>/review.md
+	// (not under a reviews/ subdirectory).
+	if !strings.HasPrefix(pathLine, projectRoot+string(filepath.Separator)) {
+		t.Errorf("saved path should live under %s, got %q", projectRoot, pathLine)
+	}
+	if filepath.Base(pathLine) != "review.md" {
+		t.Errorf("saved file must be named review.md; got %q", filepath.Base(pathLine))
 	}
 	if strings.Contains(pathLine, filepath.Join(dir, ".sitatame")) {
-		t.Errorf("promoted path leaked into repo tree: %q", pathLine)
+		t.Errorf("saved path leaked into repo tree: %q", pathLine)
 	}
 }
 
-func TestRunRoot_QuitDraft_KeepsFileUnderDrafts(t *testing.T) {
+func TestRunRoot_QuitDiscard_WritesNothing(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
 	_, projectRoot := withSitatameHome(t, dir)
 
 	env, _, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
-		return TUIResult{Review: opts.Review, Reason: tui.QuitDraft}, nil
+		opts.Review.ReviewComment = "discarded"
+		return TUIResult{Review: opts.Review, Reason: tui.QuitDiscard}, nil
 	})
-	if code := RunRoot(env, nil); code != 1 {
-		t.Fatalf("exit = %d, want 1 on q", code)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 on q (discard)", code)
 	}
-	draftDir := filepath.Join(projectRoot, "drafts")
-	found := false
-	_ = filepath.Walk(draftDir, func(p string, info os.FileInfo, err error) error {
-		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(p, ".md") {
+	// No review file should exist under the project root.
+	var found bool
+	_ = filepath.Walk(projectRoot, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(p, "review.md") {
 			found = true
 		}
 		return nil
 	})
-	if !found {
-		t.Errorf("expected at least one .md under %s after quit-with-draft", draftDir)
+	if found {
+		t.Errorf("review.md should not be written on QuitDiscard")
 	}
 }
 
-func TestRunRoot_PanicSavesDraftAndPropagates(t *testing.T) {
+func TestRunRoot_QuitSave_EmptyReview_WritesNothing(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
 	_, projectRoot := withSitatameHome(t, dir)
 
-	// Runner panics partway through: shutdown wrapper must still write a draft
-	// using whatever state we can recover (the initial Review here).
-	env, _, _ := envWithRunner(os.Stdin, func(_ Env, _ TUIOptions) (TUIResult, error) {
-		panic("simulated bubbletea crash")
+	env, stdout, _ := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		// Empty Review: no comments, no review_comment.
+		return TUIResult{Review: opts.Review, Reason: tui.QuitSave}, nil
 	})
-
-	defer func() {
-		r := recover()
-		if r == nil {
-			t.Fatal("expected panic to propagate from RunRoot")
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0 on save of empty review", code)
+	}
+	// No SITATAME_REVIEW line and no file.
+	if strings.Contains(stdout.String(), "SITATAME_REVIEW=") {
+		t.Errorf("stdout should not have SITATAME_REVIEW for empty review: %q", stdout.String())
+	}
+	var found bool
+	_ = filepath.Walk(projectRoot, func(p string, info os.FileInfo, err error) error {
+		if err == nil && info != nil && !info.IsDir() && strings.HasSuffix(p, "review.md") {
+			found = true
 		}
-		// And a draft file must exist under <SITATAME_HOME>/<project>/drafts/<slug>/.
-		draftDir := filepath.Join(projectRoot, "drafts")
-		found := false
-		_ = filepath.Walk(draftDir, func(p string, info os.FileInfo, _ error) error {
-			if info != nil && !info.IsDir() && strings.HasSuffix(p, ".md") {
-				found = true
-			}
-			return nil
-		})
-		if !found {
-			t.Errorf("panic-path failed to leave a draft under %s", draftDir)
-		}
-	}()
-	_ = RunRoot(env, nil)
-	t.Fatal("RunRoot should have panicked")
+		return nil
+	})
+	if found {
+		t.Errorf("review.md should not be created for empty review")
+	}
 }
 
-func TestModel_KeySSetsPromote(t *testing.T) {
+func TestModel_KeySSetsQuitSave(t *testing.T) {
 	t.Parallel()
 	m := tui.New(nil, review.Review{})
 	updated, _ := m.Update(teaKeyRunes("s"))
@@ -151,17 +149,17 @@ func TestModel_KeySSetsPromote(t *testing.T) {
 	if !mm.Quitting() {
 		t.Errorf("`s` must set quitting=true")
 	}
-	if got := mm.QuitReason(); got != tui.QuitPromote {
-		t.Errorf("QuitReason = %v, want QuitPromote", got)
+	if got := mm.QuitReason(); got != tui.QuitSave {
+		t.Errorf("QuitReason = %v, want QuitSave", got)
 	}
 }
 
-func TestModel_KeyQSetsDraft(t *testing.T) {
+func TestModel_KeyQSetsQuitDiscard(t *testing.T) {
 	t.Parallel()
 	m := tui.New(nil, review.Review{})
 	updated, _ := m.Update(teaKeyRunes("q"))
 	mm := updated.(tui.Model)
-	if got := mm.QuitReason(); got != tui.QuitDraft {
-		t.Errorf("QuitReason = %v, want QuitDraft", got)
+	if got := mm.QuitReason(); got != tui.QuitDiscard {
+		t.Errorf("QuitReason = %v, want QuitDiscard", got)
 	}
 }
