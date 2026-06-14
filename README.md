@@ -113,7 +113,7 @@ current repository, runs `git diff origin/main..HEAD`, loads the latest review
 Markdown from the shared sitatame storage directory, and exposes the result as
 JSON.  The Wasm target renders that data with Compose for Web.
 
-**Capabilities** (Phase 1 step 2):
+**Capabilities** (Phase 1 step 2 + Issue #18 UX):
 
 - **Read**: unified diff view with file/hunk navigation and comment display
 - **Write**:
@@ -121,6 +121,13 @@ JSON.  The Wasm target renders that data with Compose for Web.
   - Resolve / reopen comments with optimistic UI
   - Edit the review-level narrative comment
   - Conflict detection: ETag-based 412 handling with Reload + retry or Discard
+- **Comment UX** (Issue #18):
+  - GitHub-style threads: comments sharing the same anchor are grouped into one
+    collapsible thread
+  - State filter (`All / Open / Done / Stale`) narrows the thread list in the sidebar
+  - Open / Stale threads expand by default; Resolved threads start collapsed
+  - Reply to an existing thread with "Reply to this thread" — inherits the same anchor
+  - Visual state distinction: open (default bg), resolved (dim grey), stale (amber)
 
 Range comments use **long-press** to start range mode, then click the end line
 (both must be in the same hunk).  An "Add range comment" button in the file

@@ -96,6 +96,30 @@ Simulate a stale blob by modifying the diff between page load and comment submit
    *(This is a best-effort check; if the diff base ref is unchanged the blob may
    still match.)*
 
+## K. Thread Grouping and State Filter (Issue #18)
+
+- [ ] Select a file with multiple comments on the same anchor (same path + line) —
+  they appear in a single collapsible thread, not as separate rows.
+- [ ] State filter control (`All / Open / Done / Stale`) appears at the top of the
+  sidebar under "Files (N)".
+- [ ] Selecting "Open" hides resolved/stale threads for the selected file.
+- [ ] Selecting "Done" shows only resolved threads.
+- [ ] Selecting "Stale" shows only stale threads.
+- [ ] Selecting "All" restores the full thread list.
+- [ ] Open/Stale threads start expanded; Resolved threads start collapsed.
+- [ ] Clicking a thread header toggles collapsed/expanded state.
+- [ ] Collapsed thread shows: `▶ filename:line [state] (N comments)` in one row.
+- [ ] Expanded thread shows each comment with its Resolve/Reopen button.
+- [ ] "Reply to this thread" button appears at the bottom of an expanded thread.
+- [ ] Clicking "Reply to this thread" opens an inline text field.
+- [ ] Submitting the reply adds a new comment on the same anchor (visible in the thread).
+- [ ] Narrowing the browser window below 320 dp causes the filter to switch to a
+  dropdown fallback (may require a narrow window or DevTools device emulation).
+- [ ] Open thread background is default dark; Resolved thread has dim grey background;
+  Stale thread has dark amber background.
+- [ ] The open-thread count badge on each file row counts open threads regardless of
+  the active filter setting.
+
 ## J. Regression — Read-Only View Still Works
 
 - [ ] After all write operations, the diff view still renders correctly.
