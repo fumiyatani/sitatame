@@ -113,6 +113,28 @@ func TestGolden_StaleOverlay(t *testing.T) {
 	runGolden(t, "stale_overlay", m)
 }
 
+// TestGolden_LongLineWrap pins the wrap layout for a source line that is wider
+// than the viewport body budget. Width=80, the single context line has 160
+// chars, so the renderer wraps it across multiple screen rows instead of
+// clipping with an ellipsis. The golden captures the exact wrap boundaries and
+// the continuation-line indent convention (space prefix on continuation rows).
+func TestGolden_LongLineWrap(t *testing.T) {
+	t.Parallel()
+	body := strings.Repeat("a", 80) + strings.Repeat("b", 80)
+	h := diffmodel.Hunk{
+		BaseStart: 1, BaseLines: 1, HeadStart: 1, HeadLines: 1,
+		Lines: []diffmodel.Line{{Prefix: ' ', Text: body}},
+	}
+	diffmodel.AssignLineNumbers(&h)
+	f := diffmodel.File{
+		Status:  diffmodel.StatusModified,
+		PrePath: "wide.go", PostPath: "wide.go",
+		Hunks: []diffmodel.Hunk{h},
+	}
+	m := setSize(New([]diffmodel.File{f}, review.Review{}), 80, 12)
+	runGolden(t, "long_wrap", m)
+}
+
 func BenchmarkUpdate_LargeDiff(b *testing.B) {
 	var hunks []diffmodel.Hunk
 	for hi := 0; hi < 500; hi++ {
