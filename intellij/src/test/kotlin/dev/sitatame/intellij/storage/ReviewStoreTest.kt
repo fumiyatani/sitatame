@@ -13,6 +13,7 @@ import java.nio.file.Path
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
+import java.util.concurrent.atomic.AtomicInteger
 
 /**
  * Unit tests for [ReviewStore] using [ReviewStore.pathsOverride] to bypass the
@@ -194,6 +195,65 @@ class ReviewStoreTest {
         store.recoverFromCrash("", "")
 
         assertFalse("orphaned .tmp should be deleted", Files.exists(orphan))
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue filename collision avoidance
+    // -----------------------------------------------------------------------
+
+    /**
+     * Two back-to-back Encode failures at the same wall-clock second must
+     * produce two distinct rescue files. The nanos suffix differentiates them.
+     *
+     * The clock advances by 1ns per call so that the second component is
+     * always the same (both share "20260614T120000") but the nanos component
+     * differs. This is independent of how many times the clock is consulted
+     * internally (freshReview, writeRescue filename, writeRescue saved_at).
+     */
+    @Test
+    fun writeRescue_nanosSuffixPreventsFilenameCollision() {
+        // Always-incrementing nanos clock: each call returns +1ns so any two
+        // calls in the same second will have different nanos values.
+        val nanoCounter = AtomicInteger(0)
+        val baseSecond = Instant.parse("2026-06-14T12:00:00Z")
+        store.clock = object : Clock() {
+            override fun getZone() = ZoneOffset.UTC
+            override fun withZone(zone: java.time.ZoneId) = this
+            override fun instant(): Instant =
+                baseSecond.plusNanos(nanoCounter.getAndIncrement().toLong())
+        }
+        // Inject a broken encoder to trigger writeRescue.
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure") }
+
+        // Pre-populate cache so loadOrInit does not consult clock again during save.
+        val review = store.loadOrInit("", "")
+        review.comments.add(sampleComment("x.kt", 1, "collision-test"))
+        val result1 = store.saveReview("", "")
+
+        store.invalidate()
+        val review2 = store.loadOrInit("", "")
+        review2.comments.add(sampleComment("y.kt", 2, "collision-test-2"))
+        val result2 = store.saveReview("", "")
+
+        // Both should have produced a rescue error.
+        assertNotNull("first save should have rescue error", result1.error)
+        assertNotNull("second save should have rescue error", result2.error)
+
+        val path1 = result1.error!!.rescuePath
+        val path2 = result2.error!!.rescuePath
+
+        assertTrue("first rescue file must exist", Files.isRegularFile(java.nio.file.Paths.get(path1)))
+        assertTrue("second rescue file must exist", Files.isRegularFile(java.nio.file.Paths.get(path2)))
+        assertTrue("rescue paths must be distinct (nanos suffix prevents collision)", path1 != path2)
+
+        // Both filenames must match the pattern review.md.rescue.<ts>-<nanos>.json
+        for (p in listOf(path1, path2)) {
+            val name = java.nio.file.Paths.get(p).fileName.toString()
+            assertTrue(
+                "filename '$name' must match review.md.rescue.<ts>-<nanos>.json",
+                name.matches(Regex("review\\.md\\.rescue\\.\\d{8}T\\d{6}-\\d{9}\\.json"))
+            )
+        }
     }
 
     // -----------------------------------------------------------------------
