@@ -56,6 +56,14 @@ class ReviewStore {
     @Suppress("VisibleForTests")
     var pathsOverride: SitatamePaths? = null
 
+    /**
+     * When set, replaces [Codec.encode] in [saveReview]. Tests inject a
+     * throwing lambda to exercise the rescue path without a real encode
+     * failure. Production code must leave this null.
+     */
+    @Suppress("VisibleForTests")
+    var encodeFunc: ((Review) -> ByteArray)? = null
+
     private val settings: SitatameSettings
         get() = ApplicationManager.getApplication().getService(SitatameSettings::class.java)
 
@@ -226,8 +234,9 @@ class ReviewStore {
         Files.createDirectories(branchDir)
         tryRestrictPermissions(branchDir)
 
+        val encode = encodeFunc ?: { r -> Codec.encode(r) }
         val bytes: ByteArray = try {
-            Codec.encode(review)
+            encode(review)
         } catch (encodeErr: Exception) {
             // Rescue: write raw JSON so the user can recover content.
             val rescuePath = writeRescue(p, review, encodeErr)
@@ -266,9 +275,14 @@ class ReviewStore {
         return try {
             val branchDir = toPath(p.branchDir())
             Files.createDirectories(branchDir)
-            val ts = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
-                .format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
-            val filename = "review.md.rescue.$ts.json"
+            val now = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
+            val ts = now.format(DateTimeFormatter.ofPattern("yyyyMMdd'T'HHmmss", Locale.ROOT))
+            // Append nanoseconds (zero-padded to 9 digits) to prevent filename
+            // collision when two Encode failures occur within the same second.
+            // Mirrors Go's writeRescue nanos suffix. Glob review.md.rescue.*.json
+            // is still satisfied.
+            val nanos = String.format(Locale.ROOT, "%09d", now.nano)
+            val filename = "review.md.rescue.$ts-$nanos.json"
             val rescuePath = branchDir.resolve(filename)
             val payload = mapOf(
                 "schema" to "rescue/1",
