@@ -6,10 +6,12 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
+import org.junit.Assume
 import org.junit.Before
 import org.junit.Test
 import java.nio.file.Files
 import java.nio.file.Path
+import java.nio.file.attribute.PosixFilePermissions
 import java.time.Clock
 import java.time.Instant
 import java.time.ZoneOffset
@@ -254,6 +256,47 @@ class ReviewStoreTest {
                 name.matches(Regex("review\\.md\\.rescue\\.\\d{8}T\\d{6}-\\d{9}\\.json"))
             )
         }
+    }
+
+    // -----------------------------------------------------------------------
+    // rescue file permission (POSIX-only)
+    // -----------------------------------------------------------------------
+
+    /**
+     * On POSIX filesystems, the rescue file must have permissions rw-------
+     * (0600) to keep contents owner-private, mirroring Go's os.WriteFile
+     * with 0o600. On Windows this test is skipped via [Assume].
+     */
+    @Test
+    fun writeRescue_rescueFileHas0600Permissions() {
+        // Skip on non-POSIX filesystems (Windows).
+        val branchDir = java.nio.file.Paths.get(paths.branchDir())
+        Files.createDirectories(branchDir)
+        val isPosix = try {
+            Files.getPosixFilePermissions(branchDir)
+            true
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
+        Assume.assumeTrue("Skipping 0600 permission test on non-POSIX filesystem", isPosix)
+
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure for perm test") }
+        val review = store.loadOrInit("", "")
+        review.comments.add(sampleComment("p.kt", 1, "perm-test"))
+
+        val result = store.saveReview("", "")
+
+        assertNotNull("rescue error expected", result.error)
+        val rescuePath = java.nio.file.Paths.get(result.error!!.rescuePath)
+        assertTrue("rescue file must exist", Files.isRegularFile(rescuePath))
+
+        val perms = Files.getPosixFilePermissions(rescuePath)
+        val expected = PosixFilePermissions.fromString("rw-------")
+        assertEquals(
+            "rescue file must have 0600 permissions (rw-------)",
+            expected,
+            perms,
+        )
     }
 
     // -----------------------------------------------------------------------
