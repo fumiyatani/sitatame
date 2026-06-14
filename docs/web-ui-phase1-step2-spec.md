@@ -188,7 +188,53 @@ Plugin) read and write it directly:
 There is no WebSocket or SSE push for concurrent-edit notification in Phase 1
 step 2.  Manual browser refresh reflects the latest state from any other client.
 
-## 7. Scope Exclusions (Phase 1 Step 2)
+## 7. Comment UX Improvements (Issue #18)
+
+### Thread grouping
+
+Comments sharing the same anchor (`kind + path + side + line/lineStart/lineEnd`)
+are grouped into a single _thread_. Thread state is derived from its comments:
+`Open` if any comment is open, `Stale` if none are open but at least one is
+stale, `Resolved` otherwise.
+
+### State filter
+
+A segmented control at the top of the sidebar (`All / Open / Done / Stale`)
+filters the thread list for the selected file. Badge counts reflect open threads
+independent of the active filter so the counts do not jump when switching filters.
+On sidebar widths below 320 dp the control falls back to a dropdown menu.
+
+### Collapsible threads
+
+Each thread can be toggled open/closed by clicking its header row.  The chevron
+`▶/▼` and the thread header (path:line) and state badge are always visible.
+Default state:
+
+| Thread state | Default |
+|---|---|
+| `Open` | Expanded |
+| `Stale` | Expanded |
+| `Resolved` | Collapsed |
+
+### Reply flow
+
+An expanded thread shows a "Reply to this thread" button below the last comment.
+Clicking it opens an inline text field.  On submit, `CommentDto.toCommentTarget()`
+derives the same anchor as the existing comment, and the reply is posted via the
+same `POST /api/v1/comments` path.  A stale anchor may return 422 — the user is
+notified via the toast/conflict flow already in place.
+
+### Visual distinction
+
+| Thread state | Background | Badge colour |
+|---|---|---|
+| `Open` | default canvas (`0xFF0D1117`) | orange-red (`openBadge`) |
+| `Resolved` | dim grey (`0xFF1C2128`) | green (`resolvedBadge`) |
+| `Stale` | dark amber (`0xFF2D2208`) | yellow (`staleBadge`) |
+
+Resolved-thread body text is rendered in `Color.Gray` to visually de-emphasise.
+
+## 8. Scope Exclusions (Phase 1 Step 2)
 
 | Feature | Planned for |
 |---------|-------------|

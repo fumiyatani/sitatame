@@ -5,6 +5,9 @@ package dev.sitatame.web.ui
  *
  * Used as the data passed from the diff view to [CommentModal] and
  * subsequently converted to a [dev.sitatame.web.api.CreateCommentRequest].
+ *
+ * Moved to commonMain so that jvmTest can reference it alongside
+ * [dev.sitatame.web.api.CommentDto] helpers.
  */
 sealed interface CommentTarget {
     /** A single diff line (kind = "line"). */
