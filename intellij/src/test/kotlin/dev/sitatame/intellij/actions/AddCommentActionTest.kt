@@ -21,6 +21,9 @@ import java.util.UUID
  * store-level surface the action calls, then assert the YAML on disk decodes
  * back to the same anchor + body.
  *
+ * As of issue #76 reviews live under the 1-branch-1-file layout:
+ *   `<outputRoot>/<projectSlug>/<branchSlug>/review.md`
+ *
  * The full platform-test version that injects an [com.intellij.openapi.editor.Editor]
  * and clicks the action lives in Phase 2 — running BasePlatformTestCase
  * requires IDE test fixtures that don't add coverage here over what this
@@ -63,10 +66,10 @@ class AddCommentActionTest {
             body = "please extract this block",
         )
 
-        // Mimic ReviewStore.addComment without the IntelliJ Application: write
-        // a Review with one comment via the codec, atomic-move into drafts/.
-        val draftsDir = paths.draftsDir()
-        Files.createDirectories(java.nio.file.Paths.get(draftsDir))
+        // Mimic ReviewStore.saveReview without the IntelliJ Application: write
+        // a Review with one comment via the codec, atomic-move into branchDir.
+        val branchDir = paths.branchDir()
+        Files.createDirectories(java.nio.file.Paths.get(branchDir))
         val review = dev.sitatame.intellij.storage.Review(
             schema = 1,
             id = "20260601T120000-add-comment",
@@ -78,9 +81,9 @@ class AddCommentActionTest {
             comments.add(newComment)
         }
         val bytes = Codec.encode(review)
-        val finalPath = java.nio.file.Paths.get(paths.draftFile(review.id))
+        val finalPath = java.nio.file.Paths.get(paths.reviewFile())
         Files.write(finalPath, bytes)
-        assertTrue("draft file should exist", Files.exists(finalPath))
+        assertTrue("review file should exist", Files.exists(finalPath))
 
         val readBack = Codec.decode(Files.readAllBytes(finalPath))
         assertEquals("feature/add-comment", readBack.branch)
