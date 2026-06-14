@@ -1,5 +1,9 @@
 package dev.sitatame.web.server
 
+import dev.sitatame.web.api.CreateCommentRequest
+import dev.sitatame.web.api.EtagMismatchError
+import dev.sitatame.web.api.UpdateCommentStateRequest
+import dev.sitatame.web.api.UpdateReviewCommentRequest
 import dev.sitatame.web.api.WorkspaceResponse
 import io.ktor.http.HttpStatusCode
 import io.ktor.serialization.kotlinx.json.json
@@ -10,12 +14,19 @@ import io.ktor.server.http.content.staticResources
 import io.ktor.server.netty.Netty
 import io.ktor.server.plugins.contentnegotiation.ContentNegotiation
 import io.ktor.server.plugins.statuspages.StatusPages
+import io.ktor.server.request.receive
+import io.ktor.server.response.header
 import io.ktor.server.response.respond
 import io.ktor.server.response.respondText
 import io.ktor.server.routing.get
+import io.ktor.server.routing.patch
+import io.ktor.server.routing.post
+import io.ktor.server.routing.put
+import io.ktor.server.routing.route
 import io.ktor.server.routing.routing
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
+import java.nio.file.Files
 import java.nio.file.Path
 
 /**
@@ -84,10 +95,130 @@ fun Application.module(workdir: Path, baseRef: String) {
 
     routing {
         get("/api/v1/workspace") {
-            call.respond(workspace.snapshot())
+            val snapshot = workspace.snapshot()
+            // Attach ETag of the current review.md (or "empty" sentinel).
+            val reviewBytes = snapshot.sourcePath
+                ?.let { p -> runCatching { Files.readAllBytes(Path.of(p)) }.getOrNull() }
+                ?: ByteArray(0)
+            call.response.header("ETag", computeEtag(reviewBytes))
+            call.respond(snapshot)
         }
         get("/api/v1/health") {
             call.respondText("ok")
+        }
+
+        // Write-path endpoints (Phase 1 step 2).
+        // All mutating endpoints require an If-Match header for optimistic
+        // concurrency control.
+
+        route("/api/v1/comments") {
+            post {
+                val ifMatch = call.request.headers["If-Match"]
+                    ?: return@post call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "If-Match header is required"),
+                    )
+                val req = call.receive<CreateCommentRequest>()
+                val mutationService = workspace.mutationService()
+
+                when (val result = mutationService.addComment(req, ifMatch)) {
+                    is MutationResult.Success -> {
+                        call.response.header("ETag", result.newEtag)
+                        call.respond(HttpStatusCode.OK, mapOf("anchor_id" to result.anchorId))
+                    }
+                    is MutationResult.EtagMismatch -> {
+                        call.response.header("ETag", result.actual)
+                        call.respond(
+                            HttpStatusCode.PreconditionFailed,
+                            EtagMismatchError(expected = result.expected, actual = result.actual),
+                        )
+                    }
+                    is MutationResult.ValidationError -> {
+                        call.respond(
+                            HttpStatusCode.UnprocessableEntity,
+                            mapOf("errors" to result.errors),
+                        )
+                    }
+                    is MutationResult.NotFound -> {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to result.message))
+                    }
+                }
+            }
+        }
+
+        route("/api/v1/comments/{anchorId}/state") {
+            patch {
+                val ifMatch = call.request.headers["If-Match"]
+                    ?: return@patch call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "If-Match header is required"),
+                    )
+                val anchorId = call.parameters["anchorId"]
+                    ?: return@patch call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "anchorId path parameter is required"),
+                    )
+                val req = call.receive<UpdateCommentStateRequest>()
+                val mutationService = workspace.mutationService()
+
+                when (val result = mutationService.updateState(anchorId, req, ifMatch)) {
+                    is MutationResult.Success -> {
+                        call.response.header("ETag", result.newEtag)
+                        call.respond(HttpStatusCode.OK, mapOf("anchor_id" to anchorId))
+                    }
+                    is MutationResult.EtagMismatch -> {
+                        call.response.header("ETag", result.actual)
+                        call.respond(
+                            HttpStatusCode.PreconditionFailed,
+                            EtagMismatchError(expected = result.expected, actual = result.actual),
+                        )
+                    }
+                    is MutationResult.ValidationError -> {
+                        call.respond(
+                            HttpStatusCode.UnprocessableEntity,
+                            mapOf("errors" to result.errors),
+                        )
+                    }
+                    is MutationResult.NotFound -> {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to result.message))
+                    }
+                }
+            }
+        }
+
+        route("/api/v1/review-comment") {
+            put {
+                val ifMatch = call.request.headers["If-Match"]
+                    ?: return@put call.respond(
+                        HttpStatusCode.BadRequest,
+                        mapOf("error" to "If-Match header is required"),
+                    )
+                val req = call.receive<UpdateReviewCommentRequest>()
+                val mutationService = workspace.mutationService()
+
+                when (val result = mutationService.updateReviewComment(req, ifMatch)) {
+                    is MutationResult.Success -> {
+                        call.response.header("ETag", result.newEtag)
+                        call.respond(HttpStatusCode.OK, mapOf("ok" to true))
+                    }
+                    is MutationResult.EtagMismatch -> {
+                        call.response.header("ETag", result.actual)
+                        call.respond(
+                            HttpStatusCode.PreconditionFailed,
+                            EtagMismatchError(expected = result.expected, actual = result.actual),
+                        )
+                    }
+                    is MutationResult.ValidationError -> {
+                        call.respond(
+                            HttpStatusCode.UnprocessableEntity,
+                            mapOf("errors" to result.errors),
+                        )
+                    }
+                    is MutationResult.NotFound -> {
+                        call.respond(HttpStatusCode.NotFound, mapOf("error" to result.message))
+                    }
+                }
+            }
         }
 
         // Compose Wasm bundle. Copy via
@@ -159,5 +290,45 @@ class WorkspaceService(
             review = review,
             sourcePath = reviewPath?.toAbsolutePath()?.toString(),
         )
+    }
+
+    /**
+     * Return a [ReviewMutationService] scoped to the current branch's review path.
+     *
+     * The service is created once per branch slug and cached. This ensures the
+     * path-scoped [kotlinx.coroutines.sync.Mutex] inside [ReviewMutationService]
+     * is shared across concurrent requests on the same branch, which is the
+     * foundation of the optimistic-concurrency guarantee.
+     *
+     * When the branch changes (e.g. a worktree session that switches branches),
+     * a new service is created and the old one is discarded. The old per-path
+     * Mutex is discarded with it; that is safe because the old path is no longer
+     * being written to.
+     */
+    private val mutationServiceLock = Any()
+    @Volatile private var _cachedMutationService: Pair<String, ReviewMutationService>? = null
+
+    fun mutationService(): ReviewMutationService {
+        val git = Git(workdir)
+        val repoRoot = git.repoRoot()
+        val rawBranch = git.currentBranch()
+        val headSha = git.headSHA()
+        val branch = normalizeBranch(rawBranch, headSha)
+        // Fast path: no lock needed when the cached entry matches.
+        val cached = _cachedMutationService
+        if (cached != null && cached.first == branch) return cached.second
+        // Slow path: create a new service under a lock so concurrent callers
+        // share the same instance (and its path-scoped Mutex pool).
+        return synchronized(mutationServiceLock) {
+            val rechecked = _cachedMutationService
+            if (rechecked != null && rechecked.first == branch) {
+                rechecked.second
+            } else {
+                val paths = SitatamePaths.resolve(repoRoot, branch)
+                val service = ReviewMutationService(paths)
+                _cachedMutationService = branch to service
+                service
+            }
+        }
     }
 }
