@@ -108,7 +108,7 @@ Multiplatform 実装です。JVM target の Ktor backend が現在のリポジ�
 `git diff origin/main..HEAD` と共有 sitatame storage 内の最新 review Markdown
 を JSON として返します。Wasm target はそのデータを Compose for Web で表示します。
 
-**機能一覧** (Phase 1 step 2):
+**機能一覧** (Phase 1 step 2 + Issue #18 UX):
 
 - **読み取り**: unified diff 表示、ファイル / hunk ナビゲーション、コメント表示
 - **書き込み**:
@@ -116,6 +116,12 @@ Multiplatform 実装です。JVM target の Ktor backend が現在のリポジ�
   - コメントの resolve / reopen（optimistic UI）
   - review-level のサマリーコメントを編集
   - 同時編集検知: ETag ベースの 412 ハンドリング（Reload + retry または Discard）
+- **コメント UX**（Issue #18）:
+  - GitHub 風スレッド: 同じアンカーを共有するコメントを 1 つの折りたたみ可能なスレッドに集約
+  - 状態フィルタ（`All / Open / Done / Stale`）でサイドバーのスレッドを絞り込み
+  - Open / Stale スレッドはデフォルト展開、Resolved スレッドはデフォルト折りたたみ
+  - 「Reply to this thread」ボタンで既存アンカーを引き継いで返信
+  - 状態別の視覚区別: Open（デフォルト背景）、Resolved（暗いグレー）、Stale（アンバー）
 
 range コメントは **long-press** で range モードを開始し、同じ hunk 内の終了行を
 クリックして確定します。ファイルヘッダの "Add range comment" ボタンからも同じ
