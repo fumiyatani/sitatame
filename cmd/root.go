@@ -224,7 +224,11 @@ func RunRoot(env Env, args []string) int {
 	}
 
 	paths := review.NewPaths(repo.Workdir, branch)
-	warnLegacySitatameDir(env, paths.LegacyRoot(), paths.LegacyDraftsRoot())
+	// Only warn about the repo-local .sitatame/ legacy directory (pre-#38
+	// in-repo storage). The output-root drafts/reviews layout (pre-#76) is
+	// handled automatically by MigrateLegacyLayout below, so we pass an
+	// empty newDraftsRoot to suppress the now-redundant migration hint.
+	warnLegacySitatameDir(env, paths.LegacyRoot(), "")
 	store := review.NewStore(paths)
 
 	// Crash recovery: if review.md was lost mid-write but review.md.bak
@@ -233,6 +237,18 @@ func RunRoot(env Env, args []string) int {
 	// startup.
 	if rerr := store.RecoverFromCrash(); rerr != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: crash recovery failed: %v (continuing)\n", rerr)
+	}
+
+	// Phase 4: one-time migration from drafts/reviews to 1-branch-1-file layout.
+	// Must run after RecoverFromCrash (so BranchDir is clean) and before
+	// autoload (so the migrated review.md is visible to DetectReview).
+	// Migration failure is non-fatal: the user can still operate on the new layout.
+	if migrated, legacyDir, merr := store.MigrateLegacyLayout(); merr != nil {
+		fmt.Fprintf(env.Stderr, "sitatame: migration warning: %v\n", merr)
+	} else if migrated > 0 {
+		fmt.Fprintf(env.Stderr,
+			"sitatame: migrated %d branch(es) to new layout; legacy data preserved in %s\n",
+			migrated, legacyDir)
 	}
 
 	// --new: refuse if review.md already exists.

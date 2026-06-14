@@ -439,15 +439,25 @@ comments:
 	}
 }
 
-func TestRunRoot_LegacySitatameDir_HintIncludesMkdir(t *testing.T) {
+// TestRunRoot_LegacySitatameDir_WarnsAboutInRepoDir verifies that RunRoot
+// surfaces a warning when a pre-#38 <repo>/.sitatame/ directory is detected.
+// As of Phase 4, the output-root drafts/reviews migration is handled
+// automatically (MigrateLegacyLayout), so the manual migration hint for the
+// output root is no longer emitted; only the "legacy detected — ignored" notice
+// fires for the in-repo directory.
+func TestRunRoot_LegacySitatameDir_WarnsAboutInRepoDir(t *testing.T) {
 	dir, _ := newRepo(t)
 	chdir(t, dir)
 	home := t.TempDir()
 	t.Setenv("SITATAME_HOME", home)
 
-	// Seed a legacy <repo>/.sitatame/ directory.
+	// Seed a legacy <repo>/.sitatame/ directory with a non-config entry so the
+	// "only config entries" suppression does not silence the warning.
 	legacy := filepath.Join(dir, ".sitatame")
 	if err := os.MkdirAll(legacy, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(legacy, "old-draft.md"), []byte("draft"), 0o644); err != nil {
 		t.Fatal(err)
 	}
 
@@ -458,14 +468,8 @@ func TestRunRoot_LegacySitatameDir_HintIncludesMkdir(t *testing.T) {
 		t.Fatalf("exit = %d, want 0", code)
 	}
 	got := stderr.String()
-	if !strings.Contains(got, "To migrate drafts:") {
-		t.Fatalf("stderr should contain migration hint; got %q", got)
-	}
-	if !strings.Contains(got, "mkdir -p ") {
-		t.Errorf("migration hint should include `mkdir -p ` to create the new drafts root; got %q", got)
-	}
-	if !strings.Contains(got, " && mv ") {
-		t.Errorf("migration hint should chain mkdir and mv with `&&`; got %q", got)
+	if !strings.Contains(got, "legacy") || !strings.Contains(got, "detected") {
+		t.Errorf("stderr should contain legacy-detected notice; got %q", got)
 	}
 }
 
@@ -603,6 +607,88 @@ func TestRunRoot_NewAndForceNew_MutuallyExclusive(t *testing.T) {
 	}
 	if !strings.Contains(stderr.String(), "mutually exclusive") {
 		t.Errorf("stderr = %q, want contains 'mutually exclusive'", stderr.String())
+	}
+}
+
+// TestRunRoot_MigrateLegacyLayout_AutomigrationOnStartup verifies that when the
+// output root contains the legacy drafts/reviews layout, RunRoot automatically
+// migrates the data to the new 1-branch-1-file layout and:
+//   - the migrated review.md is autoloaded by the TUI session
+//   - a "migrated N branch(es)" message is printed to stderr
+//   - the legacy data is preserved under .legacy-<ts>/
+func TestRunRoot_MigrateLegacyLayout_AutomigrationOnStartup(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+	_, projectRoot := withSitatameHome(t, dir)
+
+	// Build the legacy reviews/ layout for the "feature" branch slug.
+	branchSlug := review.BranchSlug("feature")
+	legacyReviewsDir := filepath.Join(projectRoot, "reviews", branchSlug)
+	if err := os.MkdirAll(legacyReviewsDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacyContent := "---\nschema: 1\nbranch: feature\nreview_comment: migrated-review\n---\n"
+	legacyFile := filepath.Join(legacyReviewsDir, "20260101T000000-review.md")
+	if err := os.WriteFile(legacyFile, []byte(legacyContent), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	var captured TUIOptions
+	env, _, stderr := captureTUIEnv(os.Stdin, true, &captured)
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+
+	// Migration message should be in stderr.
+	stderrStr := stderr.String()
+	if !strings.Contains(stderrStr, "migrated") {
+		t.Errorf("stderr should contain migration message; got %q", stderrStr)
+	}
+	if !strings.Contains(stderrStr, "legacy data preserved") {
+		t.Errorf("stderr should mention legacy data preserved; got %q", stderrStr)
+	}
+
+	// The migrated review.md must be autoloaded: TUI gets the old review_comment.
+	if captured.Review.ReviewComment != "migrated-review" {
+		t.Errorf("ReviewComment = %q, want %q (autoloaded from migrated review)",
+			captured.Review.ReviewComment, "migrated-review")
+	}
+
+	// .legacy-<ts>/ must exist and contain the old file.
+	entries, err := os.ReadDir(projectRoot)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var legacyDirName string
+	for _, e := range entries {
+		if e.IsDir() && strings.HasPrefix(e.Name(), ".legacy-") {
+			legacyDirName = e.Name()
+			break
+		}
+	}
+	if legacyDirName == "" {
+		t.Fatal("no .legacy-<ts>/ directory found under project root")
+	}
+	preserved := filepath.Join(projectRoot, legacyDirName, "reviews", branchSlug, "20260101T000000-review.md")
+	if _, err := os.Stat(preserved); err != nil {
+		t.Errorf("legacy file not preserved at %s: %v", preserved, err)
+	}
+}
+
+// TestRunRoot_MigrateLegacyLayout_NoLegacy_Noop verifies that when no legacy
+// layout exists, RunRoot does not emit a migration message.
+func TestRunRoot_MigrateLegacyLayout_NoLegacy_Noop(t *testing.T) {
+	dir, _ := newRepo(t)
+	chdir(t, dir)
+
+	env, _, stderr := envWithRunner(os.Stdin, func(_ Env, opts TUIOptions) (TUIResult, error) {
+		return TUIResult{Review: opts.Review, Reason: tui.QuitNone}, nil
+	})
+	if code := RunRoot(env, nil); code != 0 {
+		t.Fatalf("exit = %d, want 0; stderr=%q", code, stderr.String())
+	}
+	if strings.Contains(stderr.String(), "migrated") {
+		t.Errorf("stderr should not contain migration message when no legacy layout; got %q", stderr.String())
 	}
 }
 
