@@ -105,8 +105,11 @@ class SitatameToolWindowContent(private val project: Project) {
             private fun maybeShowPopup(e: java.awt.event.MouseEvent) {
                 if (!e.isPopupTrigger) return
                 // Select the row under the cursor so the menu action targets it.
+                // locationToIndex() returns the nearest index even for clicks in
+                // empty space below the last cell, so we guard with getCellBounds().
                 val index = list.locationToIndex(e.point)
-                if (index >= 0) list.selectedIndex = index
+                if (index < 0 || list.getCellBounds(index, index)?.contains(e.point) != true) return
+                list.selectedIndex = index
                 buildContextMenu().show(list, e.x, e.y)
             }
         })
@@ -182,21 +185,32 @@ class SitatameToolWindowContent(private val project: Project) {
     /**
      * Match a stored [Comment] against the [target] selected in the list.
      *
-     * Priority:
-     * 1. If both have a non-empty anchorId, use exact identity.
-     * 2. Otherwise fall back to path + anchor coordinates.
+     * Delegates to [Companion.commentMatches] so the logic is testable
+     * without instantiating the tool window (no IntelliJ Platform required).
      */
-    private fun commentMatches(c: Comment, target: Comment): Boolean {
-        if (c.anchor.anchorId.isNotEmpty() && target.anchor.anchorId.isNotEmpty()) {
-            return c.anchor.anchorId == target.anchor.anchorId
-        }
-        if (c.anchor.path != target.anchor.path) return false
-        return when {
-            c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.LINE ->
-                c.anchor.line == target.anchor.line
-            c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.RANGE ->
-                c.anchor.lineStart == target.anchor.lineStart && c.anchor.lineEnd == target.anchor.lineEnd
-            else -> false
+    private fun commentMatches(c: Comment, target: Comment): Boolean =
+        Companion.commentMatches(c, target)
+
+    companion object {
+        /**
+         * Match a stored [Comment] against [target].
+         *
+         * Priority:
+         * 1. If both have a non-empty anchorId, use exact identity.
+         * 2. Otherwise fall back to path + anchor coordinates.
+         */
+        internal fun commentMatches(c: Comment, target: Comment): Boolean {
+            if (c.anchor.anchorId.isNotEmpty() && target.anchor.anchorId.isNotEmpty()) {
+                return c.anchor.anchorId == target.anchor.anchorId
+            }
+            if (c.anchor.path != target.anchor.path) return false
+            return when {
+                c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.LINE ->
+                    c.anchor.line == target.anchor.line
+                c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.RANGE ->
+                    c.anchor.lineStart == target.anchor.lineStart && c.anchor.lineEnd == target.anchor.lineEnd
+                else -> false
+            }
         }
     }
 
