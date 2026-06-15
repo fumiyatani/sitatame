@@ -164,15 +164,58 @@ in sandboxes without git (the parser / slug / round-trip tests still run).
 | `GET /api/v1/workspace`| `WorkspaceResponse` (see `commonMain/.../Dto.kt`) |
 | `GET /` (+ subpaths)   | static dist (Compose Wasm) when populated       |
 
-The diff base is hard-coded to `origin/main` for step 1. When the ref is not
-reachable (e.g. a fresh local repo without `origin/main` fetched) the server
-returns an empty `files` list instead of a 5xx.
+The diff base defaults to `origin/main` and can be changed via `--base` or
+`SITATAME_BASE` (see [Options](#options) below). When the ref is not reachable
+(e.g. a fresh local repo without `origin/main` fetched) the server returns an
+empty `files` list instead of a 5xx.
+
+## Options
+
+The server accepts two startup flags with environment-variable fallbacks. The
+resolution order is **CLI flag > environment variable > built-in default**.
+
+| CLI flag       | Env variable      | Default           | Effect                                               |
+| -------------- | ----------------- | ----------------- | ---------------------------------------------------- |
+| `--repo <path>`| `SITATAME_REPO`   | `user.dir` (cwd)  | Path to the git repository root to review.          |
+| `--base <ref>` | `SITATAME_BASE`   | `origin/main`     | Base ref for `git diff <ref>..HEAD`.                |
+
+The `--repo` path must be a directory that contains a `.git` entry (directory or
+worktree file). Passing a path without `.git` causes the server to print an error
+and exit(1).
+
+### Examples
+
+```sh
+# Review another project from anywhere
+./gradlew :web:run --args="--repo /path/to/other-project"
+
+# Custom base ref (e.g. a release branch)
+./gradlew :web:run --args="--repo /path/to/project --base origin/develop"
+
+# Via Gradle properties (alternative to --args)
+./gradlew :web:run -PrepoPath=/path/to/project -PbaseRef=origin/develop
+
+# Via environment variables
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop ./gradlew :web:run
+
+# --help prints usage and exits
+./gradlew :web:run --args="--help"
+```
+
+Or from `make` at the repo root:
+
+```sh
+# make web currently runs `cd web && ./gradlew :run` without extra args.
+# Use the Gradle forms above directly for non-default repos.
+```
 
 ## Environment
 
 | variable          | effect                                                          |
 | ----------------- | --------------------------------------------------------------- |
 | `SITATAME_HOME`   | Output root override. Mirrors the Go CLI: whitespace-only is treated as unset, a leading `~/` (or bare `~`) is expanded to the user home, and a relative path is absolutised against the launching process's cwd with a one-line stderr warning. Falls back to `~/.sitatame` when unset, and to `<os.tmpdir>/sitatame` when even `user.home` is unknown. |
+| `SITATAME_REPO`   | Target git repository root. See [Options](#options). Overridden by `--repo`. |
+| `SITATAME_BASE`   | Base ref for `git diff`. See [Options](#options). Overridden by `--base`. |
 
 Detached HEAD is normalised to `detached/<sha[:12]>` so each detached session
 gets its own branch slug, matching `cmd/root.go`. Two clients (TUI and Web) on
@@ -182,7 +225,6 @@ review directory.
 ## Known limitations
 
 - No write path. Resolve / Reopen buttons render but do nothing.
-- `origin/main` base is hard-coded; per-repo config arrives in step 2.
 - Keyboard navigation (arrow keys, `?` help) and split layout are not wired.
 - The unified-diff parser is intentionally minimal — combined diffs (merge
   commits) and quoted paths fall outside its scope.
