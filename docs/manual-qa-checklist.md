@@ -181,3 +181,44 @@ cd web && ./gradlew :run --args="--repo /tmp"
 ```
 
 - [ ] Server prints an error mentioning `.git` and exits without binding a port.
+
+## M. CopyAIPromptAction — Threading and Lifecycle (Issue #105)
+
+These items verify the threading fix (P2-1 / P2-2 / P3-1) in the IntelliJ
+plugin action. Requires running the plugin inside a sandboxed IDE instance
+(`cd intellij && ./gradlew runIde`).
+
+### M-1. snapshotComments runs off the EDT
+
+- [ ] Set a breakpoint (or add a log statement) inside `CopyAIPromptAction.run`
+  before `store.snapshotComments(...)`.
+- [ ] Trigger the action → breakpoint / log should show the current thread is
+  **not** the Event Dispatch Thread (thread name does not contain "AWT-EventQueue").
+
+### M-2. buildPrompt runs off the EDT
+
+- [ ] `buildPrompt(targets)` is called from the same background thread as
+  `snapshotComments` — confirm the thread name at that call site is not
+  "AWT-EventQueue".
+
+### M-3. Clipboard write and dialog show on the EDT
+
+- [ ] After `buildPrompt` completes, `CopyPasteManager.setContents` and
+  `PromptPreviewDialog.show()` should run on the Event Dispatch Thread.
+- [ ] Verify by adding a breakpoint inside the `invokeLater` lambda — thread name
+  should contain "AWT-EventQueue".
+
+### M-4. Disposed project does not open dialog
+
+- [ ] With the action running: force-close the project while the background task
+  is still in flight (e.g. simulate slow I/O with a sleep patch).
+- [ ] The `PromptPreviewDialog` must **not** appear; `project.disposed` expiration
+  prevents the `invokeLater` runnable from executing.
+
+### M-5. Clipboard unchanged on failure
+
+- [ ] Copy some sentinel text to the clipboard before triggering the action.
+- [ ] Simulate a failure in `snapshotComments` (e.g. point the plugin at a repo
+  with a corrupted review.md).
+- [ ] After the error notification appears, paste from clipboard — the sentinel
+  text should still be there (no partial prompt was written).
