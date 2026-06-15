@@ -1,5 +1,6 @@
 package dev.sitatame.intellij.actions
 
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataKey
@@ -31,6 +32,11 @@ class ToolWindowToggleResolvedAction : AnAction() {
         val TOGGLE_SELECTED_KEY: DataKey<Runnable> =
             DataKey.create("sitatame.toolWindowToggleSelected")
     }
+
+    // DataProvider is Swing-bound (reads JBList.selectedValue), so update()
+    // must run on the EDT. Declaring this explicitly silences plugin-verifier
+    // warnings on IntelliJ 2024.3+.
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
 
     override fun update(e: AnActionEvent) {
         e.presentation.isEnabled = e.getData(TOGGLE_SELECTED_KEY) != null
