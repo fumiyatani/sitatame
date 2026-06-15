@@ -14,6 +14,8 @@ type stubRunner struct {
 	// responses maps a key derived from args to (output, error).
 	// Key is derived by joining args with spaces.
 	responses map[string]stubResponse
+	// lastWorkdir records the workdir passed to the most recent run call.
+	lastWorkdir string
 }
 
 type stubResponse struct {
@@ -21,7 +23,8 @@ type stubResponse struct {
 	err error
 }
 
-func (s *stubRunner) run(args ...string) (string, error) {
+func (s *stubRunner) run(workdir string, args ...string) (string, error) {
+	s.lastWorkdir = workdir
 	key := strings.Join(args, " ")
 	if r, ok := s.responses[key]; ok {
 		return r.out, r.err
@@ -132,5 +135,50 @@ func TestDiff_WithStubRunner_RunnerError(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "git diff --raw") {
 		t.Errorf("error should mention git diff --raw, got: %v", err)
+	}
+}
+
+// TestRepo_WorkdirMutationReflectedInRunner verifies that mutating Repo.Workdir
+// after construction (mimicking the Discover() path) is reflected in the workdir
+// passed to the runner on the next call.
+//
+// Before the fix, newRepo() stored workdir inside execRunner at construction
+// time, so a later assignment to r.Workdir had no effect on which directory
+// git ran in. The fix moves workdir ownership to Repo.run(), which reads
+// r.Workdir on every call.
+func TestRepo_WorkdirMutationReflectedInRunner(t *testing.T) {
+	t.Parallel()
+
+	rawOut := ":100644 100644 aaa bbb M\x00foo.go\x00"
+	numOut := "3\t1\tfoo.go\x00"
+	patchOut := "diff --git a/foo.go b/foo.go\nindex aaa..bbb 100644\n--- a/foo.go\n+++ b/foo.go\n@@ -1,2 +1,2 @@\n-a\n+b\n"
+	diffResponses := map[string]stubResponse{
+		"diff --raw -z --find-renames --find-copies --cached":           {out: rawOut},
+		"diff --numstat -z --find-renames --find-copies --cached":       {out: numOut},
+		"diff --patch --no-color --find-renames --find-copies --cached": {out: patchOut},
+	}
+
+	stub := &stubRunner{responses: diffResponses}
+
+	// Simulate Discover(): construct with initial workdir via Repo struct directly
+	// (stub replaces the real runner, so execRunner is not involved).
+	repo := &Repo{Workdir: "/initial", runner: stub}
+
+	if _, err := repo.Diff(DiffSpec{Source: SourceStaged}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.lastWorkdir != "/initial" {
+		t.Errorf("first call: lastWorkdir = %q, want /initial", stub.lastWorkdir)
+	}
+
+	// Mutate Workdir — must be reflected on the next runner call.
+	repo.Workdir = "/other"
+	stub.responses = diffResponses // reset for second call
+
+	if _, err := repo.Diff(DiffSpec{Source: SourceStaged}); err != nil {
+		t.Fatal(err)
+	}
+	if stub.lastWorkdir != "/other" {
+		t.Errorf("after mutation: lastWorkdir = %q, want /other", stub.lastWorkdir)
 	}
 }

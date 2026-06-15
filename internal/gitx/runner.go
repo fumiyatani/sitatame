@@ -9,20 +9,20 @@ import (
 
 // gitRunner abstracts the execution of git subcommands. Implementations must
 // return the combined stdout on success, or a wrapped error on failure.
-// args must NOT include the "git" binary name; it is prepended by the runner.
+// workdir is the working directory for the git command; pass an empty string to
+// use the process cwd. args must NOT include the "git" binary name; it is
+// prepended by the runner.
 type gitRunner interface {
-	run(args ...string) (string, error)
+	run(workdir string, args ...string) (string, error)
 }
 
 // execRunner is the production gitRunner that shells out to the real git binary.
-type execRunner struct {
-	workdir string
-}
+type execRunner struct{}
 
-func (r *execRunner) run(args ...string) (string, error) {
+func (r *execRunner) run(workdir string, args ...string) (string, error) {
 	cmd := exec.Command("git", args...)
-	if r.workdir != "" {
-		cmd.Dir = r.workdir
+	if workdir != "" {
+		cmd.Dir = workdir
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout
