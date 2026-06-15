@@ -172,6 +172,22 @@ The `--repo` path must point to the root of a git repository (containing `.git`)
 Passing a non-git directory prints an error and the server exits immediately.
 Resolution order: CLI flag > environment variable > current working directory.
 
+**Distribution as a fat jar (no Gradle required on the target machine):**
+
+```sh
+# Build the self-contained jar (bundles the Compose Wasm UI + Ktor server)
+make web-jar
+# Output: web/build/libs/sitatame-web-<version>-fat.jar  (~20 MB)
+
+# Run from any directory — only JDK 21 and git are required
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --repo /path/to/other-project
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --repo /path/to/project --base origin/develop
+```
+
+The fat jar includes all JVM runtime dependencies and the prebuilt Wasm UI
+bundle. The same `SITATAME_WEB_URL=http://127.0.0.1:<port>` line is printed on
+stdout; open it in your browser.
+
 To also run the Wasm frontend dev server (hot-reload during UI development):
 
 ```sh

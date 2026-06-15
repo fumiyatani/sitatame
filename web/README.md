@@ -129,12 +129,48 @@ live data, use `make web` (single-port `:run`) above.
 
 ### Production builds
 
+Build and run the self-contained fat jar (no Gradle required on the target machine):
+
+```sh
+# From the repository root
+make web-jar
+# Output: web/build/libs/sitatame-web-<version>-fat.jar  (~20 MB)
+
+# Or directly from the web/ directory
+./gradlew :jvmFatJar --no-daemon
+```
+
+The fat jar bundles the Ktor server, all JVM runtime dependencies, and the
+prebuilt Compose Wasm UI distribution into a single file.  Run it from any
+directory where JDK 21 and `git` are available:
+
+```sh
+# Review the current directory's repository (must contain .git)
+java -jar web/build/libs/sitatame-web-0.2.0-fat.jar
+
+# Review another repository
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --repo /path/to/other-project
+
+# Custom base ref
+java -jar /path/to/sitatame-web-0.2.0-fat.jar \
+    --repo /path/to/project --base origin/develop
+
+# Via environment variables
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop \
+    java -jar /path/to/sitatame-web-0.2.0-fat.jar
+
+# --help prints usage and exits
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --help
+```
+
+The server prints `SITATAME_WEB_URL=http://127.0.0.1:<port>` on stdout and
+keeps running until interrupted (Ctrl-C).
+
+If you want just the plain JVM class jar without the fat-jar repackaging:
+
 ```sh
 ./gradlew :jvmJar :wasmJsBrowserDistribution
 ```
-
-A self-contained `:jvmFatJar` (dist embedded, launched via the Go CLI) lands in
-Phase 1 step 2.
 
 ### Tests
 
@@ -229,8 +265,6 @@ review directory.
 - Keyboard navigation (arrow keys, `?` help) and split layout are not wired.
 - The unified-diff parser is intentionally minimal — combined diffs (merge
   commits) and quoted paths fall outside its scope.
-- No self-contained fat jar yet — `make web` runs from the Gradle build tree.
-  The `:jvmFatJar` (dist embedded) for distribution lands in step 2.
 
 ### Large diffs
 
