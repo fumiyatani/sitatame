@@ -6,11 +6,12 @@ import (
 	"testing"
 
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/gitx/internal/parser"
 )
 
 func TestParseHunkHeader_WithCounts(t *testing.T) {
 	t.Parallel()
-	h, err := parseHunkHeader("@@ -10,5 +12,7 @@ func foo()")
+	h, err := parser.ParseHunkHeader("@@ -10,5 +12,7 @@ func foo()")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -24,7 +25,7 @@ func TestParseHunkHeader_WithCounts(t *testing.T) {
 
 func TestParseHunkHeader_OmittedCount(t *testing.T) {
 	t.Parallel()
-	h, err := parseHunkHeader("@@ -10 +10 @@")
+	h, err := parser.ParseHunkHeader("@@ -10 +10 @@")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -41,7 +42,7 @@ func TestParseHunkHeader_Bad(t *testing.T) {
 		"@@ -a,b +c,d @@",  // non-numeric
 	}
 	for _, in := range cases {
-		if _, err := parseHunkHeader(in); err == nil {
+		if _, err := parser.ParseHunkHeader(in); err == nil {
 			t.Errorf("expected error for %q", in)
 		}
 	}
@@ -60,7 +61,7 @@ index 1111111..2222222 100644
 +c
  d
 `
-	got, err := parsePatch(in)
+	got, err := parser.ParsePatch(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -102,7 +103,7 @@ index 1111111..2222222 100644
 +new
 \ No newline at end of file
 `
-	got, err := parsePatch(in)
+	got, err := parser.ParsePatch(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -127,7 +128,7 @@ func TestParsePatch_BinaryHeader(t *testing.T) {
 index 1111111..2222222 100644
 Binary files a/img.png and b/img.png differ
 `
-	got, err := parsePatch(in)
+	got, err := parser.ParsePatch(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ index 3..4 100644
 -p
 +q
 `
-	got, err := parsePatch(in)
+	got, err := parser.ParsePatch(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -179,7 +180,7 @@ similarity index 100%
 rename from old.go
 rename to new.go
 `
-	got, err := parsePatch(in)
+	got, err := parser.ParsePatch(in)
 	if err != nil {
 		t.Fatal(err)
 	}
