@@ -174,14 +174,11 @@ class SitatameToolWindowContent(
         })
         list.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
-                when (e.keyCode) {
-                    KeyEvent.VK_ENTER -> {
-                        e.consume()
-                        jumpToSelected()
-                    }
-                    KeyEvent.VK_SPACE -> {
-                        e.consume()
-                        toggleSelected()
+                keyCodeToAction(e.keyCode)?.let { action ->
+                    e.consume()
+                    when (action) {
+                        KeyAction.JUMP -> jumpToSelected()
+                        KeyAction.TOGGLE -> toggleSelected()
                     }
                 }
             }
@@ -227,7 +224,8 @@ class SitatameToolWindowContent(
 
     private fun buildFooter(): JComponent {
         val label = JLabel("", SwingConstants.LEFT)
-        label.text = " sitatame: drafts under ~/.sitatame/<project>/drafts/<branch>/"
+        label.text = " sitatame: drafts under ~/.sitatame/<project>/drafts/<branch>/" +
+            "  ·  Enter: jump  ·  Space: toggle resolved"
         return label
     }
 
@@ -328,6 +326,30 @@ class SitatameToolWindowContent(
         Companion.commentMatches(c, target)
 
     companion object {
+
+        /**
+         * Logical actions that a key-press can trigger in the tool-window list.
+         *
+         * Sealed so exhaustive `when` is enforced; new bindings can be added here
+         * without touching [build]'s KeyAdapter.
+         */
+        internal enum class KeyAction { JUMP, TOGGLE }
+
+        /**
+         * Maps a [java.awt.event.KeyEvent] key code to a [KeyAction], or returns
+         * `null` if the key has no binding.
+         *
+         * Pure function — testable without IntelliJ Platform.
+         *
+         *  - [KeyEvent.VK_ENTER] → [KeyAction.JUMP] (navigate to anchored file:line)
+         *  - [KeyEvent.VK_SPACE] → [KeyAction.TOGGLE] (toggle resolved/open state)
+         */
+        internal fun keyCodeToAction(keyCode: Int): KeyAction? = when (keyCode) {
+            KeyEvent.VK_ENTER -> KeyAction.JUMP
+            KeyEvent.VK_SPACE -> KeyAction.TOGGLE
+            else -> null
+        }
+
         /**
          * Match a stored [Comment] against [target].
          *
