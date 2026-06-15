@@ -1,4 +1,4 @@
-.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures web
+.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures web web-jar
 
 BIN := sitatame
 PKG := ./...
@@ -64,3 +64,10 @@ web-fixtures:
 # SITATAME_WEB_URL line. First build is slow (wasm compile); reruns are cached.
 web:
 	cd web && ./gradlew :run
+
+# Build a self-contained fat jar (Ktor server + Wasm UI + all JVM deps bundled).
+# The resulting jar can be run without Gradle — only JDK 21 and git are required:
+#   java -jar web/build/libs/sitatame-web-*-fat.jar --repo /path/to/repo
+web-jar:
+	cd web && ./gradlew :jvmFatJar --no-daemon
+	@echo "→ $(shell ls web/build/libs/sitatame-web-*-fat.jar 2>/dev/null | head -1)"
