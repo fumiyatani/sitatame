@@ -103,9 +103,14 @@ class SitatameToolWindowContent(
             .subscribe(
                 REVIEW_CHANGED_TOPIC,
                 ReviewChangedListener { changedRoot, changedBranch ->
-                    val repo = RepoContext.forProject(project) ?: return@ReviewChangedListener
-                    if (repo.repoRoot == changedRoot && repo.branch == changedBranch) {
-                        ApplicationManager.getApplication().invokeLater { refresh() }
+                    // All project state access (GitRepositoryManager / RepoContext) and
+                    // UI mutations must happen on the EDT. Wrap the entire callback body
+                    // in invokeLater so we never touch project state off-EDT.
+                    ApplicationManager.getApplication().invokeLater {
+                        val repo = RepoContext.forProject(project) ?: return@invokeLater
+                        if (repo.repoRoot == changedRoot && repo.branch == changedBranch) {
+                            refresh()
+                        }
                     }
                 },
             )
@@ -558,17 +563,23 @@ class SitatameToolWindowContent(
                 }
             }
 
+            // Cached icon instances — avoids allocating a new StateIcon on every
+            // list repaint (getListCellRendererComponent is called once per visible row
+            // per repaint cycle).
+            private val RESOLVED_ICON: Icon = StateIcon(
+                JBColor(0x9C27B0, 0xBA68C8),  // purple light/dark
+                StateIconShape.CHECK,
+            )
+            private val OPEN_ICON: Icon = StateIcon(
+                JBColor(0x4CAF50, 0x81C784),  // green light/dark
+                StateIconShape.CIRCLE,
+            )
+            private val STALE_ICON: Icon = AllIcons.General.Warning
+
             fun stateIcon(state: String): Icon = when (state) {
-                ReviewState.RESOLVED -> StateIcon(
-                    JBColor(0x9C27B0, 0xBA68C8),  // purple light/dark
-                    StateIconShape.CHECK,
-                )
-                ReviewState.STALE -> AllIcons.General.Warning
-                else ->  // OPEN (default)
-                    StateIcon(
-                        JBColor(0x4CAF50, 0x81C784),  // green light/dark
-                        StateIconShape.CIRCLE,
-                    )
+                ReviewState.RESOLVED -> RESOLVED_ICON
+                ReviewState.STALE -> STALE_ICON
+                else -> OPEN_ICON  // OPEN (default)
             }
         }
     }
