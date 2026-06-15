@@ -129,3 +129,55 @@ Simulate a stale blob by modifying the diff between page load and comment submit
 - [ ] After all write operations, the diff view still renders correctly.
 - [ ] Sidebar file list and comment list are accurate.
 - [ ] No JavaScript console errors from Wasm.
+
+## L. Other Repository (`--repo`) and Base Ref (`--base`) (#88)
+
+### L-1. `--repo` targeting a different repository
+
+1. Clone a second git repository to a temp directory (it must have `origin/main`
+   reachable or use `--base` with a local ref).
+2. Start the server pointing at it:
+   ```sh
+   cd web && ./gradlew :run --args="--repo /path/to/other-repo"
+   ```
+3. - [ ] `SITATAME_WEB_URL=http://127.0.0.1:<port>` is printed (server started).
+4. - [ ] Open the URL — the sidebar shows files from the *other* repo's diff, not
+     from the sitatame repo.
+5. - [ ] The `projectSlug` in the response (`GET /api/v1/workspace`) reflects the
+     other repo's directory name, not "sitatame".
+
+### L-2. `--base` overrides the default `origin/main`
+
+1. In a repo that has a branch named `origin/develop` (or create a local ref):
+   ```sh
+   cd web && ./gradlew :run --args="--repo /path/to/repo --base origin/develop"
+   ```
+2. - [ ] The diff shown is relative to `origin/develop`, not `origin/main`.
+
+### L-3. `SITATAME_REPO` / `SITATAME_BASE` environment variables
+
+```sh
+SITATAME_REPO=/path/to/other-repo SITATAME_BASE=origin/develop ./gradlew :web:run
+```
+
+- [ ] Same result as `--repo` / `--base` flags respectively.
+- [ ] CLI flag takes precedence over env when both are set (test by setting
+  `SITATAME_REPO=<wrong-path>` and passing `--repo <correct-path>` — the correct
+  path must be used).
+
+### L-4. Invalid `--repo` path rejected at startup
+
+```sh
+cd web && ./gradlew :run --args="--repo /no/such/path"
+```
+
+- [ ] Server prints a clear error to stderr and exits without binding a port.
+- [ ] Error message contains "does not exist" or "not a directory".
+
+### L-5. Path without `.git` rejected at startup
+
+```sh
+cd web && ./gradlew :run --args="--repo /tmp"
+```
+
+- [ ] Server prints an error mentioning `.git` and exits without binding a port.

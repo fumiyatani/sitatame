@@ -153,8 +153,26 @@ The server binds to a random local port and prints the URL on stdout:
 SITATAME_WEB_URL=http://127.0.0.1:<port>
 ```
 
-Open the printed URL in your browser.  To also run the Wasm frontend dev server
-(hot-reload during UI development):
+Open the printed URL in your browser.
+
+**Reviewing another repository** — pass `--repo` and optionally `--base`:
+
+```sh
+# Review a different project
+cd web && ./gradlew :run --args="--repo /path/to/other-project"
+
+# Custom base ref
+cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
+
+# Or via environment variables
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
+```
+
+The `--repo` path must point to the root of a git repository (containing `.git`).
+Passing a non-git directory prints an error and the server exits immediately.
+Resolution order: CLI flag > environment variable > current working directory.
+
+To also run the Wasm frontend dev server (hot-reload during UI development):
 
 ```sh
 cd web
@@ -178,7 +196,6 @@ make web-fixtures
 
 Current limitations:
 
-- The diff base is hard-coded to `origin/main`.
 - The production Wasm distribution is not yet wired into the Ktor static
   resources automatically; use `:wasmJsBrowserDevelopmentRun` for local UI
   development or run `:wasmJsBrowserDistribution` then `:run`.

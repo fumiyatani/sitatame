@@ -147,8 +147,27 @@ server は localhost の空き port に bind し、stdout に URL を出力し�
 SITATAME_WEB_URL=http://127.0.0.1:<port>
 ```
 
-出力された URL をブラウザで開くと操作できます。UI 開発時のホットリロードが必要な
-場合は別 shell で Wasm frontend の dev server も起動します:
+出力された URL をブラウザで開くと操作できます。
+
+**別プロジェクトをレビューする場合** — `--repo` と必要に応じて `--base` を渡します:
+
+```sh
+# 別プロジェクトをレビュー
+cd web && ./gradlew :run --args="--repo /path/to/other-project"
+
+# カスタム base ref を指定
+cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
+
+# 環境変数を使う場合
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
+```
+
+`--repo` に指定するパスは git リポジトリのルート（`.git` を含むディレクトリ）である
+必要があります。git リポジトリでないディレクトリを指定するとエラーメッセージを出力して
+即座に終了します。解決優先順位: CLI フラグ > 環境変数 > カレントディレクトリ。
+
+UI 開発時のホットリロードが必要な場合は別 shell で Wasm frontend の dev server も
+起動します:
 
 ```sh
 cd web
@@ -172,7 +191,6 @@ make web-fixtures
 
 現時点の制約:
 
-- diff base は `origin/main` に hard-code されています。
 - production Wasm distribution は Ktor static resources にまだ自動連携されて
   いないため、local UI development では `:wasmJsBrowserDevelopmentRun` を使います。
 - Compose for Web (CMP 1.7.x) の制約により Shift+click での range モード開始は
