@@ -40,20 +40,51 @@ import java.nio.file.Path
  *    `resources/static`. The Wasm bundle is copied there by the build (see
  *    README).
  *
- * The base ref for `git diff` is hard-coded to `origin/main` for Phase 1 step
- * 1; per-repo configuration is Phase 1 step 2.
+ * The default base ref is [DEFAULT_BASE_REF] (`origin/main`). It can be
+ * overridden at startup via `--base` / `SITATAME_BASE`. When the base ref is
+ * explicitly specified and cannot be resolved in the repo, the server exits 1
+ * immediately. When the default is used and is not reachable, the server
+ * degrades gracefully to an empty diff (no 500).
  */
 
 /** Port 0 selects a free port. The actual bound port is printed on stdout. */
 const val DEFAULT_PORT: Int = 0
 
-/** Hard-coded base ref for Phase 1 step 1. */
+/** Default base ref used when neither `--base` nor `SITATAME_BASE` is provided. */
 const val DEFAULT_BASE_REF: String = "origin/main"
 
-fun main() {
-    val workdir = Path.of(System.getProperty("user.dir"))
+fun main(args: Array<String>) {
+    val serverArgs = try {
+        parseArgs(args)
+    } catch (e: HelpRequestedException) {
+        return // help was already printed; exit cleanly
+    } catch (e: ArgParseException) {
+        System.err.println("sitatame-web: ${e.message}")
+        System.exit(1)
+        return // unreachable; satisfies the compiler
+    }
+
+    val workdir = serverArgs.repoPath
+    val baseRef = serverArgs.baseRef
+
+    // Validate an explicitly-specified base ref at startup so that typos like
+    // `--base origin/devlop` are reported immediately rather than silently
+    // producing an empty diff. The default (`origin/main`) is NOT validated
+    // here — fresh clones may not have it fetched yet, and graceful degradation
+    // to an empty diff is the correct behaviour for that case.
+    if (serverArgs.baseRefSource != Source.DEFAULT) {
+        val proc = ProcessBuilder(
+            "git", "rev-parse", "--verify", "--end-of-options", "${baseRef}^{commit}"
+        ).directory(workdir.toFile()).redirectErrorStream(true).start()
+        val ok = proc.waitFor() == 0
+        if (!ok) {
+            System.err.println("sitatame: base ref '$baseRef' not found in repo at $workdir")
+            System.exit(1)
+            return
+        }
+    }
     val server = embeddedServer(Netty, port = DEFAULT_PORT, host = "127.0.0.1") {
-        module(workdir, DEFAULT_BASE_REF)
+        module(workdir, baseRef)
     }.start(wait = false)
 
     val resolved = runBlocking { server.engine.resolvedConnectors() }
