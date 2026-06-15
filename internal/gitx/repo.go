@@ -1,7 +1,6 @@
 package gitx
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"os/exec"
@@ -12,17 +11,35 @@ import (
 // Pass an empty Workdir to use the process cwd.
 type Repo struct {
 	Workdir string
+	runner  gitRunner
+}
+
+// newRepo constructs a Repo with the given workdir and the default exec-based runner.
+func newRepo(workdir string) *Repo {
+	return &Repo{Workdir: workdir, runner: &execRunner{}}
+}
+
+// run delegates to the underlying gitRunner, passing r.Workdir so that any
+// mutation of Workdir after construction is reflected in subsequent calls.
+// When runner is nil (e.g. Repo constructed via &Repo{Workdir: dir} in tests
+// or legacy call sites), it falls back to an execRunner.
+func (r *Repo) run(args ...string) (string, error) {
+	runner := r.runner
+	if runner == nil {
+		runner = &execRunner{}
+	}
+	return runner.run(r.Workdir, args...)
 }
 
 // Discover resolves the repo root by running `git rev-parse --show-toplevel`
 // from the given start dir. Returns the repo with Workdir set to the root.
 func Discover(start string) (*Repo, error) {
-	r := &Repo{Workdir: start}
+	r := newRepo(start)
 	root, err := r.run("rev-parse", "--show-toplevel")
 	if err != nil {
 		return nil, fmt.Errorf("not in a git repository: %w", err)
 	}
-	return &Repo{Workdir: strings.TrimSpace(root)}, nil
+	return newRepo(strings.TrimSpace(root)), nil
 }
 
 // HeadSHA returns the commit SHA at HEAD.
@@ -69,22 +86,4 @@ func (r *Repo) RevParse(ref string) (string, error) {
 func (r *Repo) RefExists(ref string) bool {
 	_, err := r.RevParse(ref)
 	return err == nil
-}
-
-func (r *Repo) run(args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
-	if r.Workdir != "" {
-		cmd.Dir = r.Workdir
-	}
-	var stdout, stderr bytes.Buffer
-	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		msg := strings.TrimSpace(stderr.String())
-		if msg == "" {
-			return "", err
-		}
-		return "", fmt.Errorf("%w: %s", err, msg)
-	}
-	return stdout.String(), nil
 }
