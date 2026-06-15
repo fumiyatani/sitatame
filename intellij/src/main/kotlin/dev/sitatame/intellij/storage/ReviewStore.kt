@@ -139,25 +139,26 @@ class ReviewStore {
     }
 
     /**
-     * Remove the comment whose anchor matches the given predicate and persist
-     * atomically. Returns null if no comment matches (no-op), or the
+     * Remove the **first** comment whose anchor matches the given predicate and
+     * persist atomically. Returns null if no comment matches (no-op), or the
      * [SaveResult] of the updated review on success.
      *
-     * Publishes [REVIEW_CHANGED_TOPIC] whenever a comment was actually removed
-     * (even when the resulting review is empty and saveReview is a no-op),
-     * so the tool window refreshes and shows the updated list.
+     * Only the first matching comment is removed to avoid bulk-deleting multiple
+     * comments that share the same path/line when anchorId is absent.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] only when [SaveResult.succeeded] is true,
+     * consistent with [addComment] and [toggleComment].
      */
     fun removeComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
         val result = synchronized(lock) {
             val p = paths(repoRoot, branch)
             val review = loadOrInit(repoRoot, branch)
-            val removed = review.comments.removeIf(predicate)
-            if (!removed) return null
+            val idx = review.comments.indexOfFirst(predicate)
+            if (idx < 0) return null
+            review.comments.removeAt(idx)
             saveReview(p, review)
         }
-        // Publish regardless of succeeded: the comment was removed from the
-        // in-memory cache even when the resulting review is empty (no-op save).
-        publishChanged(repoRoot, branch)
+        if (result.succeeded) publishChanged(repoRoot, branch)
         return result
     }
 
@@ -268,9 +269,15 @@ class ReviewStore {
      * Caller must hold [lock].
      */
     private fun saveReview(p: SitatamePaths, review: Review): SaveResult {
-        // Empty review is a no-op.
+        // Empty review: delete the existing file (if any) so invalidate + reload
+        // does not resurrect stale comments from disk.
         if (review.comments.isEmpty() && review.reviewComment.trim().isEmpty()) {
-            return SaveResult(path = "", id = review.id)
+            val reviewPath = toPath(p.reviewFile())
+            val deleted = Files.deleteIfExists(reviewPath)
+            val bakPath = toPath(p.bakFile())
+            runCatching { Files.deleteIfExists(bakPath) }
+            // Return the path that was deleted (or empty string when no file existed).
+            return SaveResult(path = if (deleted) reviewPath.toString() else "", id = review.id)
         }
 
         if (review.id.isEmpty()) {
