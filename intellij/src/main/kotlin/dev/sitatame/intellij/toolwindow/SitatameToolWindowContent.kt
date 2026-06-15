@@ -20,6 +20,7 @@ import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBRadioButton
 import com.intellij.ui.components.JBScrollPane
 import dev.sitatame.intellij.actions.CopyAIPromptAction
+import dev.sitatame.intellij.actions.ToolWindowToggleResolvedAction
 import dev.sitatame.intellij.git.RepoContext
 import dev.sitatame.intellij.storage.AnchorKind
 import dev.sitatame.intellij.storage.Comment
@@ -126,6 +127,11 @@ class SitatameToolWindowContent(
                 if (CopyAIPromptAction.SELECTED_COMMENTS_KEY.`is`(dataId)) {
                     return list.selectedValuesList.toList()
                 }
+                if (ToolWindowToggleResolvedAction.TOGGLE_SELECTED_KEY.`is`(dataId)) {
+                    // Only expose the runnable when a comment is actually selected so
+                    // ToolWindowToggleResolvedAction.update() can disable itself.
+                    return if (list.selectedValue != null) Runnable { toggleSelected() } else null
+                }
                 return null
             }
         }
@@ -168,9 +174,15 @@ class SitatameToolWindowContent(
         })
         list.addKeyListener(object : KeyAdapter() {
             override fun keyPressed(e: KeyEvent) {
-                if (e.keyCode == KeyEvent.VK_ENTER) {
-                    e.consume()
-                    toggleSelected()
+                when (e.keyCode) {
+                    KeyEvent.VK_ENTER -> {
+                        e.consume()
+                        jumpToSelected()
+                    }
+                    KeyEvent.VK_SPACE -> {
+                        e.consume()
+                        toggleSelected()
+                    }
                 }
             }
         })
