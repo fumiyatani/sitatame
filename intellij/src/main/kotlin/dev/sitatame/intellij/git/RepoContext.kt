@@ -52,7 +52,7 @@ object RepoContext {
      * Callers already guard on a null return via `?: return` / `?: run { … }`,
      * so refusing to produce an Info here is the correct signal. Callers that
      * wish to surface a UX message should check for the transient case by
-     * calling [isTransientState] before [forFile] / [forProject].
+     * calling [hasNoResolvableRef] before [forFile] / [forProject].
      *
      * Branch presence / detached-HEAD with a known SHA are both fine: the SHA
      * is a valid, deterministic slug input and there is no collision risk.
@@ -69,24 +69,33 @@ object RepoContext {
      * without spinning up the IntelliJ test platform or mocking [GitRepository].
      *
      * Decision table:
-     * | branchName | revision | result                       |
-     * |------------|----------|------------------------------|
-     * | non-null   | any      | branchName (normal HEAD)     |
-     * | null       | non-null | revision (detached HEAD)     |
-     * | null       | null     | null (transient — refuse)    |
+     * | branchName | revision | result                              |
+     * |------------|----------|-------------------------------------|
+     * | non-null   | any      | branchName (normal HEAD)            |
+     * | null       | non-null | "detached/<revision[:12]>"          |
+     * | null       | null     | null (transient — refuse)           |
+     *
+     * The "detached/<sha12>" form matches the TUI's normalisation in
+     * `cmd/root.go` (`branch = "detached/" + headSHA[:12]`), ensuring
+     * IntelliJ and TUI write to the same `~/.sitatame/<project>/<branch>/`
+     * directory for the same detached HEAD commit.
      */
     internal fun resolveBranch(branchName: String?, revision: String?): String? {
         if (branchName == null && revision == null) return null
-        return branchName ?: revision
+        return branchName ?: "detached/${revision!!.take(12)}"
     }
 
     /**
-     * Returns true when the repository is in a transient Git state (mid-rebase,
-     * mid-reset, etc.) where no branch name or SHA is available.
+     * Returns true when both [GitRepository.currentBranchName] and
+     * [GitRepository.currentRevision] are null — i.e. the repository has no
+     * resolvable ref at all.
+     *
+     * Note: this does **not** detect merge / cherry-pick / rebase / bisect
+     * in-progress states; those operations still have a valid revision.
      * Use this to show a user-facing notification rather than silently doing
      * nothing.
      */
-    fun isTransientState(project: Project): Boolean {
+    fun hasNoResolvableRef(project: Project): Boolean {
         val manager = GitRepositoryManager.getInstance(project)
         val repo = manager.repositories.firstOrNull() ?: return false
         return repo.currentBranchName == null && repo.currentRevision == null
