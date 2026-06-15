@@ -6,8 +6,10 @@ import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.application.ApplicationManager
+import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.progress.ProcessCanceledException
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.progress.ProgressManager
 import com.intellij.openapi.progress.Task
@@ -33,11 +35,13 @@ import javax.swing.JTextArea
  * instructions.
  *
  * Threading: [actionPerformed] runs on the EDT (Action framework contract).
- * The file I/O ([ReviewStore.snapshotComments]) and prompt building happen on
- * a background thread via [Task.Backgroundable], mirroring [AddCommentAction].
- * Results are handed back to the EDT via [ApplicationManager.invokeLater] for
- * clipboard write and the preview dialog. This avoids Slow Operations
- * Assertion violations (IntelliJ 2024.2+) on cold-cache / large review.md.
+ * File I/O ([ReviewStore.snapshotComments]) and prompt building both happen on
+ * a background thread via [Task.Backgroundable]; only the clipboard write and
+ * the preview dialog are handed back to the EDT via [ApplicationManager.invokeLater].
+ * The invokeLater calls carry [ModalityState.NON_MODAL] and [Project.disposed]
+ * as an expiration condition so no UI runs after the project is closed.
+ * [ProcessCanceledException] is always rethrown so the platform can honour
+ * task cancellation without it being swallowed by the catch-all handler.
  */
 class CopyAIPromptAction : AnAction() {
 
@@ -69,31 +73,51 @@ class CopyAIPromptAction : AnAction() {
             object : Task.Backgroundable(project, "Building AI prompt…", false) {
                 override fun run(indicator: ProgressIndicator) {
                     try {
-                        // Background: file I/O + prompt construction.
+                        // Background: file I/O + prompt construction (keep off the EDT).
                         val all = store.snapshotComments(repo.repoRoot, repo.branch)
                         val targets = when {
                             selected.isNotEmpty() -> selected
                             else -> all.filter { it.state == ReviewState.OPEN }
                         }
 
-                        ApplicationManager.getApplication().invokeLater {
-                            if (targets.isEmpty()) {
-                                notify(project, "sitatame: no open comments to copy", NotificationType.INFORMATION)
-                                return@invokeLater
-                            }
-                            val prompt = buildPrompt(targets)
-                            CopyPasteManager.getInstance().setContents(StringSelection(prompt))
-                            showPreview(project, prompt)
+                        if (targets.isEmpty()) {
+                            ApplicationManager.getApplication().invokeLater(
+                                {
+                                    notify(project, "sitatame: no open comments to copy", NotificationType.INFORMATION)
+                                },
+                                ModalityState.NON_MODAL,
+                                project.disposed,
+                            )
+                            return
                         }
+
+                        // Build the prompt string here on the background thread so the
+                        // EDT only handles clipboard write and dialog display.
+                        val prompt = buildPrompt(targets)
+
+                        ApplicationManager.getApplication().invokeLater(
+                            {
+                                CopyPasteManager.getInstance().setContents(StringSelection(prompt))
+                                showPreview(project, prompt)
+                            },
+                            ModalityState.NON_MODAL,
+                            project.disposed,
+                        )
+                    } catch (ex: ProcessCanceledException) {
+                        throw ex
                     } catch (ex: Exception) {
                         log.warn("CopyAIPromptAction: failed to load comments", ex)
-                        ApplicationManager.getApplication().invokeLater {
-                            notify(
-                                project,
-                                "sitatame: failed to build AI prompt — ${ex.message}",
-                                NotificationType.ERROR,
-                            )
-                        }
+                        ApplicationManager.getApplication().invokeLater(
+                            {
+                                notify(
+                                    project,
+                                    "sitatame: failed to build AI prompt — ${ex.message}",
+                                    NotificationType.ERROR,
+                                )
+                            },
+                            ModalityState.NON_MODAL,
+                            project.disposed,
+                        )
                     }
                 }
             }
