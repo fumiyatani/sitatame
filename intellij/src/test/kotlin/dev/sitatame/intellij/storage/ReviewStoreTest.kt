@@ -382,17 +382,25 @@ class ReviewStoreTest {
     }
 
     @Test
-    fun removeComment_multipleMatch_removesAllMatching() {
+    fun removeComment_multipleMatch_removesOnlyFirstMatching() {
         store.addComment("", "") { _ -> sampleComment("src/dup.kt", 1, "dup 1") }
         store.addComment("", "") { _ -> sampleComment("src/dup.kt", 2, "dup 2") }
         store.addComment("", "") { _ -> sampleComment("src/other.kt", 3, "keep") }
 
-        // Remove all comments on dup.kt
+        // Remove only the first comment matching the predicate (dup.kt line 1).
         store.removeComment("", "") { c -> c.anchor.path == "src/dup.kt" }
 
         val comments = store.snapshotComments("", "")
-        assertEquals("only the 'other' comment should remain", 1, comments.size)
-        assertEquals("src/other.kt", comments[0].anchor.path)
+        assertEquals("two comments should remain (second dup.kt + other.kt)", 2, comments.size)
+        // The first matching comment (line 1) is gone; line 2 and other.kt remain.
+        assertTrue(
+            "dup.kt line 2 should still be present",
+            comments.any { it.anchor.path == "src/dup.kt" && it.anchor.line == 2 },
+        )
+        assertTrue(
+            "other.kt should still be present",
+            comments.any { it.anchor.path == "src/other.kt" },
+        )
     }
 
     @Test
@@ -407,17 +415,43 @@ class ReviewStoreTest {
     }
 
     @Test
-    fun removeComment_lastComment_returnsResultAndCacheIsEmpty() {
+    fun removeComment_lastComment_deletesReviewMdAndDoesNotReviveOnReload() {
         store.addComment("", "") { _ -> sampleComment("src/last.kt", 5, "last one") }
+
+        val reviewFile = java.nio.file.Paths.get(paths.reviewFile())
+        assertTrue("review.md should exist after addComment", Files.isRegularFile(reviewFile))
 
         val result = store.removeComment("", "") { c -> c.anchor.path == "src/last.kt" }
 
-        // result may be null or have succeeded=false (empty review is a no-op save)
-        // but the in-memory snapshot must be empty.
-        val comments = store.snapshotComments("", "")
-        assertEquals("no comments should remain", 0, comments.size)
-        // result is not null because removeIf returned true
+        // The save must succeed (file was deleted) and review.md must be gone.
         assertNotNull("result must not be null when a comment was removed", result)
+        assertTrue("SaveResult.succeeded must be true when review.md was deleted", result!!.succeeded)
+        assertFalse("review.md must be deleted after removing last comment", Files.exists(reviewFile))
+
+        // Invalidate cache and reload to verify comments do not resurrect from disk.
+        store.invalidate()
+        val comments = store.snapshotComments("", "")
+        assertEquals("no comments should remain after reload", 0, comments.size)
+    }
+
+    @Test
+    fun removeComment_encodeFails_doesNotPublish() {
+        // Add two comments so that after removing one the review is non-empty,
+        // which forces saveReview to attempt encoding (and fail).
+        store.addComment("", "") { _ -> sampleComment("src/enc.kt", 1, "enc test") }
+        store.addComment("", "") { _ -> sampleComment("src/keep.kt", 2, "keep me") }
+
+        // Inject a failing encoder for the next save.
+        store.encodeFunc = { _ -> throw RuntimeException("injected encode failure") }
+
+        // removeComment will call saveReview, which attempts encode and fails.
+        val result = store.removeComment("", "") { c -> c.anchor.path == "src/enc.kt" }
+
+        // SaveResult must not be null (comment was found and removed from memory).
+        assertNotNull("result must not be null when a matching comment was removed", result)
+        // succeeded must be false: encode failed, path is empty.
+        assertFalse("SaveResult.succeeded must be false on encode failure", result!!.succeeded)
+        assertNotNull("RescueError must be set on encode failure", result.error)
     }
 
     // -----------------------------------------------------------------------
