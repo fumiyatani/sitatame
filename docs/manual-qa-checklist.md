@@ -188,13 +188,15 @@ a sitatame `review.md` in `~/.sitatame/<project>/<branch>/`.
 - [ ] Press **Space** → the resolved/open state of the selected comment toggles
   (open → resolved or resolved → open) and the list refreshes. The editor does
   **not** navigate.
-- [ ] In **Settings → Keymap** search for "Sitatame: Toggle Resolved (Tool
+- [ ] In **Settings → Keymap** search for "sitatame: Toggle Resolved (Tool
   Window)" — the action appears with no default shortcut.
 - [ ] Assign a custom shortcut (e.g. **Space**) via Keymap settings → confirm
   that the action fires when the tool window list is focused and a comment is
   selected.
 - [ ] With **no** comment selected, verify the Keymap action is disabled
   (greyed out in the menu).
+- [ ] Note: the list uses SINGLE_SELECTION mode; multi-select is not supported.
+  When a Keymap action fires, only the single selected comment is affected.
 
 ## J. Regression — Read-Only View Still Works
 

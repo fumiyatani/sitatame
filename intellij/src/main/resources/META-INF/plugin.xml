@@ -79,14 +79,21 @@
                 description="Copy an AI-ready prompt for the selected or all open comments"/>
 
         <!--
-            Tool-window resolve toggle — no default shortcut to avoid conflicts.
-            Bind via Settings → Keymap → "Sitatame: Toggle Resolved (Tool Window)".
-            Suggested binding: Space (matches the Space key handler wired in
-            SitatameToolWindowContent, which also calls toggleSelected directly).
+            Tool-window resolve toggle.
+
+            No default shortcut: Space is hard-wired in SitatameToolWindowContent's
+            KeyListener so it works out of the box without any Keymap entry.
+
+            This Action exists so users can bind an additional shortcut
+            (e.g. Ctrl+Shift+R) without losing the Space behaviour. Bound shortcuts
+            are consumed by IdeKeyEventDispatcher before reaching the Swing
+            KeyListener, so there is no double-fire.
+
+            Bind via Settings → Keymap → "sitatame: Toggle Resolved (Tool Window)".
         -->
         <action id="sitatame.ToolWindowToggleResolved"
                 class="dev.sitatame.intellij.actions.ToolWindowToggleResolvedAction"
-                text="Sitatame: Toggle Resolved (Tool Window)"
+                text="sitatame: Toggle Resolved (Tool Window)"
                 description="Toggle the resolved/open state of the comment selected in the Sitatame tool window"/>
     </actions>
 </idea-plugin>
