@@ -119,6 +119,41 @@ tasks.named<Test>("jvmTest") {
     }
 }
 
+// `./gradlew :web:jvmFatJar` builds a self-contained single JAR (all JVM
+// runtime dependencies bundled) that can be launched without Gradle:
+//   java -jar web/build/libs/sitatame-web-<version>-fat.jar [--repo /path] [--base ref]
+//
+// Duplicate entries in META-INF are handled as follows:
+//   - EXCLUDE strategy is used as the default (first-in wins).
+//   - services/* are excluded last so the SLF4J / Ktor service descriptors from
+//     the first jar on the classpath are retained (slf4j-simple is the only
+//     SLF4J binding, so there is no binding conflict).
+//   - Signature files (*.SF, *.DSA, *.RSA, INDEX.LIST) are stripped so the JVM
+//     does not reject the jar for having a broken signature.
+tasks.register<Jar>("jvmFatJar") {
+    group = "build"
+    description = "Assembles a self-contained fat JAR with all JVM runtime dependencies bundled."
+    archiveClassifier.set("fat")
+
+    manifest {
+        attributes("Main-Class" to "dev.sitatame.web.server.ServerKt")
+    }
+
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
+    from(jvmMainCompilation.output.allOutputs)
+    dependsOn(configurations.named("jvmRuntimeClasspath"))
+    from({
+        configurations.named("jvmRuntimeClasspath").get()
+            .filter { it.name.endsWith(".jar") }
+            .map { zipTree(it) }
+    })
+
+    // Strip module signature files to prevent SecurityException at runtime.
+    exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "META-INF/INDEX.LIST")
+}
+
 // `./gradlew :web:run` runs the Ktor backend. The Kotlin Multiplatform plugin
 // does not register the `application` plugin automatically; we wire a JavaExec
 // task directly against the JVM compilation outputs to avoid the friction.
