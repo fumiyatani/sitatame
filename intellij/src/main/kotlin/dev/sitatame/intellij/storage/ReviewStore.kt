@@ -273,9 +273,18 @@ class ReviewStore {
         // does not resurrect stale comments from disk.
         if (review.comments.isEmpty() && review.reviewComment.trim().isEmpty()) {
             val reviewPath = toPath(p.reviewFile())
-            val deleted = Files.deleteIfExists(reviewPath)
             val bakPath = toPath(p.bakFile())
-            runCatching { Files.deleteIfExists(bakPath) }
+            // Delete .bak first so that if we crash after this point there is
+            // nothing for recoverFromCrash to resurrect from. If .bak deletion
+            // fails, abort and return succeeded=false so the caller does not
+            // publish REVIEW_CHANGED_TOPIC on an inconsistent state.
+            try {
+                Files.deleteIfExists(bakPath)
+            } catch (e: Exception) {
+                log.warn("failed to delete .bak file during empty-review cleanup: $bakPath", e)
+                return SaveResult(path = "", id = review.id)
+            }
+            val deleted = Files.deleteIfExists(reviewPath)
             // Return the path that was deleted (or empty string when no file existed).
             return SaveResult(path = if (deleted) reviewPath.toString() else "", id = review.id)
         }
