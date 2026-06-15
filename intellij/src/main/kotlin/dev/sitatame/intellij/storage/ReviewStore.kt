@@ -101,9 +101,12 @@ class ReviewStore {
      * Append a new comment to the current review and persist atomically. Runs
      * on a background thread; caller MUST switch back to EDT before touching
      * UI. Returns the saved file path.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] on success so subscribers (tool windows)
+     * can auto-refresh without polling.
      */
-    fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult =
-        synchronized(lock) {
+    fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult {
+        val result = synchronized(lock) {
             val p = paths(repoRoot, branch)
             val review = loadOrInit(repoRoot, branch)
             val added = mutate(review)
@@ -113,19 +116,50 @@ class ReviewStore {
             review.comments.add(added)
             saveReview(p, review)
         }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
 
     /**
      * Toggle the state of the comment whose anchor matches the given
      * predicate, or returns null if no such comment exists.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] on success.
      */
-    fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? =
-        synchronized(lock) {
+    fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
+        val result = synchronized(lock) {
             val p = paths(repoRoot, branch)
             val review = loadOrInit(repoRoot, branch)
             val target = review.comments.firstOrNull(predicate) ?: return null
             target.state = if (target.state == ReviewState.RESOLVED) ReviewState.OPEN else ReviewState.RESOLVED
             saveReview(p, review)
         }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
+
+    /**
+     * Remove the comment whose anchor matches the given predicate and persist
+     * atomically. Returns null if no comment matches (no-op), or the
+     * [SaveResult] of the updated review on success.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] whenever a comment was actually removed
+     * (even when the resulting review is empty and saveReview is a no-op),
+     * so the tool window refreshes and shows the updated list.
+     */
+    fun removeComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
+        val result = synchronized(lock) {
+            val p = paths(repoRoot, branch)
+            val review = loadOrInit(repoRoot, branch)
+            val removed = review.comments.removeIf(predicate)
+            if (!removed) return null
+            saveReview(p, review)
+        }
+        // Publish regardless of succeeded: the comment was removed from the
+        // in-memory cache even when the resulting review is empty (no-op save).
+        publishChanged(repoRoot, branch)
+        return result
+    }
 
     /**
      * Atomically persist [review] to `<branchDir>/review.md`.
@@ -205,6 +239,19 @@ class ReviewStore {
     }
 
     // -- Internals -----------------------------------------------------------
+
+    /**
+     * Publish a [REVIEW_CHANGED_TOPIC] message on the application message bus.
+     * Guarded by a runCatching so a missing ApplicationManager in tests does
+     * not surface as an uncaught exception.
+     */
+    private fun publishChanged(repoRoot: String, branch: String) {
+        runCatching {
+            ApplicationManager.getApplication().messageBus
+                .syncPublisher(REVIEW_CHANGED_TOPIC)
+                .onChanged(repoRoot, branch)
+        }
+    }
 
     private fun freshReview(branch: String): Review {
         val now = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)

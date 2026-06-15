@@ -365,6 +365,62 @@ class ReviewStoreTest {
     }
 
     // -----------------------------------------------------------------------
+    // removeComment
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun removeComment_singleMatch_removesAndPersists() {
+        store.addComment("", "") { _ -> sampleComment("src/a.kt", 1, "to remove") }
+        store.addComment("", "") { _ -> sampleComment("src/b.kt", 2, "to keep") }
+
+        val result = store.removeComment("", "") { c -> c.anchor.path == "src/a.kt" }
+
+        assertNotNull("removeComment should return a SaveResult", result)
+        val comments = store.snapshotComments("", "")
+        assertEquals("one comment should remain", 1, comments.size)
+        assertEquals("remaining comment should be b.kt", "src/b.kt", comments[0].anchor.path)
+    }
+
+    @Test
+    fun removeComment_multipleMatch_removesAllMatching() {
+        store.addComment("", "") { _ -> sampleComment("src/dup.kt", 1, "dup 1") }
+        store.addComment("", "") { _ -> sampleComment("src/dup.kt", 2, "dup 2") }
+        store.addComment("", "") { _ -> sampleComment("src/other.kt", 3, "keep") }
+
+        // Remove all comments on dup.kt
+        store.removeComment("", "") { c -> c.anchor.path == "src/dup.kt" }
+
+        val comments = store.snapshotComments("", "")
+        assertEquals("only the 'other' comment should remain", 1, comments.size)
+        assertEquals("src/other.kt", comments[0].anchor.path)
+    }
+
+    @Test
+    fun removeComment_noMatch_returnsNull() {
+        store.addComment("", "") { _ -> sampleComment("src/x.kt", 10, "existing") }
+
+        val result = store.removeComment("", "") { c -> c.anchor.path == "src/nonexistent.kt" }
+
+        assertNull("no match should return null", result)
+        val comments = store.snapshotComments("", "")
+        assertEquals("comment should be unchanged", 1, comments.size)
+    }
+
+    @Test
+    fun removeComment_lastComment_returnsResultAndCacheIsEmpty() {
+        store.addComment("", "") { _ -> sampleComment("src/last.kt", 5, "last one") }
+
+        val result = store.removeComment("", "") { c -> c.anchor.path == "src/last.kt" }
+
+        // result may be null or have succeeded=false (empty review is a no-op save)
+        // but the in-memory snapshot must be empty.
+        val comments = store.snapshotComments("", "")
+        assertEquals("no comments should remain", 0, comments.size)
+        // result is not null because removeIf returned true
+        assertNotNull("result must not be null when a comment was removed", result)
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 
