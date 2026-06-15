@@ -165,7 +165,7 @@ cd web && ./gradlew :run --args="--repo /path/to/other-project"
 cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
 
 # Or via environment variables
-SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop ./gradlew :web:run
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
 ```
 
 The `--repo` path must point to the root of a git repository (containing `.git`).

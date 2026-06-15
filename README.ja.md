@@ -159,7 +159,7 @@ cd web && ./gradlew :run --args="--repo /path/to/other-project"
 cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
 
 # 環境変数を使う場合
-SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop ./gradlew :web:run
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
 ```
 
 `--repo` に指定するパスは git リポジトリのルート（`.git` を含むディレクトリ）である
