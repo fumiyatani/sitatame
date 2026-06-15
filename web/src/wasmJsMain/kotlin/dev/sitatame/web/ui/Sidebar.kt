@@ -48,7 +48,7 @@ fun Sidebar(
     onSelect: (String) -> Unit,
     onFilterSelect: (StateFilter) -> Unit,
     onToggleState: (CommentDto) -> Unit = {},
-    onReply: (CommentDto, String) -> Unit = { _, _ -> },
+    onReply: (CommentDto) -> Unit = {},
     pendingToggleIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
 ) {
