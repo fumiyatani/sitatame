@@ -8,6 +8,9 @@ import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBScrollPane
@@ -28,6 +31,13 @@ import javax.swing.JTextArea
  * it to the clipboard. The format mirrors what the CLI's `sitatame ai-prompt`
  * subcommand emits so an LLM hooked up to either workflow sees the same
  * instructions.
+ *
+ * Threading: [actionPerformed] runs on the EDT (Action framework contract).
+ * The file I/O ([ReviewStore.snapshotComments]) and prompt building happen on
+ * a background thread via [Task.Backgroundable], mirroring [AddCommentAction].
+ * Results are handed back to the EDT via [ApplicationManager.invokeLater] for
+ * clipboard write and the preview dialog. This avoids Slow Operations
+ * Assertion violations (IntelliJ 2024.2+) on cold-cache / large review.md.
  */
 class CopyAIPromptAction : AnAction() {
 
@@ -50,23 +60,44 @@ class CopyAIPromptAction : AnAction() {
                 return
             }
 
-        val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
-        val all = store.snapshotComments(repo.repoRoot, repo.branch)
+        // Snapshot selected comments early on EDT (DataContext is only valid here).
         val selected = e.getData(SELECTED_COMMENTS_KEY).orEmpty()
 
-        val targets = when {
-            selected.isNotEmpty() -> selected
-            else -> all.filter { it.state == ReviewState.OPEN }
-        }
+        val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
 
-        if (targets.isEmpty()) {
-            notify(project, "sitatame: no open comments to copy", NotificationType.INFORMATION)
-            return
-        }
+        ProgressManager.getInstance().run(
+            object : Task.Backgroundable(project, "Building AI prompt…", false) {
+                override fun run(indicator: ProgressIndicator) {
+                    try {
+                        // Background: file I/O + prompt construction.
+                        val all = store.snapshotComments(repo.repoRoot, repo.branch)
+                        val targets = when {
+                            selected.isNotEmpty() -> selected
+                            else -> all.filter { it.state == ReviewState.OPEN }
+                        }
 
-        val prompt = buildPrompt(targets)
-        CopyPasteManager.getInstance().setContents(StringSelection(prompt))
-        showPreview(project, prompt)
+                        ApplicationManager.getApplication().invokeLater {
+                            if (targets.isEmpty()) {
+                                notify(project, "sitatame: no open comments to copy", NotificationType.INFORMATION)
+                                return@invokeLater
+                            }
+                            val prompt = buildPrompt(targets)
+                            CopyPasteManager.getInstance().setContents(StringSelection(prompt))
+                            showPreview(project, prompt)
+                        }
+                    } catch (ex: Exception) {
+                        log.warn("CopyAIPromptAction: failed to load comments", ex)
+                        ApplicationManager.getApplication().invokeLater {
+                            notify(
+                                project,
+                                "sitatame: failed to build AI prompt — ${ex.message}",
+                                NotificationType.ERROR,
+                            )
+                        }
+                    }
+                }
+            }
+        )
     }
 
     /**
