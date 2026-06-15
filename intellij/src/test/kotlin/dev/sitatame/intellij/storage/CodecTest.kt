@@ -2,6 +2,7 @@ package dev.sitatame.intellij.storage
 
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
 import org.junit.Test
 import java.nio.file.Files
@@ -132,6 +133,43 @@ class CodecTest {
         assertEquals(AnchorSide.HEAD, c.anchor.side)
         assertEquals("9c8d7e6", c.anchor.blob)
         assertEquals(22, c.anchor.line)
+    }
+
+    /**
+     * Verify that [Codec.encode] emits `side` and `blob` in lowercase.
+     * The schema contract requires lowercase enum values (`head`/`base`) so
+     * that the Go CLI and the Web UI can compare them with simple string
+     * equality. An uppercase leak (e.g. `HEAD`) would break cross-surface
+     * stale detection.
+     */
+    @Test
+    fun encodeProducesLowercaseSideAndBlobKeys() {
+        val review = dev.sitatame.intellij.storage.Review(
+            schema = 1,
+            id = "test-lowercase",
+            createdAt = "2026-06-01T00:00:00Z",
+            branch = "feature/y",
+            base = dev.sitatame.intellij.storage.Ref("origin/main", "aaa"),
+            head = dev.sitatame.intellij.storage.Ref("HEAD", "bbb"),
+        ).apply {
+            comments.add(
+                dev.sitatame.intellij.storage.Comment(
+                    anchor = Anchor(
+                        anchorId = "ccccdddd-0000-0000-0000-000000000001",
+                        kind = AnchorKind.LINE,
+                        path = "src/auth.go",
+                        side = AnchorSide.HEAD,
+                        blob = "9c8d7e6",
+                        line = 5,
+                    ),
+                    state = ReviewState.OPEN,
+                    body = "lowercase check",
+                ),
+            )
+        }
+        val yaml = Codec.encode(review).toString(Charsets.UTF_8)
+        assertTrue("side value must be 'head' (lowercase) in YAML output", yaml.contains("side: head"))
+        assertTrue("blob key must appear in YAML output", yaml.contains("blob: 9c8d7e6"))
     }
 
     private fun assertRoundtrip(fixtureName: String) {
