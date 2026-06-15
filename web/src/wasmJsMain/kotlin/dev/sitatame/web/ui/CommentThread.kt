@@ -2,7 +2,6 @@ package dev.sitatame.web.ui
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -52,7 +51,7 @@ import dev.sitatame.web.api.CommentDto
 @Composable
 fun CommentThread(
     thread: Thread,
-    onReply: (CommentDto, String) -> Unit,
+    onReply: (CommentDto) -> Unit,
     onToggleState: (CommentDto) -> Unit,
     pendingToggleIds: Set<String> = emptySet(),
     modifier: Modifier = Modifier,
@@ -89,10 +88,18 @@ fun CommentThread(
                     onToggle = { onToggleState(comment) },
                 )
             }
-            // Reply button
-            ReplyButton(
-                onReply = { body -> onReply(thread.comments.first(), body) },
-            )
+            // Reply button — opens CommentModal in reply mode via parent callback.
+            TextButton(
+                onClick = { onReply(thread.comments.first()) },
+                modifier = Modifier
+                    .padding(start = 36.dp, top = 2.dp, bottom = 2.dp),
+            ) {
+                Text(
+                    text = "Reply to this thread",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
             Spacer(Modifier.height(4.dp))
         }
     }
@@ -216,114 +223,6 @@ fun CommentRow(
                     text = if (comment.state == "open") "Resolve" else "Reopen",
                     fontSize = 10.sp,
                     color = MaterialTheme.colorScheme.primary,
-                )
-            }
-        }
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ReplyButton
-// ---------------------------------------------------------------------------
-
-/**
- * "Reply to this thread" button.  Opens a tiny inline text field and submits
- * through [onReply].
- */
-@Composable
-private fun ReplyButton(onReply: (body: String) -> Unit) {
-    var replyOpen by remember { mutableStateOf(false) }
-
-    if (!replyOpen) {
-        TextButton(
-            onClick = { replyOpen = true },
-            modifier = Modifier
-                .padding(start = 36.dp, top = 2.dp, bottom = 2.dp),
-        ) {
-            Text(
-                text = "Reply to this thread",
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.primary,
-            )
-        }
-    } else {
-        ReplyForm(
-            onSubmit = { body ->
-                onReply(body)
-                replyOpen = false
-            },
-            onCancel = { replyOpen = false },
-        )
-    }
-}
-
-// ---------------------------------------------------------------------------
-// ReplyForm — inline text field (minimal; full modal is available via
-// SitatameApp when the thread is accessed from the main pane).
-// ---------------------------------------------------------------------------
-
-@Composable
-private fun ReplyForm(
-    onSubmit: (String) -> Unit,
-    onCancel: () -> Unit,
-) {
-    val colors = LocalSitatameColors.current
-    var text by remember { mutableStateOf("") }
-
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .padding(start = 36.dp, end = 8.dp, top = 4.dp, bottom = 4.dp),
-    ) {
-        androidx.compose.foundation.text.BasicTextField(
-            value = text,
-            onValueChange = { text = it },
-            modifier = Modifier
-                .fillMaxWidth()
-                .background(
-                    color = MaterialTheme.colorScheme.surface,
-                    shape = RoundedCornerShape(4.dp),
-                )
-                .padding(8.dp),
-            textStyle = androidx.compose.ui.text.TextStyle(
-                color = MaterialTheme.colorScheme.onSurface,
-                fontFamily = FontFamily.Monospace,
-                fontSize = 12.sp,
-            ),
-            cursorBrush = androidx.compose.ui.graphics.SolidColor(MaterialTheme.colorScheme.primary),
-            decorationBox = { inner ->
-                androidx.compose.foundation.layout.Box {
-                    if (text.isEmpty()) {
-                        Text(
-                            text = "Reply…",
-                            color = colors.mutedText,
-                            fontFamily = FontFamily.Monospace,
-                            fontSize = 12.sp,
-                        )
-                    }
-                    inner()
-                }
-            },
-        )
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(top = 4.dp),
-            horizontalArrangement = Arrangement.End,
-        ) {
-            TextButton(onClick = onCancel) {
-                Text("Cancel", fontSize = 11.sp, color = colors.mutedText)
-            }
-            Spacer(Modifier.width(4.dp))
-            TextButton(
-                onClick = { if (text.isNotBlank()) onSubmit(text.trim()) },
-                enabled = text.isNotBlank(),
-            ) {
-                Text(
-                    "Reply",
-                    fontSize = 11.sp,
-                    color = if (text.isNotBlank()) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.primary.copy(alpha = 0.38f),
                 )
             }
         }
