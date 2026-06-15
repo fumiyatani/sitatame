@@ -434,8 +434,61 @@ class ReviewStoreTest {
         assertEquals("no comments should remain after reload", 0, comments.size)
     }
 
+    /**
+     * When the last comment is removed and .bak deletion fails (POSIX only),
+     * saveReview must return succeeded=false so the caller does not publish
+     * REVIEW_CHANGED_TOPIC on an inconsistent state.
+     *
+     * The test seeds review.md and a .bak file directly on disk, then removes
+     * write permission from the branch directory so Files.deleteIfExists on
+     * .bak throws AccessDeniedException.
+     */
     @Test
-    fun removeComment_encodeFails_doesNotPublish() {
+    fun removeComment_lastComment_bakDeleteFails_returnsFailedResult() {
+        // This test manipulates POSIX file permissions to induce a deletion
+        // failure; skip on non-POSIX filesystems.
+        val branchDir = java.nio.file.Paths.get(paths.branchDir())
+        val isPosix = try {
+            Files.createDirectories(branchDir)
+            Files.getPosixFilePermissions(branchDir)
+            true
+        } catch (_: UnsupportedOperationException) {
+            false
+        }
+        Assume.assumeTrue("Skipping .bak deletion failure test on non-POSIX filesystem", isPosix)
+
+        // Add a comment to create review.md.
+        store.addComment("", "") { _ -> sampleComment("src/only.kt", 1, "only comment") }
+
+        val reviewFile = java.nio.file.Paths.get(paths.reviewFile())
+        assertTrue("review.md should exist after addComment", Files.isRegularFile(reviewFile))
+
+        // Seed a stale .bak directly on disk to simulate a previous write cycle.
+        val bakFile = java.nio.file.Paths.get(paths.bakFile())
+        Files.copy(reviewFile, bakFile)
+        assertTrue(".bak must exist before the test", Files.isRegularFile(bakFile))
+
+        // Remove write permission from the branch directory so Files.deleteIfExists on
+        // .bak throws AccessDeniedException.
+        val originalPerms = Files.getPosixFilePermissions(branchDir)
+        Files.setPosixFilePermissions(branchDir, PosixFilePermissions.fromString("r-x------"))
+        try {
+            // Remove the last remaining comment so saveReview enters the empty-review path.
+            val result = store.removeComment("", "") { c -> c.anchor.path == "src/only.kt" }
+
+            assertNotNull("result must not be null when a comment was removed", result)
+            assertFalse(
+                "SaveResult.succeeded must be false when .bak deletion fails",
+                result!!.succeeded,
+            )
+        } finally {
+            // Restore permissions so tearDown can clean up temp dirs.
+            Files.setPosixFilePermissions(branchDir, originalPerms)
+        }
+    }
+
+    @Test
+    fun removeComment_encodeFails_returnsFailedResult() {
         // Add two comments so that after removing one the review is non-empty,
         // which forces saveReview to attempt encoding (and fail).
         store.addComment("", "") { _ -> sampleComment("src/enc.kt", 1, "enc test") }
