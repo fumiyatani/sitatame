@@ -16,19 +16,19 @@ type Repo struct {
 
 // newRepo constructs a Repo with the given workdir and the default exec-based runner.
 func newRepo(workdir string) *Repo {
-	return &Repo{Workdir: workdir, runner: &execRunner{workdir: workdir}}
+	return &Repo{Workdir: workdir, runner: &execRunner{}}
 }
 
-// run delegates to the underlying gitRunner. This method exists so that
-// callers inside the package can use r.run without knowing the runner type.
+// run delegates to the underlying gitRunner, passing r.Workdir so that any
+// mutation of Workdir after construction is reflected in subsequent calls.
 // When runner is nil (e.g. Repo constructed via &Repo{Workdir: dir} in tests
 // or legacy call sites), it falls back to an execRunner.
 func (r *Repo) run(args ...string) (string, error) {
 	runner := r.runner
 	if runner == nil {
-		runner = &execRunner{workdir: r.Workdir}
+		runner = &execRunner{}
 	}
-	return runner.run(args...)
+	return runner.run(r.Workdir, args...)
 }
 
 // Discover resolves the repo root by running `git rev-parse --show-toplevel`
