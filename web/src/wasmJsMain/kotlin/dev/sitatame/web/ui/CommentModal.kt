@@ -45,14 +45,17 @@ import androidx.compose.ui.unit.sp
  * pane is visible underneath.  A centred [Surface] holds the form.
  *
  * [target] describes what the comment will be anchored to and drives the
- * header text.  [onSubmit] receives the non-blank body when the user clicks
- * "Submit"; [onCancel] closes the modal without posting.
+ * header text.  [title] overrides the default header derived from [target.label()];
+ * pass a custom string (e.g. "Reply to: Line 42 · foo.kt") for reply mode.
+ * [onSubmit] receives the non-blank body when the user clicks "Submit";
+ * [onCancel] closes the modal without posting.
  */
 @Composable
 fun CommentModal(
     target: CommentTarget,
     onSubmit: (body: String) -> Unit,
     onCancel: () -> Unit,
+    title: String = target.label(),
 ) {
     var body by remember { mutableStateOf("") }
     val focusRequester = remember { FocusRequester() }
@@ -74,7 +77,7 @@ fun CommentModal(
             Column(modifier = Modifier.padding(20.dp)) {
                 // Header
                 Text(
-                    text = target.label(),
+                    text = title,
                     color = MaterialTheme.colorScheme.onSurface,
                     fontWeight = FontWeight.SemiBold,
                     fontSize = 14.sp,
