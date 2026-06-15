@@ -148,4 +148,23 @@ tasks.register<JavaExec>("run") {
         jvmMainCompilation.output.allOutputs,
         jvmMainCompilation.runtimeDependencyFiles,
     )
+    // Forward --args="..." from `./gradlew :web:run --args="--repo /path --base ref"`.
+    // The `args` property on JavaExec accepts a vararg/list; the Gradle `--args`
+    // flag is a single string that we split on whitespace here.  Quoting and
+    // shell escaping inside --args are therefore not supported (single tokens only).
+    // For paths with spaces use the env-var path instead: SITATAME_REPO / SITATAME_BASE.
+    val runArgs = findProperty("args")?.toString()
+    if (!runArgs.isNullOrBlank()) {
+        args(runArgs.trim().split(Regex("\\s+")))
+    }
+    // Also support per-property shorthands for convenience:
+    //   ./gradlew :web:run -PrepoPath=/path/to/repo -PbaseRef=origin/develop
+    val repoProp = findProperty("repoPath")?.toString()
+    val baseProp = findProperty("baseRef")?.toString()
+    if (!repoProp.isNullOrBlank()) {
+        args("--repo", repoProp.trim())
+    }
+    if (!baseProp.isNullOrBlank()) {
+        args("--base", baseProp.trim())
+    }
 }

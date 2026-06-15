@@ -50,10 +50,21 @@ const val DEFAULT_PORT: Int = 0
 /** Hard-coded base ref for Phase 1 step 1. */
 const val DEFAULT_BASE_REF: String = "origin/main"
 
-fun main() {
-    val workdir = Path.of(System.getProperty("user.dir"))
+fun main(args: Array<String>) {
+    val serverArgs = try {
+        parseArgs(args)
+    } catch (e: HelpRequestedException) {
+        return // help was already printed; exit cleanly
+    } catch (e: ArgParseException) {
+        System.err.println("sitatame-web: ${e.message}")
+        System.exit(1)
+        return // unreachable; satisfies the compiler
+    }
+
+    val workdir = serverArgs.repoPath
+    val baseRef = serverArgs.baseRef
     val server = embeddedServer(Netty, port = DEFAULT_PORT, host = "127.0.0.1") {
-        module(workdir, DEFAULT_BASE_REF)
+        module(workdir, baseRef)
     }.start(wait = false)
 
     val resolved = runBlocking { server.engine.resolvedConnectors() }
