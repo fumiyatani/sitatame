@@ -187,26 +187,27 @@ and exit(1).
 
 ```sh
 # Review another project from anywhere
-./gradlew :web:run --args="--repo /path/to/other-project"
+cd web && ./gradlew :run --args="--repo /path/to/other-project"
 
 # Custom base ref (e.g. a release branch)
-./gradlew :web:run --args="--repo /path/to/project --base origin/develop"
+cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
 
 # Via Gradle properties (alternative to --args)
-./gradlew :web:run -PrepoPath=/path/to/project -PbaseRef=origin/develop
+cd web && ./gradlew :run -PrepoPath=/path/to/project -PbaseRef=origin/develop
 
 # Via environment variables
-SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop ./gradlew :web:run
+SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
 
 # --help prints usage and exits
-./gradlew :web:run --args="--help"
+cd web && ./gradlew :run --args="--help"
 ```
 
 Or from `make` at the repo root:
 
 ```sh
-# make web currently runs `cd web && ./gradlew :run` without extra args.
-# Use the Gradle forms above directly for non-default repos.
+# make web runs `cd web && ./gradlew :run` without extra args.
+# For non-default repo / base, use the `cd web && ./gradlew :run --args="..."` forms above
+# directly from the web/ directory — make web does not forward extra arguments.
 ```
 
 ## Environment
