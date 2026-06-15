@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/fumiyatani/sitatame/internal/diffmodel"
+	"github.com/fumiyatani/sitatame/internal/gitx/internal/parser"
 )
 
 // --- Pure parser unit tests using hand-crafted NUL streams ---
@@ -15,14 +16,14 @@ import (
 func TestParseRawZ_Modified(t *testing.T) {
 	t.Parallel()
 	in := ":100644 100644 1111111 2222222 M\x00src/a.go\x00"
-	got, err := parseRawZ(in)
+	got, err := parser.ParseRawZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 1 {
 		t.Fatalf("len=%d, want 1", len(got))
 	}
-	want := rawEntry{
+	want := parser.RawEntry{
 		SrcMode: "100644", DstMode: "100644",
 		SrcSHA: "1111111", DstSHA: "2222222",
 		Status:  diffmodel.StatusModified,
@@ -37,7 +38,7 @@ func TestParseRawZ_AddedDeleted(t *testing.T) {
 	t.Parallel()
 	in := ":000000 100644 0000000 abcdef0 A\x00new.go\x00" +
 		":100644 000000 1111111 0000000 D\x00old.go\x00"
-	got, err := parseRawZ(in)
+	got, err := parser.ParseRawZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -57,7 +58,7 @@ func TestParseRawZ_MultiDeleted(t *testing.T) {
 	in := ":100644 000000 a 0 D\x00x\x00" +
 		":100644 000000 b 0 D\x00y\x00" +
 		":100644 000000 c 0 D\x00z\x00"
-	got, err := parseRawZ(in)
+	got, err := parser.ParseRawZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -74,7 +75,7 @@ func TestParseRawZ_MultiDeleted(t *testing.T) {
 func TestParseRawZ_RenameWithSimilarity(t *testing.T) {
 	t.Parallel()
 	in := ":100644 100644 1111111 2222222 R100\x00old/a.go\x00new/a.go\x00"
-	got, err := parseRawZ(in)
+	got, err := parser.ParseRawZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -95,7 +96,7 @@ func TestParseRawZ_RenameWithSimilarity(t *testing.T) {
 func TestParseRawZ_CopyWithSimilarity(t *testing.T) {
 	t.Parallel()
 	in := ":100644 100644 1111111 1111111 C75\x00src/a.go\x00src/b.go\x00"
-	got, err := parseRawZ(in)
+	got, err := parser.ParseRawZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -113,7 +114,7 @@ func TestParseRawZ_BadInput(t *testing.T) {
 		":100644 100644 1 2 R10x\x00a\x00b\x00", // bad similarity
 	}
 	for _, in := range cases {
-		if _, err := parseRawZ(in); err == nil {
+		if _, err := parser.ParseRawZ(in); err == nil {
 			t.Errorf("expected error for %q", in)
 		}
 	}
@@ -123,17 +124,17 @@ func TestParseNumstatZ_TextAndBinary(t *testing.T) {
 	t.Parallel()
 	in := "3\t1\tsrc/a.go\x00" +
 		"-\t-\timg.png\x00"
-	got, err := parseNumstatZ(in)
+	got, err := parser.ParseNumstatZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(got) != 2 {
 		t.Fatalf("len=%d, want 2", len(got))
 	}
-	if got[0] != (numstatEntry{Added: 3, Deleted: 1, PostPath: "src/a.go"}) {
+	if got[0] != (parser.NumstatEntry{Added: 3, Deleted: 1, PostPath: "src/a.go"}) {
 		t.Errorf("text entry: %+v", got[0])
 	}
-	if got[1] != (numstatEntry{Binary: true, PostPath: "img.png"}) {
+	if got[1] != (parser.NumstatEntry{Binary: true, PostPath: "img.png"}) {
 		t.Errorf("binary entry: %+v", got[1])
 	}
 }
@@ -141,7 +142,7 @@ func TestParseNumstatZ_TextAndBinary(t *testing.T) {
 func TestParseNumstatZ_Rename(t *testing.T) {
 	t.Parallel()
 	in := "0\t0\t\x00old.go\x00new.go\x00"
-	got, err := parseNumstatZ(in)
+	got, err := parser.ParseNumstatZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -159,7 +160,7 @@ func TestParseNumstatZ_RenameThenText(t *testing.T) {
 	// detection for the second entry must kick in.
 	in := "0\t0\t\x00a\x00b\x00" +
 		"5\t2\tc\x00"
-	got, err := parseNumstatZ(in)
+	got, err := parser.ParseNumstatZ(in)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -252,15 +253,15 @@ func TestDiff_IntegrationModifiedAddedDeletedRenameCopy(t *testing.T) {
 	rawOut := gitDiff(t, dir, "--raw", "-z", "--find-renames", "--find-copies", "main..HEAD")
 	numOut := gitDiff(t, dir, "--numstat", "-z", "--find-renames", "--find-copies", "main..HEAD")
 
-	rawEntries, err := parseRawZ(rawOut)
+	rawEntries, err := parser.ParseRawZ(rawOut)
 	if err != nil {
 		t.Fatal(err)
 	}
-	numEntries, err := parseNumstatZ(numOut)
+	numEntries, err := parser.ParseNumstatZ(numOut)
 	if err != nil {
 		t.Fatal(err)
 	}
-	files := joinRawAndNumstat(rawEntries, numEntries)
+	files := parser.JoinRawAndNumstat(rawEntries, numEntries)
 
 	byDisp := map[string]diffmodel.File{}
 	for _, f := range files {
@@ -296,9 +297,9 @@ func TestDiff_BinaryDetection(t *testing.T) {
 
 	rawOut := gitDiff(t, dir, "--raw", "-z", "--find-renames", "--find-copies", "main..HEAD")
 	numOut := gitDiff(t, dir, "--numstat", "-z", "--find-renames", "--find-copies", "main..HEAD")
-	rawEntries, _ := parseRawZ(rawOut)
-	numEntries, _ := parseNumstatZ(numOut)
-	files := joinRawAndNumstat(rawEntries, numEntries)
+	rawEntries, _ := parser.ParseRawZ(rawOut)
+	numEntries, _ := parser.ParseNumstatZ(numOut)
+	files := parser.JoinRawAndNumstat(rawEntries, numEntries)
 
 	var found bool
 	for _, f := range files {
