@@ -8,7 +8,7 @@ import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataProvider
 import com.intellij.openapi.actionSystem.DefaultActionGroup
 import com.intellij.openapi.application.ApplicationManager
-import com.intellij.openapi.fileEditor.FileEditorManager
+import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.fileEditor.OpenFileDescriptor
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.vfs.LocalFileSystem
@@ -23,12 +23,16 @@ import dev.sitatame.intellij.storage.ReviewState
 import dev.sitatame.intellij.storage.ReviewStore
 import java.awt.BorderLayout
 import java.awt.Component
+import java.awt.event.KeyAdapter
+import java.awt.event.KeyEvent
 import javax.swing.DefaultListModel
 import javax.swing.Icon
 import javax.swing.JComponent
 import javax.swing.JLabel
 import javax.swing.JList
+import javax.swing.JMenuItem
 import javax.swing.JPanel
+import javax.swing.JPopupMenu
 import javax.swing.JTextArea
 import javax.swing.ListSelectionModel
 import javax.swing.SwingConstants
@@ -46,6 +50,8 @@ import javax.swing.ListCellRenderer
  * anchored line via [OpenFileDescriptor].
  */
 class SitatameToolWindowContent(private val project: Project) {
+
+    private val log = Logger.getInstance(SitatameToolWindowContent::class.java)
 
     private val listModel = DefaultListModel<Comment>()
     private val list = JBList(listModel).apply {
@@ -87,6 +93,30 @@ class SitatameToolWindowContent(private val project: Project) {
             override fun mouseClicked(e: java.awt.event.MouseEvent) {
                 if (e.clickCount == 2) jumpToSelected()
             }
+
+            override fun mousePressed(e: java.awt.event.MouseEvent) {
+                maybeShowPopup(e)
+            }
+
+            override fun mouseReleased(e: java.awt.event.MouseEvent) {
+                maybeShowPopup(e)
+            }
+
+            private fun maybeShowPopup(e: java.awt.event.MouseEvent) {
+                if (!e.isPopupTrigger) return
+                // Select the row under the cursor so the menu action targets it.
+                val index = list.locationToIndex(e.point)
+                if (index >= 0) list.selectedIndex = index
+                buildContextMenu().show(list, e.x, e.y)
+            }
+        })
+        list.addKeyListener(object : KeyAdapter() {
+            override fun keyPressed(e: KeyEvent) {
+                if (e.keyCode == KeyEvent.VK_ENTER) {
+                    e.consume()
+                    toggleSelected()
+                }
+            }
         })
 
         refresh()
@@ -111,6 +141,63 @@ class SitatameToolWindowContent(private val project: Project) {
         val label = JLabel("", SwingConstants.LEFT)
         label.text = " sitatame: drafts under ~/.sitatame/<project>/drafts/<branch>/"
         return label
+    }
+
+    /** Build the right-click popup menu for the comment list. */
+    private fun buildContextMenu(): JPopupMenu {
+        val menu = JPopupMenu()
+        val toggleItem = JMenuItem("Toggle Resolved")
+        toggleItem.addActionListener { toggleSelected() }
+        menu.add(toggleItem)
+        return menu
+    }
+
+    /**
+     * Toggle open ↔ resolved for the currently selected comment.
+     *
+     * Matching uses anchorId when non-empty (exact identity); falls back to
+     * path + line / path + range comparison for comments written before
+     * anchorId was introduced.
+     *
+     * Runs file I/O on a pooled thread, then calls [refresh] on EDT.
+     */
+    private fun toggleSelected() {
+        val selected = list.selectedValue ?: return
+        val repo = RepoContext.forProject(project) ?: return
+        ApplicationManager.getApplication().executeOnPooledThread {
+            val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
+            try {
+                store.toggleComment(repo.repoRoot, repo.branch) { c ->
+                    commentMatches(c, selected)
+                }
+            } catch (ex: Exception) {
+                log.warn("SitatameToolWindowContent: toggleSelected failed", ex)
+            }
+            // Invalidate cache so refresh picks up the mutated state from disk.
+            store.invalidate()
+            ApplicationManager.getApplication().invokeLater { refresh() }
+        }
+    }
+
+    /**
+     * Match a stored [Comment] against the [target] selected in the list.
+     *
+     * Priority:
+     * 1. If both have a non-empty anchorId, use exact identity.
+     * 2. Otherwise fall back to path + anchor coordinates.
+     */
+    private fun commentMatches(c: Comment, target: Comment): Boolean {
+        if (c.anchor.anchorId.isNotEmpty() && target.anchor.anchorId.isNotEmpty()) {
+            return c.anchor.anchorId == target.anchor.anchorId
+        }
+        if (c.anchor.path != target.anchor.path) return false
+        return when {
+            c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.LINE ->
+                c.anchor.line == target.anchor.line
+            c.anchor.kind == target.anchor.kind && c.anchor.kind == AnchorKind.RANGE ->
+                c.anchor.lineStart == target.anchor.lineStart && c.anchor.lineEnd == target.anchor.lineEnd
+            else -> false
+        }
     }
 
     /**
