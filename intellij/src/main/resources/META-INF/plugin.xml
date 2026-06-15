@@ -47,6 +47,23 @@
         -->
 
         <notificationGroup id="sitatame.review" displayType="BALLOON"/>
+
+        <!--
+            Gutter line markers: draws an icon in the editor gutter for every
+            line that carries a sitatame review comment.
+            language="any" makes IntelliJ call the provider for all file types.
+        -->
+        <codeInsight.lineMarkerProvider
+            language="any"
+            implementationClass="dev.sitatame.intellij.markers.SitatameLineMarkerProvider"/>
+
+        <!--
+            Project startup activity: connects to ReviewChangedTopic and
+            restarts DaemonCodeAnalyzer when the review store is mutated so
+            gutter markers refresh without a manual file-open/close cycle.
+        -->
+        <postStartupActivity
+            implementation="dev.sitatame.intellij.markers.SitatameProjectActivity"/>
     </extensions>
 
     <actions>
