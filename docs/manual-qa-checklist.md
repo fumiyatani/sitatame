@@ -231,3 +231,15 @@ java -jar "$JAR" --repo /no/such/path
 ```
 
 - [ ] Server prints a clear error to stderr and exits without binding a port.
+
+### M-6. SPI descriptors are present in the fat jar
+
+```sh
+JAR=web/build/libs/sitatame-web-*-fat.jar
+unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
+```
+
+- [ ] The `org.slf4j.spi.SLF4JServiceProvider` descriptor exists in the fat jar
+  and contains exactly one provider line (`org.slf4j.simple.SimpleServiceProvider`).
+- [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
+  the fat jar (`java -jar "$JAR" --help`).

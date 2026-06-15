@@ -141,8 +141,10 @@ make web-jar
 ```
 
 The fat jar bundles the Ktor server, all JVM runtime dependencies, and the
-prebuilt Compose Wasm UI distribution into a single file.  Run it from any
-directory where JDK 21 and `git` are available:
+prebuilt Compose Wasm UI distribution into a single file.  `META-INF/services`
+SPI descriptors from all dependency jars are merged (concatenated per interface)
+by the `mergeSpiDescriptors` Gradle task so no SPI provider is silently dropped.
+Run the jar from any directory where JDK 21 and `git` are available:
 
 ```sh
 # Review the current directory's repository (must contain .git)
