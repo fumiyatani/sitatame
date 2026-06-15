@@ -111,8 +111,12 @@ Simulate a stale blob by modifying the diff between page load and comment submit
 - [ ] Collapsed thread shows: `▶ filename:line [state] (N comments)` in one row.
 - [ ] Expanded thread shows each comment with its Resolve/Reopen button.
 - [ ] "Reply to this thread" button appears at the bottom of an expanded thread.
-- [ ] Clicking "Reply to this thread" opens an inline text field.
-- [ ] Submitting the reply adds a new comment on the same anchor (visible in the thread).
+- [ ] Clicking "Reply to this thread" opens `CommentModal` with the header "Reply to: &lt;anchor&gt;"
+  (e.g. "Reply to: Line 42 · foo.kt").
+- [ ] The modal text area starts empty and focused; typing and clicking Submit adds a new
+  comment on the same anchor (visible in the thread without a page reload).
+- [ ] Clicking Cancel in the reply modal closes it without posting.
+- [ ] After submitting a reply, the modal closes and the thread shows the new comment.
 - [ ] Narrowing the browser window below 320 dp causes the filter to switch to a
   dropdown fallback (may require a narrow window or DevTools device emulation).
 - [ ] Open thread background is default dark; Resolved thread has dim grey background;

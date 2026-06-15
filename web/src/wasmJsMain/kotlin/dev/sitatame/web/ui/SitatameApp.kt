@@ -126,6 +126,8 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
 
     // Active CommentModal target (null = modal closed).
     var activeModalTarget by remember { mutableStateOf<CommentTarget?>(null) }
+    // Optional title override for reply mode; null means use target.label() default.
+    var activeModalTitle by remember { mutableStateOf<String?>(null) }
 
     val effectiveComments = holder.effectiveComments()
     val reviewLevelComments = effectiveComments.filter { it.kind == "review" }
@@ -291,7 +293,10 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
         Column(modifier = Modifier.fillMaxSize()) {
             TopBar(
                 workspace = workspace,
-                onAddOverallComment = { activeModalTarget = CommentTarget.Review },
+                onAddOverallComment = {
+                    activeModalTarget = CommentTarget.Review
+                    activeModalTitle = null
+                },
             )
             ReviewSummaryPanel(
                 reviewComment = holder.snapshot?.review?.reviewComment,
@@ -307,9 +312,10 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
                     onSelect = { selectedPath = it },
                     onFilterSelect = { holder.filterState = it },
                     onToggleState = { comment -> toggleCommentState(comment) },
-                    onReply = { sourceComment, body ->
+                    onReply = { sourceComment ->
                         val target = sourceComment.toCommentTarget()
-                        submitComment(target, body)
+                        activeModalTarget = target
+                        activeModalTitle = "Reply to: ${target.label()}"
                     },
                     pendingToggleIds = holder.pendingToggleIds,
                     modifier = Modifier
@@ -326,7 +332,10 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
                 MainPane(
                     file = selectedFile,
                     comments = effectiveComments,
-                    onAddComment = { target -> activeModalTarget = target },
+                    onAddComment = { target ->
+                        activeModalTarget = target
+                        activeModalTitle = null
+                    },
                     modifier = Modifier.weight(1f).fillMaxSize(),
                 )
             }
@@ -340,8 +349,13 @@ private fun LoadedView(workspace: WorkspaceResponse, holder: ReviewStateHolder) 
                 onSubmit = { body ->
                     submitComment(target, body)
                     activeModalTarget = null
+                    activeModalTitle = null
                 },
-                onCancel = { activeModalTarget = null },
+                onCancel = {
+                    activeModalTarget = null
+                    activeModalTitle = null
+                },
+                title = activeModalTitle ?: target.label(),
             )
         }
 
