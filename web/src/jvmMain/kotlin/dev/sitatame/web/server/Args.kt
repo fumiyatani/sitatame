@@ -8,7 +8,7 @@ import java.nio.file.Paths as NioPaths
  * Startup arguments for the Ktor backend. Resolved with the priority order
  *   CLI arg > environment variable > built-in default.
  *
- * Supported CLI flags (long-form only):
+ * Supported CLI flags (long-form only, space-separated — `--flag=value` is NOT supported):
  *   --repo <path>   Path to the git repository root. Overrides SITATAME_REPO.
  *   --base <ref>    Base ref for `git diff <ref>..HEAD`. Overrides SITATAME_BASE.
  *   --help          Print usage and exit(0).
@@ -20,7 +20,13 @@ import java.nio.file.Paths as NioPaths
 data class ServerArgs(
     val repoPath: Path,
     val baseRef: String,
+    /** Indicates which source provided [baseRef], used to decide whether to validate
+     *  at startup (explicit) or degrade gracefully (default). */
+    val baseRefSource: Source = Source.DEFAULT,
 )
+
+/** Where a resolved value came from (CLI flag > env var > built-in default). */
+enum class Source { CLI, ENV, DEFAULT }
 
 /** Thrown when [parseArgs] finds a usage error. Message is user-visible. */
 class ArgParseException(message: String) : Exception(message)
@@ -37,28 +43,34 @@ Options:
                   Default: origin/main
   --help          Print this help and exit.
 
+Note: flags must be space-separated (--repo /path), not --repo=/path.
+
 Examples:
-  # Review another project from sitatame itself
-  ./gradlew :web:run --args="--repo /path/to/other-project"
+  # Review another project
+  cd web && ./gradlew :run --args="--repo /path/to/other-project"
 
   # Custom base ref
-  ./gradlew :web:run --args="--repo /path/to/project --base origin/develop"
+  cd web && ./gradlew :run --args="--repo /path/to/project --base origin/develop"
 
   # Via environment variables
-  SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop ./gradlew :web:run
+  SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew :run
 """
+
+/** Set of known long-form flags, used to detect flag-shaped values passed after --repo / --base. */
+private val KNOWN_FLAGS = setOf("--repo", "--base", "--help", "-h")
 
 /**
  * Parse [args] and resolve the effective [ServerArgs].
  *
  * Resolution order for each field:
- *  1. CLI flag (`--repo` / `--base`)
+ *  1. CLI flag (`--repo` / `--base`) — space-separated only; `--flag=value` is NOT supported
  *  2. Environment variable (`SITATAME_REPO` / `SITATAME_BASE`)
  *  3. Built-in default (`user.dir` / `"origin/main"`)
  *
  * @param args     CLI argument array (typically from `main(args: Array<String>)`)
  * @param envLookup Injectable env provider so tests can avoid real env reads.
- * @throws ArgParseException on unknown flag or missing argument value.
+ * @throws ArgParseException on unknown flag, missing argument value, blank value, or
+ *                           flag-shaped value (next token starts with `--`).
  */
 fun parseArgs(
     args: Array<String>,
@@ -77,12 +89,30 @@ fun parseArgs(
                 throw HelpRequestedException()
             }
             "--repo" -> {
-                repoArg = args.getOrNull(++i)
+                val value = args.getOrNull(++i)
                     ?: throw ArgParseException("--repo requires a path argument")
+                if (value in KNOWN_FLAGS || value.startsWith("--")) {
+                    throw ArgParseException(
+                        "--repo requires a path argument, but got flag-like token: $value"
+                    )
+                }
+                if (value.isBlank()) {
+                    throw ArgParseException("--repo value must not be blank")
+                }
+                repoArg = value
             }
             "--base" -> {
-                baseArg = args.getOrNull(++i)
+                val value = args.getOrNull(++i)
                     ?: throw ArgParseException("--base requires a ref argument")
+                if (value in KNOWN_FLAGS || value.startsWith("--")) {
+                    throw ArgParseException(
+                        "--base requires a ref argument, but got flag-like token: $value"
+                    )
+                }
+                if (value.isBlank()) {
+                    throw ArgParseException("--base value must not be blank")
+                }
+                baseArg = value
             }
             else -> {
                 if (flag.startsWith("-")) {
@@ -100,9 +130,13 @@ fun parseArgs(
         ?: System.getProperty("user.dir")
         ?: "."
 
-    val baseRef = baseArg
-        ?: envLookup("SITATAME_BASE")?.takeIf { it.isNotBlank() }
-        ?: DEFAULT_BASE_REF
+    val (baseRef, baseRefSource) = when {
+        baseArg != null -> baseArg to Source.CLI
+        else -> {
+            val envVal = envLookup("SITATAME_BASE")?.takeIf { it.isNotBlank() }
+            if (envVal != null) envVal to Source.ENV else DEFAULT_BASE_REF to Source.DEFAULT
+        }
+    }
 
     val repoPath = try {
         NioPaths.get(repoStr).toAbsolutePath().normalize()
@@ -111,7 +145,7 @@ fun parseArgs(
     }
     validateRepoPath(repoPath)
 
-    return ServerArgs(repoPath = repoPath, baseRef = baseRef)
+    return ServerArgs(repoPath = repoPath, baseRef = baseRef, baseRefSource = baseRefSource)
 }
 
 /**

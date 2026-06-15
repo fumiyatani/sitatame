@@ -219,4 +219,100 @@ class ArgsTest {
             parseArgs(args = arrayOf("--help"), envLookup = ::noEnv)
         }
     }
+
+    // ---------- flag-shaped value guard (P2-1) ----------
+
+    @Test
+    fun `--base with next flag as value throws ArgParseException`() {
+        // `--base --repo /tmp/repo` should not silently set baseRef = "--repo"
+        val ex = assertThrows<ArgParseException> {
+            parseArgs(args = arrayOf("--base", "--repo"), envLookup = ::noEnv)
+        }
+        assertTrue(
+            ex.message!!.contains("flag-like token"),
+            "expected 'flag-like token' in message: ${ex.message}"
+        )
+    }
+
+    @Test
+    fun `--repo with next flag as value throws ArgParseException`() {
+        val ex = assertThrows<ArgParseException> {
+            parseArgs(args = arrayOf("--repo", "--base"), envLookup = ::noEnv)
+        }
+        assertTrue(
+            ex.message!!.contains("flag-like token"),
+            "expected 'flag-like token' in message: ${ex.message}"
+        )
+    }
+
+    @Test
+    fun `--base with blank value throws ArgParseException`() {
+        val dir = makeGitDir()
+        try {
+            val ex = assertThrows<ArgParseException> {
+                parseArgs(args = arrayOf("--repo", dir.toString(), "--base", "   "), envLookup = ::noEnv)
+            }
+            assertTrue(
+                ex.message!!.contains("blank"),
+                "expected 'blank' in message: ${ex.message}"
+            )
+        } finally {
+            rmrf(dir)
+        }
+    }
+
+    @Test
+    fun `--repo with blank value throws ArgParseException`() {
+        val ex = assertThrows<ArgParseException> {
+            parseArgs(args = arrayOf("--repo", "  "), envLookup = ::noEnv)
+        }
+        assertTrue(
+            ex.message!!.contains("blank"),
+            "expected 'blank' in message: ${ex.message}"
+        )
+    }
+
+    // ---------- Source tracking (P2-2) ----------
+
+    @Test
+    fun `baseRefSource is CLI when --base flag is used`() {
+        val dir = makeGitDir()
+        try {
+            val got = parseArgs(
+                args = arrayOf("--repo", dir.toString(), "--base", "origin/develop"),
+                envLookup = ::noEnv,
+            )
+            assertEquals(Source.CLI, got.baseRefSource)
+        } finally {
+            rmrf(dir)
+        }
+    }
+
+    @Test
+    fun `baseRefSource is ENV when only SITATAME_BASE env is set`() {
+        val dir = makeGitDir()
+        try {
+            val got = parseArgs(
+                args = arrayOf("--repo", dir.toString()),
+                envLookup = { if (it == "SITATAME_BASE") "origin/release" else null },
+            )
+            assertEquals(Source.ENV, got.baseRefSource)
+        } finally {
+            rmrf(dir)
+        }
+    }
+
+    @Test
+    fun `baseRefSource is DEFAULT when neither --base nor env is set`() {
+        val dir = makeGitDir()
+        try {
+            val got = parseArgs(
+                args = arrayOf("--repo", dir.toString()),
+                envLookup = ::noEnv,
+            )
+            assertEquals(Source.DEFAULT, got.baseRefSource)
+        } finally {
+            rmrf(dir)
+        }
+    }
 }
