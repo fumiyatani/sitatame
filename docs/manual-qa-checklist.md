@@ -124,6 +124,80 @@ Simulate a stale blob by modifying the diff between page load and comment submit
 - [ ] The open-thread count badge on each file row counts open threads regardless of
   the active filter setting.
 
+## M. IntelliJ Plugin — Comment List UX (Issue #95)
+
+Install the plugin from `intellij/build/distributions/sitatame-intellij-0.2.0.zip`
+via **Settings → Plugins → Install Plugin from Disk**, then open a project that has
+a sitatame `review.md` in `~/.sitatame/<project>/<branch>/`.
+
+### M-1. State Filter (All / Opened / Resolved)
+
+- [ ] Open the "SitatameReview" tool window.
+- [ ] Filter bar below the toolbar shows three radio buttons: **All**, **Opened**,
+  **Resolved**. Default is **All**.
+- [ ] With mixed open/resolved comments loaded, select **Opened** → only open
+  comments are shown.
+- [ ] Select **Resolved** → only resolved comments shown.
+- [ ] Select **All** → all comments shown again.
+
+### M-2. State Icon Shape and Colour
+
+- [ ] Each open comment row shows a **green filled circle (●)** icon.
+- [ ] Each resolved comment row shows a **purple check mark (✓)** icon.
+- [ ] Each stale comment shows a **yellow warning triangle** (platform icon).
+- [ ] Open/Resolved are distinguishable in both light and dark IDE themes.
+- [ ] Open/Resolved are distinguishable by shape alone (colour-blind check).
+
+### M-3. Popup Label: Mark Resolved / Reopen
+
+- [ ] Right-click an **open** comment → context menu shows **"Mark Resolved"**
+  (not "Toggle Resolved").
+- [ ] Right-click a **resolved** comment → context menu shows **"Reopen"**.
+- [ ] Clicking "Mark Resolved" on an open comment sets its state to resolved
+  and the list refreshes.
+- [ ] Clicking "Reopen" on a resolved comment sets its state to open and the
+  list refreshes.
+
+### M-4. Delete with Confirmation
+
+- [ ] Each comment row shows a trash-can icon on the right edge.
+- [ ] Clicking the trash icon selects the row and opens a confirmation dialog.
+- [ ] Clicking **Cancel** in the dialog → comment is not deleted.
+- [ ] Clicking **Delete** → comment is removed from the list and from
+  `review.md` on disk.
+- [ ] Right-click any comment → context menu also contains **"Delete"** item
+  which triggers the same confirmation flow.
+
+### M-5. Auto Refresh via MessageBus
+
+- [ ] Add a comment from the editor (Cmd+Shift+C or right-click → "sitatame:
+  Add Comment") while the tool window is open → the new comment appears in the
+  list **without** clicking the Refresh button.
+- [ ] Toggle resolved from the editor (Cmd+Shift+R) while the tool window is
+  open → the state icon in the list updates automatically.
+- [ ] If the project's repo/branch does not match the changed review, the tool
+  window does **not** refresh (multi-project isolation — verify by having two
+  projects open simultaneously if possible).
+
+### M-6. Enter / Space Key Bindings (Issue #94)
+
+- [ ] Select any comment row with the keyboard (arrow keys).
+- [ ] Press **Enter** → the editor jumps to the file and line anchored by the
+  comment (same behaviour as double-clicking the row). The resolved/open state
+  does **not** change.
+- [ ] Press **Space** → the resolved/open state of the selected comment toggles
+  (open → resolved or resolved → open) and the list refreshes. The editor does
+  **not** navigate.
+- [ ] In **Settings → Keymap** search for "sitatame: Toggle Resolved (Tool
+  Window)" — the action appears with no default shortcut.
+- [ ] Assign a custom shortcut (e.g. **Space**) via Keymap settings → confirm
+  that the action fires when the tool window list is focused and a comment is
+  selected.
+- [ ] With **no** comment selected, verify the Keymap action is disabled
+  (greyed out in the menu).
+- [ ] Note: the list uses SINGLE_SELECTION mode; multi-select is not supported.
+  When a Keymap action fires, only the single selected comment is affected.
+
 ## J. Regression — Read-Only View Still Works
 
 - [ ] After all write operations, the diff view still renders correctly.
@@ -222,3 +296,66 @@ plugin action. Requires running the plugin inside a sandboxed IDE instance
   with a corrupted review.md).
 - [ ] After the error notification appears, paste from clipboard — the sentinel
   text should still be there (no partial prompt was written).
+
+## N. Fat Jar Distribution (Issue #88)
+
+### N-1. Build the fat jar
+
+```sh
+make web-jar
+```
+
+- [ ] `make web-jar` completes without error.
+- [ ] `web/build/libs/sitatame-web-*-fat.jar` exists and is roughly 15–25 MB.
+
+### N-2. Launch fat jar against a different repository
+
+1. Copy (or note the path of) the fat jar, e.g.
+   `JAR=/path/to/sitatame-web-0.2.0-fat.jar`.
+2. Change to a directory that is **not** the sitatame repo root (e.g. `cd /tmp`).
+3. Run:
+   ```sh
+   java -jar "$JAR" --repo /path/to/other-repo
+   ```
+4. - [ ] `SITATAME_WEB_URL=http://127.0.0.1:<port>` is printed on stdout.
+5. - [ ] Open the URL — diff view shows the *other* repo's changes, not sitatame's.
+6. - [ ] `GET /api/v1/workspace` returns a `projectSlug` matching the other repo.
+7. - [ ] Ctrl-C stops the server cleanly (no exception stack trace).
+
+### N-3. `--base` flag works with fat jar
+
+```sh
+java -jar "$JAR" --repo /path/to/repo --base origin/develop
+```
+
+- [ ] Diff is relative to `origin/develop`, not `origin/main`.
+
+### N-4. `--help` prints usage and exits
+
+```sh
+java -jar "$JAR" --help
+```
+
+- [ ] Usage text is printed and the process exits 0 (no server is started, no
+  port is bound).
+
+### N-5. Invalid `--repo` rejected at startup
+
+```sh
+java -jar "$JAR" --repo /no/such/path
+```
+
+- [ ] Server prints a clear error to stderr and exits without binding a port.
+
+### N-6. SPI descriptors are present in the fat jar
+
+```sh
+JAR=web/build/libs/sitatame-web-*-fat.jar
+unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
+```
+
+- [ ] The `org.slf4j.spi.SLF4JServiceProvider` descriptor exists in the fat jar
+  and contains exactly one provider line (`org.slf4j.simple.SimpleServiceProvider`).
+- [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
+  the fat jar (`java -jar "$JAR" --help`).
+

@@ -12,6 +12,7 @@ import com.intellij.openapi.progress.Task
 import com.intellij.openapi.progress.ProgressIndicator
 import com.intellij.openapi.project.Project
 import dev.sitatame.intellij.git.RepoContext
+import dev.sitatame.intellij.markers.ReviewChangedTopic
 import dev.sitatame.intellij.storage.AnchorKind
 import dev.sitatame.intellij.storage.Comment
 import dev.sitatame.intellij.storage.ReviewStore
@@ -55,6 +56,12 @@ class ResolveCommentAction : AnAction() {
                             notify(project, "sitatame: toggle failed — ${ex.message}", NotificationType.ERROR)
                         }
                         return
+                    }
+                    if (result != null) {
+                        // Notify gutter markers to refresh for all open files.
+                        ApplicationManager.getApplication().messageBus
+                            .syncPublisher(ReviewChangedTopic.TOPIC)
+                            .reviewChanged()
                     }
                     ApplicationManager.getApplication().invokeLater {
                         if (result == null) {
