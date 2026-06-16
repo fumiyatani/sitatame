@@ -404,3 +404,100 @@ Prerequisites: build and install the plugin (`./gradlew buildPlugin`), open a pr
 1. Open two tabs with comments on different files.
 2. - [ ] Each tab shows only the inlays for its own file, not the other's.
 
+## P. IntelliJ 3-pane Tool Window + Base Ref Selector (#136)
+
+Prerequisites: build the plugin (`cd intellij && ./gradlew buildPlugin`), install from disk,
+open a project that has a `~/.sitatame/<project>/<branch>/review.md` with at least a few
+comments, and confirm `origin/main` is reachable.
+
+### P-1. Three panes visible
+
+1. Open the **SitatameReview** tool window.
+2. - [ ] Three panes are visible: Changed files (left), Comments (middle), Comment detail (right).
+3. - [ ] A toolbar appears above with Refresh icon, "Base:" label + ComboBox, "Set as default" button, and Copy AI prompt action.
+
+### P-2. Changed files pane (left)
+
+1. - [ ] Files changed since `origin/main` (or current base ref) are listed.
+2. - [ ] An "All files" entry appears at the top of the list.
+3. - [ ] Files that have comments show a count suffix `[open/total]` in bold.
+4. - [ ] Files without comments appear in a dimmed colour.
+5. Double-click any file entry.
+6. - [ ] The corresponding file opens in the editor.
+
+### P-3. File selection drives comment list (middle)
+
+1. Click a file that has comments in the left pane.
+2. - [ ] The middle pane shows only comments for that file.
+3. Click "All files".
+4. - [ ] The middle pane shows all comments for the branch.
+
+### P-4. State filter in middle pane
+
+1. With "All files" selected, click **Opened** radio.
+2. - [ ] Only open comments are shown.
+3. Click **Resolved**.
+4. - [ ] Only resolved comments are shown.
+5. Click **All**.
+6. - [ ] All comments shown again.
+
+### P-5. Comment detail pane (right)
+
+1. Click a comment row in the middle pane.
+2. - [ ] The right pane shows the anchor location, state, and body text.
+3. - [ ] "Resolve" button is enabled for an open comment; "Reopen" for resolved.
+4. - [ ] "Delete" button is enabled.
+5. - [ ] "Reply" button is present but greyed out with tooltip "Coming soon".
+
+### P-6. Resolve / Reopen from detail pane
+
+1. Click **Resolve** in the right pane for an open comment.
+2. - [ ] Button label changes to "Reopen"; middle pane row icon updates.
+3. Click **Reopen**.
+4. - [ ] State reverts to open.
+
+### P-7. Delete from detail pane
+
+1. Click **Delete** in the right pane.
+2. - [ ] Confirmation dialog appears.
+3. Confirm deletion.
+4. - [ ] Comment disappears from middle pane; right pane clears.
+
+### P-8. Base ref selector — session override
+
+1. Open the "Base:" ComboBox in the toolbar.
+2. - [ ] Candidates include: "(default — Settings)" entry if Settings has a baseRef set, `origin/main`, `origin/master`, `origin/develop`, and local branches.
+3. Select a different base ref.
+4. - [ ] Left pane refreshes and shows files changed since the new base ref.
+5. Close and reopen the tool window.
+6. - [ ] Base ref resets to the Settings default (session override is not persisted).
+
+### P-9. "Set as default" persists base ref
+
+1. Select a non-default ref in the ComboBox.
+2. Click **Set as default**.
+3. Open **Settings → Tools → sitatame review**.
+4. - [ ] The "Base ref" field shows the selected ref.
+5. Close and reopen the tool window.
+6. - [ ] The ComboBox shows the saved ref (and the "(default — Settings)" annotated entry).
+
+### P-10. Pane width persistence
+
+1. Drag the splitter between the left and middle panes to a custom width.
+2. Close the tool window.
+3. Reopen the tool window.
+4. - [ ] Pane widths are restored to the dragged position (PropertiesComponent persistence).
+
+### P-11. MessageBus auto-refresh
+
+1. Use the editor shortcut (Cmd+Shift+C / Ctrl+Shift+C) to add a new comment.
+2. - [ ] The middle pane updates automatically without pressing Refresh.
+3. - [ ] The left pane count for the affected file updates.
+
+### P-12. Key bindings on middle pane
+
+1. Select a comment row in the middle pane, press **Enter**.
+2. - [ ] Editor jumps to the anchored file:line.
+3. Press **Space**.
+4. - [ ] Comment state toggles (open → resolved or vice versa).
+
