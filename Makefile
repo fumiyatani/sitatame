@@ -1,4 +1,4 @@
-.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures web web-jar
+.PHONY: build test test-tui-e2e bench update-golden update-golden-tui-e2e vet fmt install build-all clean web-fixtures web web-jar intellij intellij-test intellij-verify intellij-run
 
 BIN := sitatame
 PKG := ./...
@@ -71,3 +71,25 @@ web:
 web-jar:
 	cd web && ./gradlew :jvmFatJar --no-daemon
 	@echo "→ $(shell ls web/build/libs/sitatame-web-*-fat.jar 2>/dev/null | head -1)"
+
+# Build the IntelliJ Plugin zip. Drop the resulting file into
+# `Settings → Plugins → ⚙ → Install Plugin from Disk…` in any 2024.3+
+# IntelliJ IDEA / Android Studio to load the latest local build.
+intellij:
+	cd intellij && ./gradlew buildPlugin
+	@echo "→ $(shell ls intellij/build/distributions/sitatame-intellij-*.zip 2>/dev/null | head -1)"
+
+# Run the IntelliJ plugin unit + integration suite.
+intellij-test:
+	cd intellij && ./gradlew test
+
+# JetBrains Plugin Verifier — checks the plugin against the IDE range
+# declared in `intellij/build.gradle.kts`. Required to stay green before
+# Marketplace publishing.
+intellij-verify:
+	cd intellij && ./gradlew verifyPlugin
+
+# Launch a sandbox IDE with the plugin loaded for interactive testing.
+# Slower than `make intellij` but iterates without re-installing the zip.
+intellij-run:
+	cd intellij && ./gradlew runIde
