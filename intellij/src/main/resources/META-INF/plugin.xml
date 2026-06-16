@@ -55,6 +55,23 @@
         -->
         <editorFactoryListener
             implementation="dev.sitatame.intellij.inlay.SitatameEditorFactoryListener"/>
+
+        <!--
+            Gutter line markers: draws an icon in the editor gutter for every
+            line that carries a sitatame review comment.
+            language="any" makes IntelliJ call the provider for all file types.
+        -->
+        <codeInsight.lineMarkerProvider
+            language="any"
+            implementationClass="dev.sitatame.intellij.markers.SitatameLineMarkerProvider"/>
+
+        <!--
+            Project startup activity: connects to ReviewChangedTopic and
+            restarts DaemonCodeAnalyzer when the review store is mutated so
+            gutter markers refresh without a manual file-open/close cycle.
+        -->
+        <postStartupActivity
+            implementation="dev.sitatame.intellij.markers.SitatameProjectActivity"/>
     </extensions>
 
     <actions>
@@ -85,5 +102,23 @@
                 class="dev.sitatame.intellij.actions.CopyAIPromptAction"
                 text="sitatame: Copy AI Prompt"
                 description="Copy an AI-ready prompt for the selected or all open comments"/>
+
+        <!--
+            Tool-window resolve toggle.
+
+            No default shortcut: Space is hard-wired in SitatameToolWindowContent's
+            KeyListener so it works out of the box without any Keymap entry.
+
+            This Action exists so users can bind an additional shortcut
+            (e.g. Ctrl+Shift+R) without losing the Space behaviour. Bound shortcuts
+            are consumed by IdeKeyEventDispatcher before reaching the Swing
+            KeyListener, so there is no double-fire.
+
+            Bind via Settings → Keymap → "sitatame: Toggle Resolved (Tool Window)".
+        -->
+        <action id="sitatame.ToolWindowToggleResolved"
+                class="dev.sitatame.intellij.actions.ToolWindowToggleResolvedAction"
+                text="sitatame: Toggle Resolved (Tool Window)"
+                description="Toggle the resolved/open state of the comment selected in the Sitatame tool window"/>
     </actions>
 </idea-plugin>
