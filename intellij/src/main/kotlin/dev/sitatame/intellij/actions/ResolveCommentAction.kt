@@ -57,17 +57,29 @@ class ResolveCommentAction : AnAction() {
                         }
                         return
                     }
-                    if (result != null) {
+                    if (result != null && result.succeeded) {
                         // Notify gutter markers to refresh for all open files.
                         ApplicationManager.getApplication().messageBus
                             .syncPublisher(ReviewChangedTopic.TOPIC)
                             .reviewChanged()
                     }
                     ApplicationManager.getApplication().invokeLater {
-                        if (result == null) {
-                            notify(project, "sitatame: no comment under cursor", NotificationType.INFORMATION)
-                        } else {
-                            notify(project, "sitatame: toggled comment in ${result.path}", NotificationType.INFORMATION)
+                        when {
+                            result == null ->
+                                notify(project, "sitatame: no comment under cursor", NotificationType.INFORMATION)
+                            result.succeeded ->
+                                notify(project, "sitatame: toggled comment in ${result.path}", NotificationType.INFORMATION)
+                            else -> {
+                                // Encode failure: state was rolled back; rescue file written.
+                                val rescuePath = result.error?.rescuePath ?: ""
+                                log.warn("ResolveCommentAction: encode failed; rescue at $rescuePath")
+                                notify(
+                                    project,
+                                    "sitatame: toggle failed — encode error" +
+                                        (if (rescuePath.isNotEmpty()) "; rescue written to $rescuePath" else ""),
+                                    NotificationType.ERROR,
+                                )
+                            }
                         }
                     }
                 }
