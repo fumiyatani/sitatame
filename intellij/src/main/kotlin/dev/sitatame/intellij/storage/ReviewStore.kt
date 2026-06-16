@@ -84,6 +84,14 @@ class ReviewStore {
     @Suppress("VisibleForTests")
     var encodeFunc: ((Review) -> ByteArray)? = null
 
+    /**
+     * When set, replaces [Codec.decode] in [loadOrInit]. Tests inject a
+     * wrapper to count actual file-decode invocations (e.g. for thundering-herd
+     * verification). Production code must leave this null.
+     */
+    @Suppress("VisibleForTests")
+    var decodeFunc: ((ByteArray) -> Review)? = null
+
     private val settings: SitatameSettings
         get() = ApplicationManager.getApplication().getService(SitatameSettings::class.java)
 
@@ -119,7 +127,8 @@ class ReviewStore {
             val reviewPath = toPath(p.reviewFile())
             val review = if (Files.isRegularFile(reviewPath)) {
                 try {
-                    Codec.decode(Files.readAllBytes(reviewPath))
+                    val decode = decodeFunc ?: { bytes -> Codec.decode(bytes) }
+                    decode(Files.readAllBytes(reviewPath))
                 } catch (e: Exception) {
                     log.warn("failed to decode existing review at $reviewPath; starting fresh", e)
                     freshReview(branch)
@@ -286,18 +295,21 @@ class ReviewStore {
      * `review.md.bak` present (crash window between bak-rename and
      * tmp-rename). Also cleans up orphaned `.tmp` files.
      *
-     * Safe to call at startup: no-op when review.md exists or .bak is absent.
-     * Mirrors Go's `Store.RecoverFromCrash`.
+     * Returns `true` only when a bak file was actually promoted to review.md
+     * (i.e. a real crash recovery occurred). Returns `false` when review.md
+     * already existed (normal startup) or when no bak file was present.
+     *
+     * Safe to call at startup. Mirrors Go's `Store.RecoverFromCrash`.
      */
-    fun recoverFromCrash(repoRoot: String, branch: String) {
+    fun recoverFromCrash(repoRoot: String, branch: String): Boolean {
         val p = paths(repoRoot, branch)
         val key = cacheKey(p)
         // Hold the key lock so a concurrent loadOrInit cannot read a partially
         // recovered state (e.g. file moved but cache not yet invalidated).
-        keyLock(key).withLock { recoverFromCrashLocked(p) }
+        return keyLock(key).withLock { recoverFromCrashLocked(p, key) }
     }
 
-    private fun recoverFromCrashLocked(p: SitatamePaths) {
+    private fun recoverFromCrashLocked(p: SitatamePaths, key: String): Boolean {
         val branchDir = toPath(p.branchDir())
 
         // Clean up orphaned .tmp files.
@@ -310,14 +322,23 @@ class ReviewStore {
 
         val final = toPath(p.reviewFile())
         val bak = toPath(p.bakFile())
+        // Only promote when review.md is absent AND .bak exists.
+        // Normal saves leave .bak behind alongside review.md, so detecting .bak
+        // alone would fire a false recovery notification on every startup.
         if (!Files.isRegularFile(final) && Files.isRegularFile(bak)) {
-            try {
+            return try {
                 Files.move(bak, final, StandardCopyOption.ATOMIC_MOVE)
+                // Invalidate any stale cache entry so the next loadOrInit reads
+                // the recovered file rather than returning old in-memory data.
+                cache.remove(key)
                 log.info("sitatame: crash recovery: restored review.md from review.md.bak")
+                true
             } catch (e: Exception) {
                 log.warn("sitatame: crash recovery: rename review.md.bak -> review.md failed", e)
+                false
             }
         }
+        return false
     }
 
     /**

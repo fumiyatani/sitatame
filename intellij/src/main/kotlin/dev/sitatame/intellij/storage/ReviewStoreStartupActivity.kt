@@ -41,9 +41,12 @@ class ReviewStoreStartupActivity : ProjectActivity {
             val repoRoot = repo.root.path
             // Use the current branch; fall back to HEAD ref name if detached.
             val branch = repo.currentBranchName ?: repo.currentRevision ?: continue
-            val bakBefore = store.detectBak(repoRoot, branch)
-            store.recoverFromCrash(repoRoot, branch)
-            if (bakBefore) recovered = true
+            // recoverFromCrash returns true only when review.md was absent and
+            // .bak was actually promoted — a genuine crash recovery. Normal saves
+            // leave .bak alongside review.md, so checking .bak existence alone
+            // (as before) fired the notification on every startup after the first
+            // save.
+            if (store.recoverFromCrash(repoRoot, branch)) recovered = true
         }
 
         if (recovered) {
