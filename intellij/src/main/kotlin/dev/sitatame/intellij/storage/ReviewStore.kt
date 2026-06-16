@@ -101,9 +101,12 @@ class ReviewStore {
      * Append a new comment to the current review and persist atomically. Runs
      * on a background thread; caller MUST switch back to EDT before touching
      * UI. Returns the saved file path.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] on success so subscribers (tool windows)
+     * can auto-refresh without polling.
      */
-    fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult =
-        synchronized(lock) {
+    fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult {
+        val result = synchronized(lock) {
             val p = paths(repoRoot, branch)
             val review = loadOrInit(repoRoot, branch)
             val added = mutate(review)
@@ -113,19 +116,51 @@ class ReviewStore {
             review.comments.add(added)
             saveReview(p, review)
         }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
 
     /**
      * Toggle the state of the comment whose anchor matches the given
      * predicate, or returns null if no such comment exists.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] on success.
      */
-    fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? =
-        synchronized(lock) {
+    fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
+        val result = synchronized(lock) {
             val p = paths(repoRoot, branch)
             val review = loadOrInit(repoRoot, branch)
             val target = review.comments.firstOrNull(predicate) ?: return null
             target.state = if (target.state == ReviewState.RESOLVED) ReviewState.OPEN else ReviewState.RESOLVED
             saveReview(p, review)
         }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
+
+    /**
+     * Remove the **first** comment whose anchor matches the given predicate and
+     * persist atomically. Returns null if no comment matches (no-op), or the
+     * [SaveResult] of the updated review on success.
+     *
+     * Only the first matching comment is removed to avoid bulk-deleting multiple
+     * comments that share the same path/line when anchorId is absent.
+     *
+     * Publishes [REVIEW_CHANGED_TOPIC] only when [SaveResult.succeeded] is true,
+     * consistent with [addComment] and [toggleComment].
+     */
+    fun removeComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
+        val result = synchronized(lock) {
+            val p = paths(repoRoot, branch)
+            val review = loadOrInit(repoRoot, branch)
+            val idx = review.comments.indexOfFirst(predicate)
+            if (idx < 0) return null
+            review.comments.removeAt(idx)
+            saveReview(p, review)
+        }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
 
     /**
      * Atomically persist [review] to `<branchDir>/review.md`.
@@ -206,6 +241,19 @@ class ReviewStore {
 
     // -- Internals -----------------------------------------------------------
 
+    /**
+     * Publish a [REVIEW_CHANGED_TOPIC] message on the application message bus.
+     * Guarded by a runCatching so a missing ApplicationManager in tests does
+     * not surface as an uncaught exception.
+     */
+    private fun publishChanged(repoRoot: String, branch: String) {
+        runCatching {
+            ApplicationManager.getApplication().messageBus
+                .syncPublisher(REVIEW_CHANGED_TOPIC)
+                .onChanged(repoRoot, branch)
+        }
+    }
+
     private fun freshReview(branch: String): Review {
         val now = LocalDateTime.now(clock).atOffset(ZoneOffset.UTC)
         return Review(
@@ -221,9 +269,24 @@ class ReviewStore {
      * Caller must hold [lock].
      */
     private fun saveReview(p: SitatamePaths, review: Review): SaveResult {
-        // Empty review is a no-op.
+        // Empty review: delete the existing file (if any) so invalidate + reload
+        // does not resurrect stale comments from disk.
         if (review.comments.isEmpty() && review.reviewComment.trim().isEmpty()) {
-            return SaveResult(path = "", id = review.id)
+            val reviewPath = toPath(p.reviewFile())
+            val bakPath = toPath(p.bakFile())
+            // Delete .bak first so that if we crash after this point there is
+            // nothing for recoverFromCrash to resurrect from. If .bak deletion
+            // fails, abort and return succeeded=false so the caller does not
+            // publish REVIEW_CHANGED_TOPIC on an inconsistent state.
+            try {
+                Files.deleteIfExists(bakPath)
+            } catch (e: Exception) {
+                log.warn("failed to delete .bak file during empty-review cleanup: $bakPath", e)
+                return SaveResult(path = "", id = review.id)
+            }
+            val deleted = Files.deleteIfExists(reviewPath)
+            // Return the path that was deleted (or empty string when no file existed).
+            return SaveResult(path = if (deleted) reviewPath.toString() else "", id = review.id)
         }
 
         if (review.id.isEmpty()) {

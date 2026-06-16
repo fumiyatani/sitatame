@@ -124,6 +124,61 @@ Simulate a stale blob by modifying the diff between page load and comment submit
 - [ ] The open-thread count badge on each file row counts open threads regardless of
   the active filter setting.
 
+## M. IntelliJ Plugin — Comment List UX (Issue #95)
+
+Install the plugin from `intellij/build/distributions/sitatame-intellij-0.2.0.zip`
+via **Settings → Plugins → Install Plugin from Disk**, then open a project that has
+a sitatame `review.md` in `~/.sitatame/<project>/<branch>/`.
+
+### M-1. State Filter (All / Opened / Resolved)
+
+- [ ] Open the "SitatameReview" tool window.
+- [ ] Filter bar below the toolbar shows three radio buttons: **All**, **Opened**,
+  **Resolved**. Default is **All**.
+- [ ] With mixed open/resolved comments loaded, select **Opened** → only open
+  comments are shown.
+- [ ] Select **Resolved** → only resolved comments shown.
+- [ ] Select **All** → all comments shown again.
+
+### M-2. State Icon Shape and Colour
+
+- [ ] Each open comment row shows a **green filled circle (●)** icon.
+- [ ] Each resolved comment row shows a **purple check mark (✓)** icon.
+- [ ] Each stale comment shows a **yellow warning triangle** (platform icon).
+- [ ] Open/Resolved are distinguishable in both light and dark IDE themes.
+- [ ] Open/Resolved are distinguishable by shape alone (colour-blind check).
+
+### M-3. Popup Label: Mark Resolved / Reopen
+
+- [ ] Right-click an **open** comment → context menu shows **"Mark Resolved"**
+  (not "Toggle Resolved").
+- [ ] Right-click a **resolved** comment → context menu shows **"Reopen"**.
+- [ ] Clicking "Mark Resolved" on an open comment sets its state to resolved
+  and the list refreshes.
+- [ ] Clicking "Reopen" on a resolved comment sets its state to open and the
+  list refreshes.
+
+### M-4. Delete with Confirmation
+
+- [ ] Each comment row shows a trash-can icon on the right edge.
+- [ ] Clicking the trash icon selects the row and opens a confirmation dialog.
+- [ ] Clicking **Cancel** in the dialog → comment is not deleted.
+- [ ] Clicking **Delete** → comment is removed from the list and from
+  `review.md` on disk.
+- [ ] Right-click any comment → context menu also contains **"Delete"** item
+  which triggers the same confirmation flow.
+
+### M-5. Auto Refresh via MessageBus
+
+- [ ] Add a comment from the editor (Cmd+Shift+C or right-click → "sitatame:
+  Add Comment") while the tool window is open → the new comment appears in the
+  list **without** clicking the Refresh button.
+- [ ] Toggle resolved from the editor (Cmd+Shift+R) while the tool window is
+  open → the state icon in the list updates automatically.
+- [ ] If the project's repo/branch does not match the changed review, the tool
+  window does **not** refresh (multi-project isolation — verify by having two
+  projects open simultaneously if possible).
+
 ## J. Regression — Read-Only View Still Works
 
 - [ ] After all write operations, the diff view still renders correctly.
