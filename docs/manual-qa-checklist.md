@@ -256,50 +256,46 @@ cd web && ./gradlew :run --args="--repo /tmp"
 
 - [ ] Server prints an error mentioning `.git` and exits without binding a port.
 
-## M. IntelliJ Editor Inlay — Block Comment Display (#117)
+## M. CopyAIPromptAction — Threading and Lifecycle (Issue #105)
 
-Prerequisites: build and install the plugin (`./gradlew buildPlugin`), open a project that has at least one `review.md` with LINE or RANGE comments.
+These items verify the threading fix (P2-1 / P2-2 / P3-1) in the IntelliJ
+plugin action. Requires running the plugin inside a sandboxed IDE instance
+(`cd intellij && ./gradlew runIde`).
 
-### M-1. Basic inlay appearance
+### M-1. snapshotComments runs off the EDT
 
-1. Open a file that has a sitatame comment anchored to a specific line.
-2. - [ ] A card appears directly below the anchor line in the editor (not in the gutter).
-3. - [ ] The card shows: a coloured dot (blue = open, green = resolved), the first line of the comment body, and a "Resolve" or "Reopen" button depending on state.
-4. - [ ] Multiple comments on the same line appear as stacked rows in a single card.
+- [ ] Set a breakpoint (or add a log statement) inside `CopyAIPromptAction.run`
+  before `store.snapshotComments(...)`.
+- [ ] Trigger the action → breakpoint / log should show the current thread is
+  **not** the Event Dispatch Thread (thread name does not contain "AWT-EventQueue").
 
-### M-2. Resolve / Reopen button
+### M-2. buildPrompt runs off the EDT
 
-1. Click the **Resolve** button on an open comment.
-2. - [ ] The dot changes from blue to green and the button label changes to "Reopen".
-3. - [ ] The underlying `review.md` is updated (check with `cat ~/.sitatame/<project>/<branch>/review.md`).
-4. Click **Reopen** on a resolved comment.
-5. - [ ] State toggles back to open (blue dot, "Resolve" label).
+- [ ] `buildPrompt(targets)` is called from the same background thread as
+  `snapshotComments` — confirm the thread name at that call site is not
+  "AWT-EventQueue".
 
-### M-3. Collapse defaults
+### M-3. Clipboard write and dialog show on the EDT
 
-1. Open a file with a resolved comment and an open comment.
-2. - [ ] The resolved comment row is visually compact (collapsed) — only its first line is shown.
-3. - [ ] The open comment is expanded.
+- [ ] After `buildPrompt` completes, `CopyPasteManager.setContents` and
+  `PromptPreviewDialog.show()` should run on the Event Dispatch Thread.
+- [ ] Verify by adding a breakpoint inside the `invokeLater` lambda — thread name
+  should contain "AWT-EventQueue".
 
-### M-4. No inlay for non-line anchors
+### M-4. Disposed project does not open dialog
 
-1. Add a file-level comment (`kind: file`) or review-level comment (`kind: review`) via CLI.
-2. - [ ] No inlay appears in the editor for such comments (they have no line anchor).
+- [ ] With the action running: force-close the project while the background task
+  is still in flight (e.g. simulate slow I/O with a sleep patch).
+- [ ] The `PromptPreviewDialog` must **not** appear; `project.disposed` expiration
+  prevents the `invokeLater` runnable from executing.
 
-### M-5. Editor with no comments
+### M-5. Clipboard unchanged on failure
 
-1. Open any file that has no sitatame comments.
-2. - [ ] No inlays appear; no exceptions logged in idea.log.
-
-### M-6. Line out of range
-
-1. Add a comment with `line: 9999` to a short file, then open that file.
-2. - [ ] No crash; idea.log shows a `sitatame inlay: line 9999 out of range` debug message.
-
-### M-7. Multiple files
-
-1. Open two tabs with comments on different files.
-2. - [ ] Each tab shows only the inlays for its own file, not the other's.
+- [ ] Copy some sentinel text to the clipboard before triggering the action.
+- [ ] Simulate a failure in `snapshotComments` (e.g. point the plugin at a repo
+  with a corrupted review.md).
+- [ ] After the error notification appears, paste from clipboard — the sentinel
+  text should still be there (no partial prompt was written).
 
 ## N. Fat Jar Distribution (Issue #88)
 
@@ -362,4 +358,49 @@ unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
   and contains exactly one provider line (`org.slf4j.simple.SimpleServiceProvider`).
 - [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
   the fat jar (`java -jar "$JAR" --help`).
+
+## O. IntelliJ Editor Inlay — Block Comment Display (#117)
+
+Prerequisites: build and install the plugin (`./gradlew buildPlugin`), open a project that has at least one `review.md` with LINE or RANGE comments.
+
+### O-1. Basic inlay appearance
+
+1. Open a file that has a sitatame comment anchored to a specific line.
+2. - [ ] A card appears directly below the anchor line in the editor (not in the gutter).
+3. - [ ] The card shows: a coloured dot (blue = open, green = resolved), the first line of the comment body, and a "Resolve" or "Reopen" button depending on state.
+4. - [ ] Multiple comments on the same line appear as stacked rows in a single card.
+
+### O-2. Resolve / Reopen button
+
+1. Click the **Resolve** button on an open comment.
+2. - [ ] The dot changes from blue to green and the button label changes to "Reopen".
+3. - [ ] The underlying `review.md` is updated (check with `cat ~/.sitatame/<project>/<branch>/review.md`).
+4. Click **Reopen** on a resolved comment.
+5. - [ ] State toggles back to open (blue dot, "Resolve" label).
+
+### O-3. Collapse defaults
+
+1. Open a file with a resolved comment and an open comment.
+2. - [ ] The resolved comment row is visually compact (collapsed) — only its first line is shown.
+3. - [ ] The open comment is expanded.
+
+### O-4. No inlay for non-line anchors
+
+1. Add a file-level comment (`kind: file`) or review-level comment (`kind: review`) via CLI.
+2. - [ ] No inlay appears in the editor for such comments (they have no line anchor).
+
+### O-5. Editor with no comments
+
+1. Open any file that has no sitatame comments.
+2. - [ ] No inlays appear; no exceptions logged in idea.log.
+
+### O-6. Line out of range
+
+1. Add a comment with `line: 9999` to a short file, then open that file.
+2. - [ ] No crash; idea.log shows a `sitatame inlay: line 9999 out of range` debug message.
+
+### O-7. Multiple files
+
+1. Open two tabs with comments on different files.
+2. - [ ] Each tab shows only the inlays for its own file, not the other's.
 
