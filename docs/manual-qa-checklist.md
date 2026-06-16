@@ -359,3 +359,48 @@ unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
 - [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
   the fat jar (`java -jar "$JAR" --help`).
 
+## O. IntelliJ Editor Inlay — Block Comment Display (#117)
+
+Prerequisites: build and install the plugin (`./gradlew buildPlugin`), open a project that has at least one `review.md` with LINE or RANGE comments.
+
+### O-1. Basic inlay appearance
+
+1. Open a file that has a sitatame comment anchored to a specific line.
+2. - [ ] A card appears directly below the anchor line in the editor (not in the gutter).
+3. - [ ] The card shows: a coloured dot (blue = open, green = resolved), the first line of the comment body, and a "Resolve" or "Reopen" button depending on state.
+4. - [ ] Multiple comments on the same line appear as stacked rows in a single card.
+
+### O-2. Resolve / Reopen button
+
+1. Click the **Resolve** button on an open comment.
+2. - [ ] The dot changes from blue to green and the button label changes to "Reopen".
+3. - [ ] The underlying `review.md` is updated (check with `cat ~/.sitatame/<project>/<branch>/review.md`).
+4. Click **Reopen** on a resolved comment.
+5. - [ ] State toggles back to open (blue dot, "Resolve" label).
+
+### O-3. Collapse defaults
+
+1. Open a file with a resolved comment and an open comment.
+2. - [ ] The resolved comment row is visually compact (collapsed) — only its first line is shown.
+3. - [ ] The open comment is expanded.
+
+### O-4. No inlay for non-line anchors
+
+1. Add a file-level comment (`kind: file`) or review-level comment (`kind: review`) via CLI.
+2. - [ ] No inlay appears in the editor for such comments (they have no line anchor).
+
+### O-5. Editor with no comments
+
+1. Open any file that has no sitatame comments.
+2. - [ ] No inlays appear; no exceptions logged in idea.log.
+
+### O-6. Line out of range
+
+1. Add a comment with `line: 9999` to a short file, then open that file.
+2. - [ ] No crash; idea.log shows a `sitatame inlay: line 9999 out of range` debug message.
+
+### O-7. Multiple files
+
+1. Open two tabs with comments on different files.
+2. - [ ] Each tab shows only the inlays for its own file, not the other's.
+

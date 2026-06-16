@@ -49,6 +49,14 @@
         <notificationGroup id="sitatame.review" displayType="BALLOON"/>
 
         <!--
+            SitatameEditorFactoryListener hooks editorCreated to attach block
+            inlays for sitatame comments. Registered here (not via @Listener
+            annotation) so it is explicit and version-controllable.
+        -->
+        <editorFactoryListener
+            implementation="dev.sitatame.intellij.inlay.SitatameEditorFactoryListener"/>
+
+        <!--
             Gutter line markers: draws an icon in the editor gutter for every
             line that carries a sitatame review comment.
             language="any" makes IntelliJ call the provider for all file types.
