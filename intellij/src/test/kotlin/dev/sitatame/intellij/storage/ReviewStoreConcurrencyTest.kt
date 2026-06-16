@@ -3,6 +3,7 @@ package dev.sitatame.intellij.storage
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertSame
 import org.junit.Before
 import org.junit.Test
 import java.nio.file.Files
@@ -230,7 +231,13 @@ class ReviewStoreConcurrencyTest {
      *
      * Without the double-checked locking fix, each thread would decode the
      * file independently, giving a count equal to [threadCount]. With the fix,
-     * only one decode should happen.
+     * only one decode should happen (the winner of the key-lock race reads the
+     * file; all losers find the cache already populated on the second check).
+     *
+     * We use [ReviewStore.decodeFunc] — a test seam on the actual read path
+     * (Codec.decode) — to count real file-decode invocations directly rather
+     * than proxying through encodeFunc (which is a write-path hook and proves
+     * nothing about decode behaviour).
      */
     @Test
     fun loadOrInit_thunderingHerd_decodesFileExactlyOnce() {
@@ -245,24 +252,14 @@ class ReviewStoreConcurrencyTest {
 
         val decodeCount = AtomicInteger(0)
 
-        // Create a fresh store that intercepts every decode via encodeFunc for
-        // the read path. We override the store's encodeFunc to count; the read
-        // path uses Codec.decode directly, so we instrument via a subclass
-        // approach is not applicable here. Instead we use a fresh store with a
-        // cold cache and measure the side effect of double-checking: the lock
-        // ensures only one thread reaches the disk-read branch.
-        //
-        // We verify indirectly: prime the pathsOverride so the fresh store
-        // reads the file written by seedStore, then measure that after N
-        // concurrent loadOrInit calls the cache holds exactly the seeded review.
+        // Fresh store with a cold cache. Inject decodeFunc to count every actual
+        // Codec.decode call that flows through loadOrInit.
         val freshStore = ReviewStore().apply {
             pathsOverride = paths
             clock = Clock.fixed(Instant.parse("2026-06-17T10:00:00Z"), ZoneOffset.UTC)
-            // Intercept encode to count calls (only the write path uses this,
-            // not decode; we use it to verify no accidental overwrites happen).
-            encodeFunc = { r ->
+            decodeFunc = { bytes ->
                 decodeCount.incrementAndGet()
-                Codec.encode(r)
+                Codec.decode(bytes)
             }
         }
 
@@ -281,21 +278,27 @@ class ReviewStoreConcurrencyTest {
         executor.awaitTermination(10, TimeUnit.SECONDS)
 
         assertEquals("all threads must get a result", threadCount, results.size)
-        // Every thread must see the same Review instance (same object reference
-        // after the first load populates the cache).
+
+        // Every thread must receive the exact same Review object reference
+        // (the cache stores the instance written by the winning thread; all
+        // others read from the cache on the second check inside the lock).
         val first = results.first()
         for (r in results) {
-            assertEquals(
-                "all threads must see the same cached Review instance",
+            assertSame(
+                "all threads must see the same cached Review instance (object identity)",
                 first,
                 r,
             )
         }
+
+        // Only the lock-winning thread should have called Codec.decode; the rest
+        // must hit the fast path (cache hit on the second check inside the lock).
         assertEquals(
-            "encodeFunc must not be called during loadOrInit (it is a read path)",
-            0,
+            "Codec.decode must be called exactly once across $threadCount concurrent loadOrInit calls",
+            1,
             decodeCount.get(),
         )
+
         // The loaded review must contain the seeded comment.
         val snapshot = freshStore.snapshotComments("", "")
         assertEquals("seeded comment must be visible", 1, snapshot.size)
