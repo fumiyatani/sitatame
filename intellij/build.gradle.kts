@@ -82,12 +82,12 @@ dependencies {
 intellijPlatform {
     pluginConfiguration {
         // sinceBuild matches the IDE we depend on. untilBuild is intentionally
-        // wide (251.*) so 2024.3+, 2025.1.x IDEs and the Android Studio
+        // wide (253.*) so 2024.3+, 2025.1.x–2025.3.x IDEs and the Android Studio
         // releases that track them all load the plugin. We will narrow this
         // in Phase 2 once we know which APIs are actually unstable.
         ideaVersion {
             sinceBuild = "243"
-            untilBuild = "251.*"
+            untilBuild = "253.*"
         }
     }
 
