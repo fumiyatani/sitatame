@@ -1,5 +1,6 @@
 package dev.sitatame.intellij.settings
 
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.components.PersistentStateComponent
 import com.intellij.openapi.components.Service
 import com.intellij.openapi.components.State
@@ -12,8 +13,10 @@ import com.intellij.util.xmlb.XmlSerializerUtil
  * Two knobs Phase 1 needs:
  *  - SITATAME_HOME override — lets the user point review storage at a
  *    non-default directory without editing their shell rc.
- *  - Base ref — used by Phase 2 when we wire up diff context, kept here so a
- *    Phase 1 → Phase 2 upgrade doesn't migrate state.
+ *  - Base ref — the explicit base ref for diff context. When blank (default),
+ *    RepoContext auto-detects via remote.origin.head git config, falling back
+ *    to "origin/main". Set an explicit value here to pin a specific ref
+ *    (e.g. "origin/develop") and skip auto-detection.
  */
 @Service(Service.Level.APP)
 @State(name = "SitatameSettings", storages = [Storage("sitatame.xml")])
@@ -21,7 +24,8 @@ class SitatameSettings : PersistentStateComponent<SitatameSettings.PersistedStat
 
     data class PersistedState(
         var sitatameHomeOverride: String = "",
-        var baseRef: String = "origin/main",
+        /** Empty string means auto-detect (origin/HEAD → origin/main fallback). */
+        var baseRef: String = "",
     )
 
     private var myState = PersistedState()
@@ -30,5 +34,10 @@ class SitatameSettings : PersistentStateComponent<SitatameSettings.PersistedStat
 
     override fun loadState(state: PersistedState) {
         XmlSerializerUtil.copyBean(state, myState)
+    }
+
+    companion object {
+        fun getInstance(): SitatameSettings =
+            ApplicationManager.getApplication().getService(SitatameSettings::class.java)
     }
 }
