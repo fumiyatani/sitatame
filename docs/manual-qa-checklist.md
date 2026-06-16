@@ -179,6 +179,25 @@ a sitatame `review.md` in `~/.sitatame/<project>/<branch>/`.
   window does **not** refresh (multi-project isolation — verify by having two
   projects open simultaneously if possible).
 
+### M-6. Enter / Space Key Bindings (Issue #94)
+
+- [ ] Select any comment row with the keyboard (arrow keys).
+- [ ] Press **Enter** → the editor jumps to the file and line anchored by the
+  comment (same behaviour as double-clicking the row). The resolved/open state
+  does **not** change.
+- [ ] Press **Space** → the resolved/open state of the selected comment toggles
+  (open → resolved or resolved → open) and the list refreshes. The editor does
+  **not** navigate.
+- [ ] In **Settings → Keymap** search for "sitatame: Toggle Resolved (Tool
+  Window)" — the action appears with no default shortcut.
+- [ ] Assign a custom shortcut (e.g. **Space**) via Keymap settings → confirm
+  that the action fires when the tool window list is focused and a comment is
+  selected.
+- [ ] With **no** comment selected, verify the Keymap action is disabled
+  (greyed out in the menu).
+- [ ] Note: the list uses SINGLE_SELECTION mode; multi-select is not supported.
+  When a Keymap action fires, only the single selected comment is affected.
+
 ## J. Regression — Read-Only View Still Works
 
 - [ ] After all write operations, the diff view still renders correctly.
