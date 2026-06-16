@@ -92,11 +92,19 @@ intellijPlatform {
     }
 
     // The Plugin Verifier downloads alternate IDE distributions to validate
-    // the plugin against. Sandboxed CI may not be able to reach those mirrors,
-    // so we list only the primary target. CI handles wider matrix.
+    // the plugin against. `recommended()` walks the whole sinceBuild..untilBuild
+    // range, but our untilBuild is "253.*" while IDE 2025.3 (build 253) is not
+    // yet published on the JetBrains maven mirror — `recommended()` therefore
+    // fails to resolve `ideaIC:2025.3`. Pin the verifier to the stable releases
+    // that are actually downloadable today (2024.3 .. 2025.2 / builds 243..252).
+    // Bump untilBuild here when 253 becomes available; the runtime untilBuild
+    // above can stay at "253.*" so the plugin still loads on EAP IDEs.
     pluginVerification {
         ides {
-            recommended()
+            select {
+                sinceBuild = "243"
+                untilBuild = "252.*"
+            }
         }
         // Mute "TemplateWordInPluginId": the plugin id 'dev.sitatame.intellij'
         // contains 'intellij', which the Marketplace style rule flags. The id
