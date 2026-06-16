@@ -256,9 +256,50 @@ cd web && ./gradlew :run --args="--repo /tmp"
 
 - [ ] Server prints an error mentioning `.git` and exits without binding a port.
 
-## M. Fat Jar Distribution (Issue #88)
+## M. CopyAIPromptAction — Threading and Lifecycle (Issue #105)
 
-### M-1. Build the fat jar
+These items verify the threading fix (P2-1 / P2-2 / P3-1) in the IntelliJ
+plugin action. Requires running the plugin inside a sandboxed IDE instance
+(`cd intellij && ./gradlew runIde`).
+
+### M-1. snapshotComments runs off the EDT
+
+- [ ] Set a breakpoint (or add a log statement) inside `CopyAIPromptAction.run`
+  before `store.snapshotComments(...)`.
+- [ ] Trigger the action → breakpoint / log should show the current thread is
+  **not** the Event Dispatch Thread (thread name does not contain "AWT-EventQueue").
+
+### M-2. buildPrompt runs off the EDT
+
+- [ ] `buildPrompt(targets)` is called from the same background thread as
+  `snapshotComments` — confirm the thread name at that call site is not
+  "AWT-EventQueue".
+
+### M-3. Clipboard write and dialog show on the EDT
+
+- [ ] After `buildPrompt` completes, `CopyPasteManager.setContents` and
+  `PromptPreviewDialog.show()` should run on the Event Dispatch Thread.
+- [ ] Verify by adding a breakpoint inside the `invokeLater` lambda — thread name
+  should contain "AWT-EventQueue".
+
+### M-4. Disposed project does not open dialog
+
+- [ ] With the action running: force-close the project while the background task
+  is still in flight (e.g. simulate slow I/O with a sleep patch).
+- [ ] The `PromptPreviewDialog` must **not** appear; `project.disposed` expiration
+  prevents the `invokeLater` runnable from executing.
+
+### M-5. Clipboard unchanged on failure
+
+- [ ] Copy some sentinel text to the clipboard before triggering the action.
+- [ ] Simulate a failure in `snapshotComments` (e.g. point the plugin at a repo
+  with a corrupted review.md).
+- [ ] After the error notification appears, paste from clipboard — the sentinel
+  text should still be there (no partial prompt was written).
+
+## N. Fat Jar Distribution (Issue #88)
+
+### N-1. Build the fat jar
 
 ```sh
 make web-jar
@@ -267,7 +308,7 @@ make web-jar
 - [ ] `make web-jar` completes without error.
 - [ ] `web/build/libs/sitatame-web-*-fat.jar` exists and is roughly 15–25 MB.
 
-### M-2. Launch fat jar against a different repository
+### N-2. Launch fat jar against a different repository
 
 1. Copy (or note the path of) the fat jar, e.g.
    `JAR=/path/to/sitatame-web-0.2.0-fat.jar`.
@@ -281,7 +322,7 @@ make web-jar
 6. - [ ] `GET /api/v1/workspace` returns a `projectSlug` matching the other repo.
 7. - [ ] Ctrl-C stops the server cleanly (no exception stack trace).
 
-### M-3. `--base` flag works with fat jar
+### N-3. `--base` flag works with fat jar
 
 ```sh
 java -jar "$JAR" --repo /path/to/repo --base origin/develop
@@ -289,7 +330,7 @@ java -jar "$JAR" --repo /path/to/repo --base origin/develop
 
 - [ ] Diff is relative to `origin/develop`, not `origin/main`.
 
-### M-4. `--help` prints usage and exits
+### N-4. `--help` prints usage and exits
 
 ```sh
 java -jar "$JAR" --help
@@ -298,7 +339,7 @@ java -jar "$JAR" --help
 - [ ] Usage text is printed and the process exits 0 (no server is started, no
   port is bound).
 
-### M-5. Invalid `--repo` rejected at startup
+### N-5. Invalid `--repo` rejected at startup
 
 ```sh
 java -jar "$JAR" --repo /no/such/path
@@ -306,7 +347,7 @@ java -jar "$JAR" --repo /no/such/path
 
 - [ ] Server prints a clear error to stderr and exits without binding a port.
 
-### M-6. SPI descriptors are present in the fat jar
+### N-6. SPI descriptors are present in the fat jar
 
 ```sh
 JAR=web/build/libs/sitatame-web-*-fat.jar
@@ -317,3 +358,4 @@ unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
   and contains exactly one provider line (`org.slf4j.simple.SimpleServiceProvider`).
 - [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
   the fat jar (`java -jar "$JAR" --help`).
+
