@@ -297,7 +297,11 @@ sitatame --staged       # ステージ済みの変更をレビュー（index vs 
 sitatame --working      # 未コミットの全変更をレビュー（worktree vs HEAD）
 sitatame --new          # review.md が既に存在する場合は起動を拒否
 sitatame --force-new    # review.md を review.md.bak にバックアップして新規開始
-sitatame search TODO    # ~/.sitatame/<project-slug>/ を grep
+sitatame search TODO                       # 全プロジェクトのレビューを横断 grep
+sitatame search --project myproj TODO      # 特定プロジェクトのみ検索
+sitatame search --state open TODO          # open コメントのみ
+sitatame search --json TODO                # JSON 出力（IntelliJ 等のツール連携用）
+sitatame search --root /tmp/reviews TODO   # SITATAME_HOME を一時的に上書き
 ```
 
 キーバインド:

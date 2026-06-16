@@ -301,7 +301,11 @@ sitatame --staged       # review staged changes (index vs HEAD)
 sitatame --working      # review all uncommitted changes (worktree vs HEAD)
 sitatame --new          # refuse if review.md already exists for this branch
 sitatame --force-new    # back up review.md to review.md.bak and start fresh
-sitatame search TODO    # grep saved reviews under ~/.sitatame/<project-slug>/
+sitatame search TODO                       # grep all saved reviews (all projects)
+sitatame search --project myproj TODO      # limit to one project
+sitatame search --state open TODO          # only open comments
+sitatame search --json TODO                # JSON output for tooling (e.g. IntelliJ)
+sitatame search --root /tmp/reviews TODO   # override SITATAME_HOME
 ```
 
 Keys:
