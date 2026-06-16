@@ -119,6 +119,118 @@ tasks.named<Test>("jvmTest") {
     }
 }
 
+// `./gradlew :web:jvmFatJar` builds a self-contained single JAR (all JVM
+// runtime dependencies bundled) that can be launched without Gradle:
+//   java -jar web/build/libs/sitatame-web-<version>-fat.jar [--repo /path] [--base ref]
+//
+// Duplicate entries in META-INF are handled as follows:
+//   - EXCLUDE strategy is used as the default (first-in wins).
+//   - META-INF/services/* (Java SPI descriptors) are merged by concatenation so
+//     that multiple providers for the same interface are all retained.  Plain
+//     EXCLUDE would silently drop every provider after the first, breaking SLF4J
+//     bindings, Ktor engine discovery, and any future SPI-registered extension.
+//   - Signature files (*.SF, *.DSA, *.RSA, INDEX.LIST) are stripped so the JVM
+//     does not reject the jar for having a broken signature.
+tasks.register<Jar>("jvmFatJar") {
+    group = "build"
+    description = "Assembles a self-contained fat JAR with all JVM runtime dependencies bundled."
+    archiveClassifier.set("fat")
+
+    manifest {
+        attributes("Main-Class" to "dev.sitatame.web.server.ServerKt")
+    }
+
+    // EXCLUDE is the default for everything except META-INF/services/*.
+    // SPI descriptors are handled separately below via explicit concatenation.
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+
+    val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
+    // Exclude SPI descriptors and signature files per source so the top-level
+    // exclude does not accidentally suppress the merged-services directory added
+    // further below.
+    from(jvmMainCompilation.output.allOutputs) {
+        exclude(
+            "META-INF/*.SF",
+            "META-INF/*.DSA",
+            "META-INF/*.RSA",
+            "META-INF/INDEX.LIST",
+            "META-INF/services/*",
+        )
+    }
+
+    val runtimeCp = configurations.named("jvmRuntimeClasspath")
+    dependsOn(runtimeCp)
+    from({
+        runtimeCp.get()
+            .filter { it.name.endsWith(".jar") }
+            .map { zipTree(it) }
+    }) {
+        exclude(
+            "META-INF/*.SF",
+            "META-INF/*.DSA",
+            "META-INF/*.RSA",
+            "META-INF/INDEX.LIST",
+            "META-INF/services/*",
+        )
+    }
+
+    // Merge SPI descriptors: the `mergeSpiDescriptors` task below collects
+    // every META-INF/services/<interface> from the compiled outputs and all
+    // runtime jars, concatenates lines per interface name, and writes the
+    // merged files into `build/tmp/mergedServices/META-INF/services/`.
+    // This source is added without an exclude so the merged descriptors are
+    // included verbatim; no provider is silently dropped.
+    val mergedServicesDir = layout.buildDirectory.dir("tmp/mergedServices")
+    dependsOn("mergeSpiDescriptors")
+    from(mergedServicesDir)
+}
+
+// `mergeSpiDescriptors` collects META-INF/services/* from all JVM runtime
+// dependencies and the compiled jvmMain outputs, concatenates lines per
+// interface name (de-duplicating within each file), and writes the merged
+// descriptors into build/tmp/mergedServices/META-INF/services/.  The
+// `jvmFatJar` task depends on this task and includes the output directory so
+// that all SPI providers are retained — plain EXCLUDE would silently drop
+// every provider after the first.
+tasks.register("mergeSpiDescriptors") {
+    group = "build"
+    description = "Merges META-INF/services/* SPI descriptors from all JVM runtime jars."
+
+    val jvmMainCompilation = kotlin.jvm().compilations.getByName("main")
+    val runtimeCp = configurations.named("jvmRuntimeClasspath")
+    dependsOn(runtimeCp)
+    dependsOn(jvmMainCompilation.compileAllTaskName)
+
+    val outDir = layout.buildDirectory.dir("tmp/mergedServices/META-INF/services")
+    outputs.dir(outDir)
+
+    doLast {
+        val servicesMap = mutableMapOf<String, MutableList<String>>()
+
+        fun collectFrom(tree: FileTree) {
+            tree.matching { include("META-INF/services/*") }.forEach { f ->
+                val lines = f.readLines().filter { it.isNotBlank() }
+                servicesMap.getOrPut(f.name) { mutableListOf() }.addAll(lines)
+            }
+        }
+
+        // From compiled class outputs (jvmMain).
+        collectFrom(jvmMainCompilation.output.allOutputs.asFileTree)
+
+        // From all runtime dependency jars.
+        runtimeCp.get()
+            .filter { it.name.endsWith(".jar") }
+            .forEach { jar -> collectFrom(zipTree(jar)) }
+
+        val dest = outDir.get().asFile
+        dest.mkdirs()
+        // De-duplicate per interface: preserve order but drop repeated class names.
+        servicesMap.forEach { (iface, providers) ->
+            dest.resolve(iface).writeText(providers.distinct().joinToString("\n") + "\n")
+        }
+    }
+}
+
 // `./gradlew :web:run` runs the Ktor backend. The Kotlin Multiplatform plugin
 // does not register the `application` plugin automatically; we wire a JavaExec
 // task directly against the JVM compilation outputs to avoid the friction.
