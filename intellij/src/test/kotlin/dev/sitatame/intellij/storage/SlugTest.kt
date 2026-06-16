@@ -44,9 +44,14 @@ class SlugTest {
     @Test
     fun branchSlug_emptyBranchUsesGoDetachedSlug() {
         val got = Slug.branchSlug("")
-        // The Go side enshrines the empty-string sha1 prefix as the
-        // detached-HEAD slug literal "branch__da39a3ee"; assert that exact
-        // value so any future drift fails loudly.
+        // The Go side encodes the empty-string SHA-1 as "branch__da39a3ee".
+        // This is the collision slug that two *different* transient Git states
+        // would share if RepoContext ever passed "" as the branch input.
+        // As of issue #118, RepoContext.resolveBranch returns null for the
+        // (branchName=null, revision=null) transient case, so Slug.branchSlug("")
+        // is no longer reachable from normal plugin flows.
+        // We keep this test to document the sentinel value and catch any future
+        // Go-side drift in the cross-route contract.
         assertEquals("branch__da39a3ee", got)
     }
 
