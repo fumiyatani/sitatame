@@ -202,6 +202,89 @@ class ReviewStoreTest {
         assertFalse("orphaned .tmp should be deleted", Files.exists(orphan))
     }
 
+    /**
+     * Regression for P1-1: recoverFromCrash must return true only when a bak
+     * was actually promoted. When review.md already exists (normal startup),
+     * it must return false even if .bak is also present.
+     */
+    @Test
+    fun recoverFromCrash_returnsTrueOnlyWhenActuallyPromoted() {
+        val branchDir = java.nio.file.Paths.get(paths.branchDir())
+        Files.createDirectories(branchDir)
+
+        // Case 1: .bak exists, review.md absent → real recovery → true.
+        val bakFile = java.nio.file.Paths.get(paths.bakFile())
+        Files.write(bakFile, "crash content".toByteArray())
+        assertTrue(
+            "recoverFromCrash must return true when bak is promoted",
+            store.recoverFromCrash("", ""),
+        )
+
+        // review.md now exists. Add .bak back to simulate normal-startup state.
+        Files.write(bakFile, "leftover bak".toByteArray())
+        assertFalse(
+            "recoverFromCrash must return false when review.md already exists",
+            store.recoverFromCrash("", ""),
+        )
+    }
+
+    /**
+     * Regression for P1-2: after crash recovery, a warm in-memory cache must be
+     * invalidated so that the next snapshotComments/loadOrInit returns the
+     * content of the recovered file rather than the stale cached Review.
+     *
+     * Scenario:
+     *  1. Add a comment → review.md written, cache warm with "before crash".
+     *  2. Encode a distinct review into .bak directly (simulates the previous
+     *     save's backup). Delete review.md to simulate the crash window (bak
+     *     present, review.md absent).
+     *  3. Call recoverFromCrash → .bak promoted to review.md, cache invalidated.
+     *  4. snapshotComments must return the content from .bak (the recovered
+     *     file), NOT the stale "before crash" entry that was in the warm cache.
+     */
+    @Test
+    fun recoverFromCrash_invalidatesCacheSoSnapshotReflectsRecoveredContent() {
+        // Step 1: add "before crash" comment — warms the cache for this branch.
+        store.addComment("", "") { _ -> sampleComment("src/before.kt", 1, "before crash") }
+        assertEquals("warm cache has 1 comment", 1, store.snapshotComments("", "").size)
+
+        // Step 2: build a distinct Review and encode it directly into .bak,
+        // then remove review.md to simulate the crash window.
+        val recoveryReview = Review(
+            schema = 1,
+            id = "recovery-id",
+            createdAt = "2026-06-14T10:00:00Z",
+            branch = "",
+        ).also { r ->
+            r.comments.add(sampleComment("src/recovered.kt", 99, "after recovery"))
+        }
+        val bakFile = java.nio.file.Paths.get(paths.bakFile())
+        val reviewFile = java.nio.file.Paths.get(paths.reviewFile())
+        Files.createDirectories(bakFile.parent)
+        Files.write(bakFile, Codec.encode(recoveryReview))
+        Files.deleteIfExists(reviewFile)
+        assertFalse("review.md must not exist before recovery", Files.exists(reviewFile))
+
+        // Step 3: recover — bak must be promoted and cache invalidated.
+        val promoted = store.recoverFromCrash("", "")
+        assertTrue("recovery must report promotion", promoted)
+        assertTrue("review.md must exist after recovery", Files.isRegularFile(reviewFile))
+
+        // Step 4: snapshot must come from the recovered file, not the stale cache.
+        val recoveredSnapshot = store.snapshotComments("", "")
+        assertEquals("recovered snapshot must have exactly one comment", 1, recoveredSnapshot.size)
+        assertEquals(
+            "recovered comment path must come from the recovered file",
+            "src/recovered.kt",
+            recoveredSnapshot[0].anchor.path,
+        )
+        assertEquals(
+            "recovered comment body must come from the recovered file",
+            "after recovery",
+            recoveredSnapshot[0].body,
+        )
+    }
+
     // -----------------------------------------------------------------------
     // rescue JSON content: full Review + Go key-name parity
     // -----------------------------------------------------------------------

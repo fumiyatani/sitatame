@@ -93,16 +93,31 @@ class AddCommentAction : AnAction() {
                                 body = body.trim(),
                             )
                         }
-                        // Notify gutter markers to refresh for all open files.
-                        ApplicationManager.getApplication().messageBus
-                            .syncPublisher(ReviewChangedTopic.TOPIC)
-                            .reviewChanged()
-                        ApplicationManager.getApplication().invokeLater {
-                            notify(
-                                project,
-                                "sitatame: saved comment to ${result.path}",
-                                NotificationType.INFORMATION,
-                            )
+                        if (result.succeeded) {
+                            // Notify gutter markers to refresh for all open files.
+                            ApplicationManager.getApplication().messageBus
+                                .syncPublisher(ReviewChangedTopic.TOPIC)
+                                .reviewChanged()
+                            ApplicationManager.getApplication().invokeLater {
+                                notify(
+                                    project,
+                                    "sitatame: saved comment to ${result.path}",
+                                    NotificationType.INFORMATION,
+                                )
+                            }
+                        } else {
+                            // Encode failure: a rescue file was written but the comment
+                            // was not persisted. Do not publish REVIEW_CHANGED_TOPIC.
+                            val rescuePath = result.error?.rescuePath ?: ""
+                            log.warn("AddCommentAction: encode failed; rescue at $rescuePath")
+                            ApplicationManager.getApplication().invokeLater {
+                                notify(
+                                    project,
+                                    "sitatame: failed to save comment — encode error" +
+                                        (if (rescuePath.isNotEmpty()) "; rescue written to $rescuePath" else ""),
+                                    NotificationType.ERROR,
+                                )
+                            }
                         }
                     } catch (ex: Exception) {
                         log.warn("AddCommentAction: failed to persist draft", ex)
