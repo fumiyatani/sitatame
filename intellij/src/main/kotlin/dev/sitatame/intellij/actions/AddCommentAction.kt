@@ -17,6 +17,7 @@ import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBScrollPane
 import dev.sitatame.intellij.git.BlobResolver
 import dev.sitatame.intellij.git.RepoContext
+import dev.sitatame.intellij.markers.ReviewChangedTopic
 import dev.sitatame.intellij.storage.Anchor
 import dev.sitatame.intellij.storage.AnchorKind
 import dev.sitatame.intellij.storage.AnchorSide
@@ -92,6 +93,10 @@ class AddCommentAction : AnAction() {
                                 body = body.trim(),
                             )
                         }
+                        // Notify gutter markers to refresh for all open files.
+                        ApplicationManager.getApplication().messageBus
+                            .syncPublisher(ReviewChangedTopic.TOPIC)
+                            .reviewChanged()
                         ApplicationManager.getApplication().invokeLater {
                             notify(
                                 project,
