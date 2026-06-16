@@ -72,6 +72,14 @@
         -->
         <postStartupActivity
             implementation="dev.sitatame.intellij.markers.SitatameProjectActivity"/>
+
+        <!--
+            Storage startup activity: calls ReviewStore.recoverFromCrash once
+            per project open to promote orphaned review.md.bak files and clean
+            up leftover .tmp files from interrupted write cycles (issue #106).
+        -->
+        <postStartupActivity
+            implementation="dev.sitatame.intellij.storage.ReviewStoreStartupActivity"/>
     </extensions>
 
     <actions>
