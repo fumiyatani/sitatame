@@ -46,7 +46,12 @@ class CopyAIPromptAction : AnAction() {
         val project = e.project ?: return
         val repo = RepoContext.forProject(project)
             ?: run {
-                notify(project, "sitatame: no Git repository detected for this project", NotificationType.WARNING)
+                val message = if (RepoContext.hasNoResolvableRef(project)) {
+                    "sitatame: Git operation in progress, please retry after completion"
+                } else {
+                    "sitatame: no Git repository detected for this project"
+                }
+                notify(project, message, NotificationType.WARNING)
                 return
             }
 

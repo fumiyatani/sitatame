@@ -58,7 +58,12 @@ class AddCommentAction : AnAction() {
 
         val repo = RepoContext.forFile(project, file)
             ?: run {
-                notify(project, "sitatame: file is not in a Git repository", NotificationType.WARNING)
+                val message = if (RepoContext.hasNoResolvableRef(project)) {
+                    "sitatame: Git operation in progress, please retry after completion"
+                } else {
+                    "sitatame: file is not in a Git repository"
+                }
+                notify(project, message, NotificationType.WARNING)
                 return
             }
 
