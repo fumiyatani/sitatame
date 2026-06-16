@@ -45,7 +45,7 @@ class SitatameConfigurable : Configurable {
         panel.add(homeField, gbc)
 
         gbc.gridx = 0; gbc.gridy = 1; gbc.weightx = 0.0
-        panel.add(JBLabel("Base ref:"), gbc)
+        panel.add(JBLabel("Base ref (blank = auto-detect):"), gbc)
         gbc.gridx = 1; gbc.weightx = 1.0
         panel.add(baseRefField, gbc)
 
@@ -61,7 +61,11 @@ class SitatameConfigurable : Configurable {
     override fun apply() {
         val s = settings.state
         s.sitatameHomeOverride = homeField.text.trim()
-        s.baseRef = baseRefField.text.trim().ifEmpty { "origin/main" }
+        // Empty means auto-detect (origin/HEAD → origin/main): store as-is.
+        // After apply, users should press Refresh in the tool window to pick up
+        // the new base ref (auto-refresh wired in a follow-up PR after
+        // REVIEW_CHANGED_TOPIC lands on main via PR #95/#96).
+        s.baseRef = baseRefField.text.trim()
         // Reset the in-memory cache so subsequent reads honour the new home.
         store.invalidate()
     }
