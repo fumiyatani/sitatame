@@ -16,6 +16,8 @@ import java.time.format.DateTimeFormatter
 import java.util.Locale
 import java.util.UUID
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.locks.ReentrantLock
+import kotlin.concurrent.withLock
 
 /**
  * Application-level singleton service for sitatame review storage.
@@ -30,14 +32,32 @@ import java.util.concurrent.ConcurrentHashMap
  * Thread model:
  *  - Action layer runs on EDT (per the 2024.2+ threading rules) and dispatches
  *    file I/O off-EDT before returning to EDT to refresh the tool window.
- *  - Mutations are serialised by a per-store lock so two background I/O
- *    threads writing different comments don't lose updates.
+ *  - Mutations, loads, and snapshots are serialised by a per-cache-key
+ *    [ReentrantLock] (one lock per `<projectSlug>/<branchSlug>`) so:
+ *    (a) concurrent mutations on the same branch don't lose updates,
+ *    (b) snapshotComments always sees a consistent list (no CME),
+ *    (c) thundering-herd on first load is avoided via double-checked locking,
+ *    (d) in-memory cache is rolled back when saveReview throws.
  */
 @Service(Service.Level.APP)
 class ReviewStore {
 
     private val log = Logger.getInstance(ReviewStore::class.java)
-    private val lock = Any()
+
+    /**
+     * Per-key locks keyed by `<projectSlug>/<branchSlug>`.
+     *
+     * Using one ReentrantLock per cache key rather than a single global lock
+     * avoids artificial serialisation across independent branches. Each
+     * mutation (addComment / toggleComment / removeComment), loadOrInit, and
+     * snapshotComments acquires the appropriate key lock so that:
+     *  - concurrent mutations on the same branch are serialised,
+     *  - concurrent readers (snapshotComments) wait until mutation + save
+     *    complete before copying the list, and
+     *  - the thundering-herd problem on first load is eliminated via
+     *    double-checked locking inside the key lock.
+     */
+    private val keyLocks = ConcurrentHashMap<String, ReentrantLock>()
 
     /**
      * In-memory cache keyed by `<projectSlug>/<branchSlug>`. Holds the most
@@ -73,28 +93,43 @@ class ReviewStore {
 
     private fun cacheKey(p: SitatamePaths): String = "${p.projectSlug}/${p.slug}"
 
+    /** Obtain or create the ReentrantLock for the given cache key. */
+    private fun keyLock(key: String): ReentrantLock =
+        keyLocks.computeIfAbsent(key) { ReentrantLock() }
+
     /**
      * Load the current review for the branch, or return a fresh empty [Review]
      * if no review file exists yet. The store caches the result so subsequent
      * tool-window refreshes are cheap.
+     *
+     * Uses double-checked locking inside the per-key [ReentrantLock] to
+     * eliminate the thundering-herd problem: when multiple threads call
+     * loadOrInit concurrently for the same branch key, only one will read
+     * the file; the rest will hit the cache on the second check inside the
+     * lock.
      */
     fun loadOrInit(repoRoot: String, branch: String): Review {
         val p = paths(repoRoot, branch)
         val key = cacheKey(p)
+        // Fast path: already cached, no lock needed.
         cache[key]?.let { return it }
-        val reviewPath = toPath(p.reviewFile())
-        val review = if (Files.isRegularFile(reviewPath)) {
-            try {
-                Codec.decode(Files.readAllBytes(reviewPath))
-            } catch (e: Exception) {
-                log.warn("failed to decode existing review at $reviewPath; starting fresh", e)
+        // Slow path: acquire key lock and double-check to avoid thundering herd.
+        return keyLock(key).withLock {
+            cache[key]?.let { return it }
+            val reviewPath = toPath(p.reviewFile())
+            val review = if (Files.isRegularFile(reviewPath)) {
+                try {
+                    Codec.decode(Files.readAllBytes(reviewPath))
+                } catch (e: Exception) {
+                    log.warn("failed to decode existing review at $reviewPath; starting fresh", e)
+                    freshReview(branch)
+                }
+            } else {
                 freshReview(branch)
             }
-        } else {
-            freshReview(branch)
+            cache[key] = review
+            review
         }
-        cache[key] = review
-        return review
     }
 
     /**
@@ -102,19 +137,37 @@ class ReviewStore {
      * on a background thread; caller MUST switch back to EDT before touching
      * UI. Returns the saved file path.
      *
+     * Cache rollback: the comment is added to the in-memory list before
+     * [saveReview] is called. If [saveReview] throws (disk full, permission
+     * denied, atomic-rename failure), the comment is removed from the list so
+     * the in-memory cache stays consistent with the on-disk state.
+     *
      * Publishes [REVIEW_CHANGED_TOPIC] on success so subscribers (tool windows)
      * can auto-refresh without polling.
      */
     fun addComment(repoRoot: String, branch: String, mutate: (Review) -> Comment): SaveResult {
-        val result = synchronized(lock) {
-            val p = paths(repoRoot, branch)
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        val result = keyLock(key).withLock {
             val review = loadOrInit(repoRoot, branch)
             val added = mutate(review)
             if (added.anchor.anchorId.isEmpty()) {
                 added.anchor.anchorId = UUID.randomUUID().toString()
             }
             review.comments.add(added)
-            saveReview(p, review)
+            val saveResult = try {
+                saveReview(p, review)
+            } catch (e: Exception) {
+                // Rollback: undo the in-memory mutation so cache stays in sync
+                // with the on-disk state after a save I/O failure.
+                review.comments.remove(added)
+                throw e
+            }
+            // Rollback on non-throwing failure (e.g. encode error → rescue).
+            if (!saveResult.succeeded) {
+                review.comments.remove(added)
+            }
+            saveResult
         }
         if (result.succeeded) publishChanged(repoRoot, branch)
         return result
@@ -124,15 +177,32 @@ class ReviewStore {
      * Toggle the state of the comment whose anchor matches the given
      * predicate, or returns null if no such comment exists.
      *
+     * Cache rollback: the state flip is applied before [saveReview] is called.
+     * If [saveReview] throws, the state is flipped back so the in-memory cache
+     * stays consistent with the on-disk state.
+     *
      * Publishes [REVIEW_CHANGED_TOPIC] on success.
      */
     fun toggleComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
-        val result = synchronized(lock) {
-            val p = paths(repoRoot, branch)
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        val result = keyLock(key).withLock {
             val review = loadOrInit(repoRoot, branch)
             val target = review.comments.firstOrNull(predicate) ?: return null
+            val previousState = target.state
             target.state = if (target.state == ReviewState.RESOLVED) ReviewState.OPEN else ReviewState.RESOLVED
-            saveReview(p, review)
+            val saveResult = try {
+                saveReview(p, review)
+            } catch (e: Exception) {
+                // Rollback: restore the previous state so cache stays in sync.
+                target.state = previousState
+                throw e
+            }
+            // Rollback on non-throwing failure (e.g. encode error → rescue).
+            if (!saveResult.succeeded) {
+                target.state = previousState
+            }
+            saveResult
         }
         if (result.succeeded) publishChanged(repoRoot, branch)
         return result
@@ -146,17 +216,34 @@ class ReviewStore {
      * Only the first matching comment is removed to avoid bulk-deleting multiple
      * comments that share the same path/line when anchorId is absent.
      *
+     * Cache rollback: the comment is removed from the in-memory list before
+     * [saveReview] is called. If [saveReview] throws, the comment is re-inserted
+     * at its original index so the in-memory cache stays consistent with the
+     * on-disk state.
+     *
      * Publishes [REVIEW_CHANGED_TOPIC] only when [SaveResult.succeeded] is true,
      * consistent with [addComment] and [toggleComment].
      */
     fun removeComment(repoRoot: String, branch: String, predicate: (Comment) -> Boolean): SaveResult? {
-        val result = synchronized(lock) {
-            val p = paths(repoRoot, branch)
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        val result = keyLock(key).withLock {
             val review = loadOrInit(repoRoot, branch)
             val idx = review.comments.indexOfFirst(predicate)
             if (idx < 0) return null
-            review.comments.removeAt(idx)
-            saveReview(p, review)
+            val removed = review.comments.removeAt(idx)
+            val saveResult = try {
+                saveReview(p, review)
+            } catch (e: Exception) {
+                // Rollback: re-insert the removed comment at the original index.
+                review.comments.add(idx, removed)
+                throw e
+            }
+            // Rollback on non-throwing failure (e.g. encode error → rescue).
+            if (!saveResult.succeeded) {
+                review.comments.add(idx, removed)
+            }
+            saveResult
         }
         if (result.succeeded) publishChanged(repoRoot, branch)
         return result
@@ -175,12 +262,14 @@ class ReviewStore {
      *
      * Mirrors Go's `Store.SaveReview`.
      */
-    fun saveReview(repoRoot: String, branch: String): SaveResult =
-        synchronized(lock) {
-            val p = paths(repoRoot, branch)
+    fun saveReview(repoRoot: String, branch: String): SaveResult {
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        return keyLock(key).withLock {
             val review = loadOrInit(repoRoot, branch)
             saveReview(p, review)
         }
+    }
 
     /**
      * Return the path of the current `review.md` if it exists, or null if none
@@ -202,6 +291,13 @@ class ReviewStore {
      */
     fun recoverFromCrash(repoRoot: String, branch: String) {
         val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        // Hold the key lock so a concurrent loadOrInit cannot read a partially
+        // recovered state (e.g. file moved but cache not yet invalidated).
+        keyLock(key).withLock { recoverFromCrashLocked(p) }
+    }
+
+    private fun recoverFromCrashLocked(p: SitatamePaths) {
         val branchDir = toPath(p.branchDir())
 
         // Clean up orphaned .tmp files.
@@ -224,10 +320,30 @@ class ReviewStore {
         }
     }
 
-    /** Snapshot of the cached comments for the tool window. */
+    /**
+     * Snapshot of the cached comments for the tool window.
+     *
+     * Holds the per-key lock during the copy to prevent
+     * [ConcurrentModificationException] if a concurrent [addComment] /
+     * [toggleComment] / [removeComment] is mutating the same list. Returns a
+     * defensive copy so callers can safely iterate without holding a lock.
+     */
     fun snapshotComments(repoRoot: String, branch: String): List<Comment> {
-        val review = loadOrInit(repoRoot, branch)
-        return review.comments.toList()
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        return keyLock(key).withLock {
+            loadOrInit(repoRoot, branch).comments.toList()
+        }
+    }
+
+    /**
+     * Return true if a `.bak` file exists for the branch, false otherwise.
+     * Used by [ReviewStoreStartupActivity] to decide whether to show a
+     * recovery notification after [recoverFromCrash] completes.
+     */
+    fun detectBak(repoRoot: String, branch: String): Boolean {
+        val p = paths(repoRoot, branch)
+        return Files.isRegularFile(toPath(p.bakFile()))
     }
 
     /** Resolve the branch directory path (`<OutputRoot>/<ProjectSlug>/<BranchSlug>/`). */
@@ -266,7 +382,7 @@ class ReviewStore {
 
     /**
      * Internal: atomically persist [review] to `<branchDir>/review.md`.
-     * Caller must hold [lock].
+     * Caller must hold the per-key lock for [cacheKey](p).
      */
     private fun saveReview(p: SitatamePaths, review: Review): SaveResult {
         // Empty review: delete the existing file (if any) so invalidate + reload
