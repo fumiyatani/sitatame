@@ -83,6 +83,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   The codec now passes a bit-exact round-trip test against all fixtures in
   `examples/`.
 
+- **Issue #118: detached HEAD slug mismatch between IntelliJ and TUI.**
+  The IntelliJ plugin previously passed the raw 40-char SHA directly to
+  `Slug.branchSlug`, while the TUI normalised detached HEAD to
+  `"detached/<sha[:12]>"` before calling `BranchSlug`. The result was that the
+  same commit produced two different on-disk directories, splitting review data
+  across tools. The plugin now mirrors the TUI normalisation exactly.
+
+#### Manual migration note for pre-#118 detached HEAD reviews
+
+If you used the IntelliJ plugin while in detached HEAD state before this fix,
+you may have orphan review files at:
+
+```
+~/.sitatame/<project-slug>/branch__<sha1-8 of full 40-char SHA>/review.md
+```
+
+These directories are no longer written to. To preserve the data, manually
+rename each such directory to the new form:
+
+```
+~/.sitatame/<project-slug>/detached_<sha12>__<sha1-8 of "detached/<sha12>">/
+```
+
+Where `<sha12>` is the first 12 characters of the original 40-char SHA.
+Alternatively, delete the orphan directories if the review data is no longer
+needed.
+
 ### Removed
 
 - `drafts/` and `reviews/` top-level subdirectories under `~/.sitatame/<project>/`

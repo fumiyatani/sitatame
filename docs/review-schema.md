@@ -422,6 +422,24 @@ revision 側の blob SHA を必ず埋めてください。
 実装の一次情報は `internal/review/validate.go` の `validateAnchor` を
 参照してください。
 
+### IntelliJ プラグインの blob 解決 (index semantics)
+
+IntelliJ プラグインの `BlobResolver.headBlobSha` は `git ls-files -s`
+を通じて **git index** の blob SHA を返します。HEAD コミットでも
+ワーキングツリーでもありません。具体的には:
+
+- ファイルを編集しただけ (`git add` 前) の場合、index に残っている
+  前回ステージ済みの blob SHA を返します
+- `git add` 後 (commit 前) は新しい index blob SHA を返します
+
+この動作は意図的です。sitatame TUI の Go CLI も同じく index の blob SHA
+を `blob_head` / `blob_base` に保存するため、双方が index を参照すること
+でコメント保存後に unstaged の変更が生じても誤 stale 判定が起きません。
+
+merge 衝突中のファイルは `git ls-files -s` が stage 1/2/3 の複数行を
+返します。`BlobResolver` は stage 0 (通常) または stage 2 (ours = HEAD
+側) を優先して採用し、どちらもなければ最初の行を使います。
+
 ## 8. Extras (未知キー保持) と forward-compat 戦略
 
 `sitatame` の codec は **bit-exact round-trip** を契約として持ちます。
