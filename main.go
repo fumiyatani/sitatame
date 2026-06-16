@@ -15,7 +15,7 @@ Usage:
   sitatame --staged            Review staged changes (index vs HEAD)
   sitatame --working           Review all uncommitted changes
                                (worktree vs HEAD; staged + unstaged)
-  sitatame search <pattern>    Search saved reviews
+  sitatame search [flags] <pattern>  Search saved reviews (regexp)
 
 Flags:
   --staged                     Review the index against HEAD
@@ -27,6 +27,13 @@ Flags:
   --no-clipboard               Do not copy the review path to the clipboard
                                after saving (also: SITATAME_NO_CLIPBOARD=1)
   -h, --help                   Show this help
+
+Search flags (sitatame search):
+  --project <slug>             Limit search to one project directory
+  --branch <slug>              Limit search to one branch directory
+  --state open|resolved|stale|all  Filter by comment state (default: all)
+  --json                       Emit JSON array (for machine consumption)
+  --root <path>                Override SITATAME_HOME for this search
 
 Notes:
   --staged and --working are mutually exclusive and cannot be combined
