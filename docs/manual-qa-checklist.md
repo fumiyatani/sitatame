@@ -255,3 +255,65 @@ cd web && ./gradlew :run --args="--repo /tmp"
 ```
 
 - [ ] Server prints an error mentioning `.git` and exits without binding a port.
+
+## M. Fat Jar Distribution (Issue #88)
+
+### M-1. Build the fat jar
+
+```sh
+make web-jar
+```
+
+- [ ] `make web-jar` completes without error.
+- [ ] `web/build/libs/sitatame-web-*-fat.jar` exists and is roughly 15–25 MB.
+
+### M-2. Launch fat jar against a different repository
+
+1. Copy (or note the path of) the fat jar, e.g.
+   `JAR=/path/to/sitatame-web-0.2.0-fat.jar`.
+2. Change to a directory that is **not** the sitatame repo root (e.g. `cd /tmp`).
+3. Run:
+   ```sh
+   java -jar "$JAR" --repo /path/to/other-repo
+   ```
+4. - [ ] `SITATAME_WEB_URL=http://127.0.0.1:<port>` is printed on stdout.
+5. - [ ] Open the URL — diff view shows the *other* repo's changes, not sitatame's.
+6. - [ ] `GET /api/v1/workspace` returns a `projectSlug` matching the other repo.
+7. - [ ] Ctrl-C stops the server cleanly (no exception stack trace).
+
+### M-3. `--base` flag works with fat jar
+
+```sh
+java -jar "$JAR" --repo /path/to/repo --base origin/develop
+```
+
+- [ ] Diff is relative to `origin/develop`, not `origin/main`.
+
+### M-4. `--help` prints usage and exits
+
+```sh
+java -jar "$JAR" --help
+```
+
+- [ ] Usage text is printed and the process exits 0 (no server is started, no
+  port is bound).
+
+### M-5. Invalid `--repo` rejected at startup
+
+```sh
+java -jar "$JAR" --repo /no/such/path
+```
+
+- [ ] Server prints a clear error to stderr and exits without binding a port.
+
+### M-6. SPI descriptors are present in the fat jar
+
+```sh
+JAR=web/build/libs/sitatame-web-*-fat.jar
+unzip -p "$JAR" META-INF/services/org.slf4j.spi.SLF4JServiceProvider
+```
+
+- [ ] The `org.slf4j.spi.SLF4JServiceProvider` descriptor exists in the fat jar
+  and contains exactly one provider line (`org.slf4j.simple.SimpleServiceProvider`).
+- [ ] No `SLF4J: No SLF4J providers were found` warning is printed when launching
+  the fat jar (`java -jar "$JAR" --help`).
