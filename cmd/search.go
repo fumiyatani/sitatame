@@ -27,12 +27,25 @@ type searchOpts struct {
 
 // parseSearchArgs splits args for `sitatame search` into searchOpts.
 // Returns an error message and exit code != 0 on bad input.
+//
+// "--" terminates flag parsing; all tokens after it are treated as positional
+// arguments. This allows patterns that begin with "-" (e.g. "sitatame search
+// -- -DTRACE").
 func parseSearchArgs(args []string) (searchOpts, string, int) {
 	var opts searchOpts
 	opts.State = "all"
-	remaining := args[:0]
+	var remaining []string
+	endOfFlags := false
 	for i := 0; i < len(args); i++ {
 		a := args[i]
+		if endOfFlags {
+			remaining = append(remaining, a)
+			continue
+		}
+		if a == "--" {
+			endOfFlags = true
+			continue
+		}
 		switch {
 		case a == "--json":
 			opts.JSON = true
@@ -93,6 +106,37 @@ func flagValue(args []string, i *int, cur, name string) (string, bool) {
 	return args[*i], true
 }
 
+// resolveSearchRoot returns the SITATAME_HOME to search, using the same
+// normalisation pipeline (~ expansion, relative→absolute, TempDir fallback)
+// as the rest of the sitatame commands.
+//
+// When opts.Root is set it is normalised (~ expand, filepath.Abs) and used
+// directly, matching the behaviour of SITATAME_HOME in the review package.
+// Otherwise we delegate to review.NewPaths which owns the env var / user-home
+// / TempDir fallback chain.
+func resolveSearchRoot(opts searchOpts) string {
+	if opts.Root != "" {
+		v := strings.TrimSpace(opts.Root)
+		// ~ expansion, mirroring review.normaliseEnvOutputRoot.
+		if v == "~" || strings.HasPrefix(v, "~/") {
+			if home, err := os.UserHomeDir(); err == nil && home != "" {
+				if v == "~" {
+					v = home
+				} else {
+					v = filepath.Join(home, v[2:])
+				}
+			}
+		}
+		if !filepath.IsAbs(v) {
+			if abs, err := filepath.Abs(v); err == nil && abs != "" {
+				v = abs
+			}
+		}
+		return v
+	}
+	return review.NewPaths("", "").OutputRoot
+}
+
 // RunSearch implements `sitatame search [flags] <pattern>`.
 //
 // Pattern is treated as a Go regexp (re2 syntax). By default the command walks
@@ -120,20 +164,7 @@ func RunSearch(env Env, args []string) int {
 		return 2
 	}
 
-	// Resolve the search root (SITATAME_HOME).
-	outputRoot := opts.Root
-	if outputRoot == "" {
-		outputRoot = os.Getenv(review.EnvOutputRoot)
-	}
-	if outputRoot == "" {
-		if home, err := os.UserHomeDir(); err == nil {
-			outputRoot = filepath.Join(home, ".sitatame")
-		}
-	}
-	if outputRoot == "" {
-		fmt.Fprintln(env.Stderr, "sitatame: cannot resolve SITATAME_HOME")
-		return 1
-	}
+	outputRoot := resolveSearchRoot(opts)
 
 	if _, err := os.Stat(outputRoot); err != nil {
 		if os.IsNotExist(err) {
@@ -152,9 +183,8 @@ func RunSearch(env Env, args []string) int {
 	}
 
 	// Fast path: plain grep over the file tree.
-	// When --project is specified, narrow to that single project directory.
-	// Otherwise walk all project directories; if none exist yet, return 0
-	// (nothing to search — not an error) rather than 1 (no matches).
+	// When --project is specified, narrow to that single project directory and
+	// optionally to a specific branch slug within it.
 	if opts.Project != "" {
 		searchRoot := filepath.Join(outputRoot, opts.Project)
 		if opts.Branch != "" {
@@ -178,21 +208,32 @@ func RunSearch(env Env, args []string) int {
 	}
 
 	// No --project: discover project directories and walk each one.
+	// When --branch is given, narrow each project walk to that branch subdir.
 	// An empty output root (no projects yet) is not an error.
 	projectEntries, err := os.ReadDir(outputRoot)
 	if err != nil {
 		fmt.Fprintf(env.Stderr, "sitatame: read root: %v\n", err)
 		return 1
 	}
-	var projectDirs []string
+	var searchRoots []string
 	for _, pe := range projectEntries {
 		if !pe.IsDir() || strings.HasPrefix(pe.Name(), ".legacy-") {
 			continue
 		}
-		projectDirs = append(projectDirs, filepath.Join(outputRoot, pe.Name()))
+		pd := filepath.Join(outputRoot, pe.Name())
+		if opts.Branch != "" {
+			// Narrow to <project>/<branch-slug>/ — skip projects that don't
+			// have that branch directory.
+			bd := filepath.Join(pd, opts.Branch)
+			if _, serr := os.Stat(bd); serr != nil {
+				continue
+			}
+			pd = bd
+		}
+		searchRoots = append(searchRoots, pd)
 	}
-	if len(projectDirs) == 0 {
-		return 0 // no projects saved yet
+	if len(searchRoots) == 0 {
+		return 0 // no projects (or no branch matches) yet
 	}
 
 	lookPath := env.LookPath
@@ -202,19 +243,19 @@ func RunSearch(env Env, args []string) int {
 	rgPath, rgErr := lookPath("rg")
 	useRg := rgErr == nil && rgPath != ""
 
-	// Walk all project directories and aggregate results.
+	// Walk all search roots and aggregate results.
 	anyHit := false
-	for _, pd := range projectDirs {
-		var code int
+	for _, sr := range searchRoots {
+		var c int
 		if useRg {
-			code = runSearchRg(env, rgPath, opts.Pattern, pd)
+			c = runSearchRg(env, rgPath, opts.Pattern, sr)
 		} else {
-			code = runSearchGoPlain(env, opts.Pattern, pd)
+			c = runSearchGoPlain(env, opts.Pattern, sr)
 		}
-		if code == 0 {
+		if c == 0 {
 			anyHit = true
-		} else if code > 1 {
-			return code // propagate errors immediately
+		} else if c > 1 {
+			return c // propagate errors immediately
 		}
 	}
 	if anyHit {
@@ -226,19 +267,45 @@ func RunSearch(env Env, args []string) int {
 // SearchResult is the JSON-serialisable record for a single comment match.
 // It mirrors the shape described in issue #127.
 type SearchResult struct {
-	Project   string        `json:"project"`
-	Branch    string        `json:"branch"`
-	Anchor    searchAnchor  `json:"anchor"`
-	State     string        `json:"state"`
-	Body      string        `json:"body"`
-	Match     string        `json:"match"`
-	CommentID string        `json:"comment_id"`
+	Project   string       `json:"project"`
+	Branch    string       `json:"branch"`
+	Anchor    searchAnchor `json:"anchor"`
+	State     string       `json:"state"`
+	Body      string       `json:"body"`
+	Match     string       `json:"match"`
+	CommentID string       `json:"comment_id"`
 }
 
+// searchAnchor serialises a review.Anchor for JSON consumers (e.g. IntelliJ).
+// All fields of review.Anchor are included so range comments and rename
+// anchors can be reconstructed without re-parsing the review file.
 type searchAnchor struct {
-	Kind string `json:"kind"`
-	Path string `json:"path,omitempty"`
-	Line int    `json:"line,omitempty"`
+	Kind       string `json:"kind"`
+	Path       string `json:"path,omitempty"`
+	Side       string `json:"side,omitempty"`
+	Blob       string `json:"blob,omitempty"`
+	Line       int    `json:"line,omitempty"`
+	LineStart  int    `json:"line_start,omitempty"`
+	LineEnd    int    `json:"line_end,omitempty"`
+	RenameFrom string `json:"rename_from,omitempty"`
+	RenameTo   string `json:"rename_to,omitempty"`
+	Similarity int    `json:"similarity,omitempty"`
+}
+
+// anchorFrom converts a review.Anchor into a searchAnchor for serialisation.
+func anchorFrom(a review.Anchor) searchAnchor {
+	return searchAnchor{
+		Kind:       string(a.Kind),
+		Path:       a.Path,
+		Side:       string(a.Side),
+		Blob:       a.Blob,
+		Line:       a.Line,
+		LineStart:  a.LineStart,
+		LineEnd:    a.LineEnd,
+		RenameFrom: a.RenameFrom,
+		RenameTo:   a.RenameTo,
+		Similarity: a.Similarity,
+	}
 }
 
 // runSearchStructured walks the output root, parses review.md files, and
@@ -312,13 +379,9 @@ func runSearchStructured(env Env, opts searchOpts, outputRoot string) int {
 					continue
 				}
 				results = append(results, SearchResult{
-					Project: projectSlug,
-					Branch:  branchSlug,
-					Anchor: searchAnchor{
-						Kind: string(c.Kind),
-						Path: c.Path,
-						Line: c.Line,
-					},
+					Project:   projectSlug,
+					Branch:    branchSlug,
+					Anchor:    anchorFrom(c.Anchor),
 					State:     stateStr,
 					Body:      c.Body,
 					Match:     firstMatch(re, c.Body),
@@ -351,6 +414,8 @@ func runSearchStructured(env Env, opts searchOpts, outputRoot string) int {
 		loc := r.Anchor.Path
 		if r.Anchor.Line > 0 {
 			loc = fmt.Sprintf("%s:%d", loc, r.Anchor.Line)
+		} else if r.Anchor.LineStart > 0 {
+			loc = fmt.Sprintf("%s:%d-%d", loc, r.Anchor.LineStart, r.Anchor.LineEnd)
 		}
 		summary := strings.TrimRight(r.Body, "\n")
 		if idx := strings.IndexByte(summary, '\n'); idx >= 0 {
