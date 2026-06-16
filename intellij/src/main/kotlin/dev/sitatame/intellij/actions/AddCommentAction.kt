@@ -15,6 +15,7 @@ import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.openapi.vfs.VirtualFile
 import com.intellij.ui.components.JBScrollPane
+import dev.sitatame.intellij.git.BlobResolver
 import dev.sitatame.intellij.git.RepoContext
 import dev.sitatame.intellij.storage.Anchor
 import dev.sitatame.intellij.storage.AnchorKind
@@ -72,6 +73,12 @@ class AddCommentAction : AnAction() {
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Saving sitatame comment", false) {
                 override fun run(indicator: ProgressIndicator) {
+                    // Populate blob SHA on the background thread to avoid EDT I/O.
+                    // BlobResolver shells out to `git ls-files -s`; failures are
+                    // silent (blob stays empty, stale detection degrades gracefully).
+                    if (anchor.blob.isEmpty() && anchor.path.isNotEmpty()) {
+                        anchor.blob = BlobResolver.headBlobSha(repo.repoRoot, anchor.path)
+                    }
                     try {
                         val result = store.addComment(repo.repoRoot, repo.branch) { _ ->
                             Comment(
