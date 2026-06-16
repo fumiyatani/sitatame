@@ -166,6 +166,22 @@ SITATAME_REPO=/path/to/project SITATAME_BASE=origin/develop cd web && ./gradlew 
 必要があります。git リポジトリでないディレクトリを指定するとエラーメッセージを出力して
 即座に終了します。解決優先順位: CLI フラグ > 環境変数 > カレントディレクトリ。
 
+**fat jar として配布（対象マシンに Gradle 不要）:**
+
+```sh
+# Compose Wasm UI + Ktor server をまとめた単一 jar を生成
+make web-jar
+# 出力: web/build/libs/sitatame-web-<version>-fat.jar  (~20 MB)
+
+# 任意のディレクトリで実行可能 — 必要なのは JDK 21 と git のみ
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --repo /path/to/other-project
+java -jar /path/to/sitatame-web-0.2.0-fat.jar --repo /path/to/project --base origin/develop
+```
+
+fat jar には JVM ランタイム依存ライブラリとビルド済みの Wasm UI バンドルが含まれます。
+stdout に `SITATAME_WEB_URL=http://127.0.0.1:<port>` が出力されるので、
+ブラウザで開いてください。
+
 UI 開発時のホットリロードが必要な場合は別 shell で Wasm frontend の dev server も
 起動します:
 
