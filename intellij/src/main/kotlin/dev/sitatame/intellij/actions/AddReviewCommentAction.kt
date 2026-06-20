@@ -14,11 +14,6 @@ import com.intellij.openapi.ui.DialogWrapper
 import com.intellij.ui.components.JBScrollPane
 import dev.sitatame.intellij.git.RepoContext
 import dev.sitatame.intellij.markers.ReviewChangedTopic
-import dev.sitatame.intellij.storage.Anchor
-import dev.sitatame.intellij.storage.AnchorKind
-import dev.sitatame.intellij.storage.AnchorSide
-import dev.sitatame.intellij.storage.Comment
-import dev.sitatame.intellij.storage.ReviewState
 import dev.sitatame.intellij.storage.ReviewStore
 import java.awt.BorderLayout
 import java.awt.Dimension
@@ -33,12 +28,22 @@ import javax.swing.JTextArea
  * ("review-level comment") binding, which the IntelliJ plugin previously had
  * no way to produce: [AddCommentAction] only emits LINE / RANGE anchors.
  *
- * The anchor carries no path or line, so the comment is not pinned to a file;
- * it surfaces in the tool window comment list (with a "(review)" locator) but
- * not in editor gutters or inlays.
+ * The review comment is stored in `review.reviewComment` (the top-level
+ * `review_comment` field in review.md), NOT in `comments[]`. This matches the
+ * Go TUI's `confirmModal` for `KindReview` which sets
+ * `m.Review.ReviewComment = body` and does NOT append to comments[]. Any
+ * previous review comment is overwritten (same in-place edit semantics as the
+ * Go TUI's Shift+R, which pre-loads the existing text for editing).
+ *
+ * The dialog pre-loads the existing review comment (if any) so the user can
+ * edit in place, matching `openReviewModal` in modal.go:206.
+ *
+ * The comment is not pinned to a file; it surfaces in the tool window comment
+ * list (with a "(review)" locator) but not in editor gutters or inlays.
  *
  * Threading mirrors [AddCommentAction]: [actionPerformed] is on the EDT, the
- * modal stays on the EDT, and the YAML write hops to a background thread.
+ * modal stays on the EDT, and the YAML write hops to a background thread via
+ * [ReviewStore.setReviewComment].
  */
 class AddReviewCommentAction : AnAction() {
 
@@ -64,27 +69,25 @@ class AddReviewCommentAction : AnAction() {
                 return
             }
 
-        val dialog = ReviewCommentDialog(project)
+        val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
+
+        // Pre-load the existing review comment on the EDT (cache hit is
+        // common; even a cache miss here only reads the file once and is
+        // acceptable given SitatameLineMarkerProvider warms the cache).
+        val existing = store.getReviewComment(repo.repoRoot, repo.branch)
+
+        val dialog = ReviewCommentDialog(project, existing)
         if (!dialog.showAndGet()) return
         val body = dialog.body
         if (body.isBlank()) return
-
-        val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
 
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Saving sitatame review comment", false) {
                 override fun run(indicator: ProgressIndicator) {
                     try {
-                        val result = store.addComment(repo.repoRoot, repo.branch) { _ ->
-                            Comment(
-                                anchor = Anchor(
-                                    kind = AnchorKind.REVIEW,
-                                    side = AnchorSide.HEAD,
-                                ),
-                                state = ReviewState.OPEN,
-                                body = body.trim(),
-                            )
-                        }
+                        // Store as review_comment (top-level scalar), not in
+                        // comments[]. Mirrors Go: m.Review.ReviewComment = body.
+                        val result = store.setReviewComment(repo.repoRoot, repo.branch, body.trim())
                         if (result.succeeded) {
                             ApplicationManager.getApplication().messageBus
                                 .syncPublisher(ReviewChangedTopic.TOPIC)
@@ -130,15 +133,19 @@ class AddReviewCommentAction : AnAction() {
             .notify(project)
     }
 
-    private class ReviewCommentDialog(project: Project) : DialogWrapper(project, true) {
+    private class ReviewCommentDialog(project: Project, existing: String) :
+        DialogWrapper(project, true) {
 
         private val textArea = JTextArea(8, 60).apply {
             lineWrap = true
             wrapStyleWord = true
+            // Pre-load the existing review comment so the user edits in place,
+            // matching Go's openReviewModal which pre-loads m.Review.ReviewComment.
+            text = existing
         }
 
         init {
-            title = "Add sitatame review-level comment"
+            title = "Edit sitatame review-level comment"
             init()
         }
 
