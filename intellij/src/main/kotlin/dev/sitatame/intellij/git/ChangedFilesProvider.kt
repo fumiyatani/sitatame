@@ -1,14 +1,12 @@
 package dev.sitatame.intellij.git
 
-import java.util.concurrent.TimeUnit
-
 /**
  * Resolves the list of files changed between [baseRef] and HEAD via
  * `git diff --name-only <baseRef>..HEAD`.
  *
  * Intentionally avoids Git4Idea APIs so it can be exercised in plain JUnit
- * tests without the IntelliJ Platform framework. Mirrors the ProcessBuilder
- * pattern used in [BlobResolver].
+ * tests without the IntelliJ Platform framework. The subprocess is run through
+ * [GitProcess] so its 5-second timeout holds even if git wedges.
  *
  * Thread safety: [listChangedFiles] is safe to call from any thread. Call
  * from a background thread (Task.Backgroundable) to avoid blocking the EDT.
@@ -34,26 +32,6 @@ object ChangedFilesProvider {
      */
     fun listChangedFiles(repoRoot: String, baseRef: String): List<String> {
         if (repoRoot.isEmpty() || baseRef.isEmpty()) return emptyList()
-        return try {
-            val proc = ProcessBuilder(
-                "git", "diff", "--name-only", "$baseRef..HEAD"
-            )
-                .directory(java.io.File(repoRoot))
-                .redirectErrorStream(true)
-                .start()
-            val out = proc.inputStream.bufferedReader().readText()
-            if (!proc.waitFor(5, TimeUnit.SECONDS)) {
-                proc.destroyForcibly()
-                return emptyList()
-            }
-            if (proc.exitValue() != 0) return emptyList()
-            out.lineSequence()
-                .map { it.trim() }
-                .filter { it.isNotEmpty() }
-                .sorted()
-                .toList()
-        } catch (_: Exception) {
-            emptyList()
-        }
+        return GitProcess.run(repoRoot, "git", "diff", "--name-only", "$baseRef..HEAD").sorted()
     }
 }

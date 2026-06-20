@@ -73,11 +73,19 @@ class SitatameToolWindowContent(
     /**
      * Guards [baseRefCombo] against re-entrant events while the model/selection
      * is rebuilt programmatically. Without this, assigning the model and
-     * selected item in [refreshBaseRefCombo] re-fires the item listener, which
+     * selected item in [rebuildBaseRefCombo] re-fires the item listener, which
      * calls [refresh] again, which rebuilds the combo again — an unbounded
      * recursion on the EDT that freezes the IDE.
      */
     private var suppressBaseRefEvents = false
+
+    /**
+     * Monotonic refresh id, bumped on the EDT at the start of each [refresh].
+     * Each async job captures its id and discards its result if a newer refresh
+     * has started, so a slow job can't overwrite a newer base selection / diff.
+     * EDT-confined — only read and written on the EDT.
+     */
+    private var refreshGeneration = 0L
 
     private val changedFilesPane = ChangedFilesPane(
         project = project,
@@ -96,11 +104,23 @@ class SitatameToolWindowContent(
         onRefreshAll = { refresh() },
     )
 
-    /** ComboBox for base ref selection. Model is rebuilt on each refresh. */
-    private val baseRefCombo = ComboBox<String>().apply {
+    /**
+     * Base ref selector. The base ref is the *left* side of
+     * `git diff <base>..HEAD`: the branch the current branch (HEAD) is compared
+     * against — like the "base" in GitHub's "base ← compare" PR view. The model
+     * (grouped remote/local branches) is rebuilt on each refresh.
+     */
+    private val baseRefCombo = ComboBox<BaseRefDiscovery.Entry>().apply {
         preferredSize = Dimension(240, preferredSize.height)
-        isEditable = true
+        isEditable = false
+        renderer = BaseRefComboRenderer()
     }
+
+    /** Read-only label showing the current branch (the compare side of the diff). */
+    private val currentBranchLabel = JBLabel()
+
+    /** Last selected branch, used to revert an accidental header-row selection. */
+    private var lastSelectedBranch: BaseRefDiscovery.Entry.Branch? = null
 
     val component: JComponent = build()
 
@@ -196,6 +216,9 @@ class SitatameToolWindowContent(
         val panel = JPanel(FlowLayout(FlowLayout.LEFT, 4, 0))
         panel.add(JBLabel("Base:"))
         panel.add(baseRefCombo)
+        // "← <current branch>" makes the diff direction explicit: the changed
+        // files are what the current branch adds on top of the selected base.
+        panel.add(currentBranchLabel)
 
         val setDefaultBtn = JButton("Set as default")
         setDefaultBtn.addActionListener { saveBaseRefAsDefault() }
@@ -203,18 +226,31 @@ class SitatameToolWindowContent(
 
         baseRefCombo.addItemListener { e ->
             if (suppressBaseRefEvents) return@addItemListener
-            if (e.stateChange == ItemEvent.SELECTED) {
-                val raw = baseRefCombo.selectedItem?.toString().orEmpty()
-                // Strip the "(default — Settings)" annotation if present
-                val ref = raw.removeSuffix(BaseRefDiscovery.SETTINGS_LABEL_SUFFIX).trim()
-                if (ref.isNotBlank()) {
-                    sessionBaseRef = ref
+            if (e.stateChange != ItemEvent.SELECTED) return@addItemListener
+            when (val item = baseRefCombo.selectedItem) {
+                is BaseRefDiscovery.Entry.Branch -> {
+                    lastSelectedBranch = item
+                    sessionBaseRef = item.ref
                     refresh()
                 }
+                // Headers are not real choices; restore the previous branch.
+                is BaseRefDiscovery.Entry.Header -> revertHeaderSelection()
+                else -> { /* nothing selected */ }
             }
         }
 
         return panel
+    }
+
+    /** Restore the previous branch selection after a non-selectable header was clicked. */
+    private fun revertHeaderSelection() {
+        val revertTo = lastSelectedBranch ?: return
+        suppressBaseRefEvents = true
+        try {
+            baseRefCombo.selectedItem = revertTo
+        } finally {
+            suppressBaseRefEvents = false
+        }
     }
 
     private fun buildFooter(): JComponent {
@@ -222,9 +258,7 @@ class SitatameToolWindowContent(
     }
 
     private fun saveBaseRefAsDefault() {
-        val raw = baseRefCombo.selectedItem?.toString().orEmpty()
-        val ref = raw.removeSuffix(BaseRefDiscovery.SETTINGS_LABEL_SUFFIX).trim()
-        if (ref.isBlank()) return
+        val ref = (baseRefCombo.selectedItem as? BaseRefDiscovery.Entry.Branch)?.ref ?: return
         val settings = ApplicationManager.getApplication().getService(SitatameSettings::class.java)
         settings?.state?.baseRef = ref
         refresh()
@@ -243,63 +277,76 @@ class SitatameToolWindowContent(
     // -----------------------------------------------------------------------
 
     /**
-     * Reload comments from the store and refresh all three panes. Also rebuilds
-     * the base ref ComboBox candidates.
+     * Reload comments from the store and refresh all three panes, and rebuild
+     * the base ref selector.
+     *
+     * Every git *subprocess* — branch discovery and the changed-files diff —
+     * plus the store read runs off the EDT; only the Swing model updates happen
+     * back on the EDT. Spawning `git branch` on the EDT previously froze the IDE
+     * on every base ref selection. (Resolving the repo root / current branch via
+     * [RepoContext.forProject] stays on the EDT: it reads git4idea's in-memory
+     * state and at most a few KB of `.git/config`, no subprocess.)
      */
     fun refresh() {
+        // Bump first, before any early return, so an in-flight async update from
+        // an older refresh is invalidated even when this refresh finds no repo.
+        val generation = ++refreshGeneration
+
         val repo = RepoContext.forProject(project) ?: run {
             commentListPane.setComments(emptyList())
             commentDetailPane.showComment(null)
+            changedFilesPane.clear()
+            currentBranchLabel.text = ""
             return
         }
 
         val effectiveBaseRef = sessionBaseRef ?: repo.baseRef
-
-        // Rebuild base ref candidates. Listener events are suppressed during the
-        // rebuild so the programmatic model/selection swap can't re-enter refresh().
-        refreshBaseRefCombo(repo)
+        currentBranchLabel.text = "←  ${repo.branch} (current)"
 
         ApplicationManager.getApplication().executeOnPooledThread {
+            val entries = BaseRefDiscovery.listEntries(repo.repoRoot, repo.branch)
             val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
             val comments = store.snapshotComments(repo.repoRoot, repo.branch)
             ApplicationManager.getApplication().invokeLater {
+                // Drop this result if a newer refresh has started — otherwise a
+                // slow job could revert the combo / diff to a stale base.
+                if (generation != refreshGeneration) return@invokeLater
+                // The combo's selected branch is authoritative for the diff so
+                // the changed-files list always matches the displayed base.
+                val diffBase = rebuildBaseRefCombo(entries, effectiveBaseRef)
                 commentListPane.setComments(comments)
-                changedFilesPane.refresh(effectiveBaseRef, comments)
+                // ChangedFilesPane runs its own async diff; guard it with the
+                // same generation so a stale diff can't overwrite the file list.
+                changedFilesPane.refresh(diffBase, comments) { generation == refreshGeneration }
             }
         }
     }
 
-    private fun refreshBaseRefCombo(repo: RepoContext.Info) {
-        val settingsBaseRef = runCatching {
-            ApplicationManager.getApplication()
-                .getService(SitatameSettings::class.java)?.state?.baseRef ?: ""
-        }.getOrDefault("")
+    /**
+     * Swap in the freshly discovered branch [entries] and select the entry
+     * matching [effectiveRef]. Must run on the EDT.
+     *
+     * Returns the ref that ends up selected (or [effectiveRef] when there are no
+     * branches to select), so the caller can diff against exactly what is shown.
+     *
+     * The item listener is suppressed while the model and selection are
+     * mutated: both fire SELECTED events synchronously, and without the guard
+     * they would re-enter refresh() and recurse until the IDE hangs.
+     */
+    private fun rebuildBaseRefCombo(entries: List<BaseRefDiscovery.Entry>, effectiveRef: String): String {
+        val selection = BaseRefDiscovery.resolveSelection(entries, effectiveRef)
+        val model = DefaultComboBoxModel(selection.entries.toTypedArray())
 
-        val candidates = BaseRefDiscovery.listCandidates(
-            repoRoot = repo.repoRoot,
-            currentBranch = repo.branch,
-            settingsBaseRef = settingsBaseRef,
-        )
-
-        val currentSession = sessionBaseRef
-        val effectiveRef = (currentSession ?: repo.baseRef)
-
-        // Select the entry matching the effective ref (prefer annotated entry for settings default)
-        val model = DefaultComboBoxModel(candidates.toTypedArray())
-        val toSelect = candidates.firstOrNull { it == effectiveRef }
-            ?: candidates.firstOrNull { it.startsWith(effectiveRef) }
-            ?: candidates.firstOrNull()
-
-        // Suppress the item listener while swapping the model and selection.
-        // Both mutations fire SELECTED events synchronously on the EDT; without
-        // this guard they re-enter refresh() and recurse until the IDE hangs.
         suppressBaseRefEvents = true
         try {
             baseRefCombo.model = model
-            if (toSelect != null) baseRefCombo.selectedItem = toSelect
+            // Setting the model auto-selects index 0 (a header); override it.
+            baseRefCombo.selectedItem = selection.selected
+            lastSelectedBranch = selection.selected
         } finally {
             suppressBaseRefEvents = false
         }
+        return selection.selected?.ref ?: effectiveRef
     }
 
     // -----------------------------------------------------------------------

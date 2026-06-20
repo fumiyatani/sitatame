@@ -77,8 +77,13 @@ class ChangedFilesPane(
      * Refresh the file list for the given [baseRef]. Runs git diff on a
      * background thread, then returns to EDT to update the list model.
      * [comments] are used to compute per-file counts.
+     *
+     * [isCurrent] is evaluated on the EDT just before the model is replaced; if
+     * it returns false the result is dropped. The caller passes its refresh
+     * generation so a slow diff for an old base can't overwrite the file list
+     * after a newer base has already been selected.
      */
-    fun refresh(baseRef: String, comments: List<Comment>) {
+    fun refresh(baseRef: String, comments: List<Comment>, isCurrent: () -> Boolean = { true }) {
         ApplicationManager.getApplication().executeOnPooledThread {
             val repo = RepoContext.forProject(project)
             val changedFiles = if (repo != null) {
@@ -87,9 +92,15 @@ class ChangedFilesPane(
                 emptyList()
             }
             ApplicationManager.getApplication().invokeLater {
+                if (!isCurrent()) return@invokeLater
                 updateModel(changedFiles, comments)
             }
         }
+    }
+
+    /** Empty the file list (used when there is no repository context). EDT only. */
+    fun clear() {
+        updateModel(emptyList(), emptyList())
     }
 
     /**
