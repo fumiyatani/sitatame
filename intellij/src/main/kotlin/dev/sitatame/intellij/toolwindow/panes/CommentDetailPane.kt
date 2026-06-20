@@ -5,7 +5,6 @@ import com.intellij.openapi.diagnostic.Logger
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.ui.Messages
 import dev.sitatame.intellij.git.RepoContext
-import dev.sitatame.intellij.storage.AnchorKind
 import dev.sitatame.intellij.storage.Comment
 import dev.sitatame.intellij.storage.ReviewState
 import dev.sitatame.intellij.storage.ReviewStore
@@ -91,12 +90,7 @@ class CommentDetailPane(
             return
         }
 
-        val a = c.anchor
-        val anchorDesc = when (a.kind) {
-            AnchorKind.RANGE -> "${a.path}:${a.lineStart}-${a.lineEnd} (range)"
-            AnchorKind.LINE -> "${a.path}:${a.line} (line)"
-            else -> "${a.path} (${a.kind})"
-        }
+        val anchorDesc = CommentListPane.locatorFor(c.anchor)
 
         bodyArea.text = buildString {
             append("anchor: ").append(anchorDesc).append('\n')
