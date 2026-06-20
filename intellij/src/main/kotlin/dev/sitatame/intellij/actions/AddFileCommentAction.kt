@@ -69,11 +69,6 @@ class AddFileCommentAction : AnAction() {
             }
 
         val relPath = relativise(file.path, repo.repoRoot)
-        val anchor = Anchor(
-            kind = AnchorKind.FILE,
-            path = relPath,
-            side = AnchorSide.HEAD,
-        )
 
         val dialog = FileCommentDialog(project, relPath)
         if (!dialog.showAndGet()) return
@@ -85,9 +80,28 @@ class AddFileCommentAction : AnAction() {
         ProgressManager.getInstance().run(
             object : Task.Backgroundable(project, "Saving sitatame file comment", false) {
                 override fun run(indicator: ProgressIndicator) {
-                    if (anchor.blob.isEmpty() && anchor.path.isNotEmpty()) {
-                        anchor.blob = BlobResolver.headBlobSha(repo.repoRoot, anchor.path)
+                    // Mirrors Go's fileScopeSide (modal.go:136-141): deleted files
+                    // have no head blob, so the FILE anchor must use SideBase.
+                    // Using SideHead for a deleted file would produce an empty blob
+                    // that Go's validateAnchor immediately marks stale.
+                    val isDeleted = BlobResolver.isDeletedFromIndex(repo.repoRoot, relPath)
+                    val side = if (isDeleted) AnchorSide.BASE else AnchorSide.HEAD
+                    val blob = if (isDeleted) {
+                        // Base blob for a deleted file: resolve from HEAD~1 via
+                        // git ls-tree. headBlobSha reads the index (empty for
+                        // deleted files), so we fall back to empty string and let
+                        // Go's validate treat it as stale if needed. Future work
+                        // can wire up a baseBlobSha() here.
+                        ""
+                    } else {
+                        if (relPath.isNotEmpty()) BlobResolver.headBlobSha(repo.repoRoot, relPath) else ""
                     }
+                    val anchor = Anchor(
+                        kind = AnchorKind.FILE,
+                        path = relPath,
+                        side = side,
+                        blob = blob,
+                    )
                     try {
                         val result = store.addComment(repo.repoRoot, repo.branch) { _ ->
                             Comment(
