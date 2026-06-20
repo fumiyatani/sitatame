@@ -58,12 +58,20 @@ emitter immediately fails one or both routes.
 
 | Action                        | Where                            | Shortcut             |
 | ----------------------------- | -------------------------------- | -------------------- |
-| Add comment                   | Editor right-click               | Cmd+Shift+C / Ctrl+Shift+C |
+| Add comment (line / range)    | Editor right-click               | Cmd+Shift+C / Ctrl+Shift+C |
+| Add file-level comment        | Editor right-click               | —                    |
+| Add review-level comment      | Right-click / Find Action        | —                    |
 | Toggle resolved/open          | Editor right-click               | Cmd+Shift+R / Ctrl+Shift+R |
+| Go to next / prev comment     | Editor right-click               | Cmd+Shift+. / , (Ctrl on Win/Linux) |
 | List comments + jump to line  | Tool window "sitatame review"    | —                    |
 | Copy AI prompt                | Tool window toolbar              | —                    |
 | Save review                   | Tool window toolbar              | —                    |
 | Configure `SITATAME_HOME`     | Settings → Tools → sitatame review | —                  |
+
+The line / range / file / review comment scopes match the Go TUI's `c`
+(line/range), file-header `c` (file), and `Shift+R` (review-level) bindings.
+"Go to next / prev comment" mirrors the TUI's keyboard-driven stepping through
+commented lines so you can review without leaving the editor.
 
 ## Storage
 
