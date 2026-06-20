@@ -9,6 +9,9 @@ import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.editor.Editor
 import com.intellij.openapi.editor.LogicalPosition
 import com.intellij.openapi.editor.ScrollType
+import com.intellij.openapi.progress.ProgressIndicator
+import com.intellij.openapi.progress.ProgressManager
+import com.intellij.openapi.progress.Task
 import com.intellij.openapi.project.Project
 import dev.sitatame.intellij.git.RepoContext
 import dev.sitatame.intellij.storage.AnchorKind
@@ -25,8 +28,12 @@ import dev.sitatame.intellij.storage.ReviewStore
  * skipped because they have no caret target. A RANGE anchor's [Anchor.lineStart]
  * is used as its representative line.
  *
- * Threading: comment lookup reads the in-memory [ReviewStore] cache (no
- * subprocess), so it stays on the EDT alongside the editor caret move.
+ * Threading: [snapshotComments] is called on a background thread because a cold
+ * cache miss triggers [ReviewStore.loadOrInit] which reads the review.md file
+ * from disk. Caret movement is dispatched back to the EDT via [invokeLater],
+ * mirroring [CopyAIPromptAction]'s approach. When the cache is already warm
+ * (the common case after [SitatameLineMarkerProvider] has run) the background
+ * hop is cheap.
  */
 class GoToNextCommentAction : GoToCommentAction(forward = true)
 
@@ -48,23 +55,37 @@ abstract class GoToCommentAction(private val forward: Boolean) : AnAction() {
 
         val relPath = relativise(file.path, repo.repoRoot)
         val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
-        val comments = store.snapshotComments(repo.repoRoot, repo.branch)
 
-        val lines = commentedLines(comments, relPath)
-        if (lines.isEmpty()) {
-            notify(project, "sitatame: no comments in this file", NotificationType.INFORMATION)
-            return
-        }
-
+        // Capture the caret position here on the EDT before hopping to the
+        // background thread (DataContext and editor state are only valid on EDT).
         val caretLine = editor.document.getLineNumber(editor.caretModel.offset) + 1
-        val target = nextLine(lines, caretLine, forward)
-        if (target == null) {
-            val where = if (forward) "after" else "before"
-            notify(project, "sitatame: no comment $where the caret", NotificationType.INFORMATION)
-            return
-        }
 
-        moveCaretTo(editor, target)
+        ProgressManager.getInstance().run(
+            object : Task.Backgroundable(project, "Loading sitatame comments", false) {
+                override fun run(indicator: ProgressIndicator) {
+                    // snapshotComments may read review.md on first access (cold cache),
+                    // so it must run on a background thread to avoid EDT I/O.
+                    val comments = store.snapshotComments(repo.repoRoot, repo.branch)
+                    val lines = commentedLines(comments, relPath)
+
+                    ApplicationManager.getApplication().invokeLater {
+                        if (lines.isEmpty()) {
+                            notify(project, "sitatame: no comments in this file", NotificationType.INFORMATION)
+                            return@invokeLater
+                        }
+
+                        val target = nextLine(lines, caretLine, forward)
+                        if (target == null) {
+                            val where = if (forward) "after" else "before"
+                            notify(project, "sitatame: no comment $where the caret", NotificationType.INFORMATION)
+                            return@invokeLater
+                        }
+
+                        moveCaretTo(editor, target)
+                    }
+                }
+            }
+        )
     }
 
     private fun moveCaretTo(editor: Editor, line1Based: Int) {
