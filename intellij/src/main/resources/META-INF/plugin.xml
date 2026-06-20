@@ -138,7 +138,7 @@
                 text="sitatame: Go to Next Comment"
                 description="Move the caret to the next sitatame-commented line in this file">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="meta shift PERIOD"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift PERIOD" replace-all="false"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control shift PERIOD" replace-all="false"/>
         </action>
 
@@ -147,7 +147,7 @@
                 text="sitatame: Go to Previous Comment"
                 description="Move the caret to the previous sitatame-commented line in this file">
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
-            <keyboard-shortcut keymap="$default" first-keystroke="meta shift COMMA"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift COMMA" replace-all="false"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control shift COMMA" replace-all="false"/>
         </action>
 
