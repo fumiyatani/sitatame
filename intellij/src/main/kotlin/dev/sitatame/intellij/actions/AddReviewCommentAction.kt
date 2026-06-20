@@ -2,6 +2,7 @@ package dev.sitatame.intellij.actions
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.application.ApplicationManager
@@ -49,6 +50,9 @@ class AddReviewCommentAction : AnAction() {
 
     private val log = Logger.getInstance(AddReviewCommentAction::class.java)
 
+    // update() only reads e.project (not Swing hierarchy) → safe on BGT.
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
     override fun update(e: AnActionEvent) {
         // Review-level comments are not tied to an editor, so the action is
         // enabled whenever a project is open.
@@ -71,55 +75,71 @@ class AddReviewCommentAction : AnAction() {
 
         val store = ApplicationManager.getApplication().getService(ReviewStore::class.java)
 
-        // Pre-load the existing review comment on the EDT (cache hit is
-        // common; even a cache miss here only reads the file once and is
-        // acceptable given SitatameLineMarkerProvider warms the cache).
-        val existing = store.getReviewComment(repo.repoRoot, repo.branch)
-
-        val dialog = ReviewCommentDialog(project, existing)
-        if (!dialog.showAndGet()) return
-        val body = dialog.body
-        if (body.isBlank()) return
-
+        // Background: load existing review comment (cold cache may read disk).
+        // After loading, hop back to the EDT to display the dialog.
         ProgressManager.getInstance().run(
-            object : Task.Backgroundable(project, "Saving sitatame review comment", false) {
+            object : Task.Backgroundable(project, "Loading sitatame review comment", false) {
                 override fun run(indicator: ProgressIndicator) {
-                    try {
-                        // Store as review_comment (top-level scalar), not in
-                        // comments[]. Mirrors Go: m.Review.ReviewComment = body.
-                        val result = store.setReviewComment(repo.repoRoot, repo.branch, body.trim())
-                        if (result.succeeded) {
-                            ApplicationManager.getApplication().messageBus
-                                .syncPublisher(ReviewChangedTopic.TOPIC)
-                                .reviewChanged()
-                            ApplicationManager.getApplication().invokeLater {
-                                notify(
-                                    project,
-                                    "sitatame: saved review comment to ${result.path}",
-                                    NotificationType.INFORMATION,
-                                )
+                    // getReviewComment calls loadOrInit which may do Files.readAllBytes
+                    // on a cold cache. Keep this off the EDT.
+                    val existing = store.getReviewComment(repo.repoRoot, repo.branch)
+
+                    ApplicationManager.getApplication().invokeLater {
+                        val dialog = ReviewCommentDialog(project, existing)
+                        if (!dialog.showAndGet()) return@invokeLater
+                        // Mirrors Go confirmModal: strings.TrimRight(body, "\n").
+                        // trimEnd preserves leading/internal whitespace; only trailing
+                        // newlines (and \r) are stripped, matching the TUI's behaviour.
+                        val body = dialog.body.trimEnd('\n', '\r')
+
+                        // #2: allow clearing an existing comment with an empty body.
+                        // Only no-op when there was no previous comment AND the new
+                        // body is also blank (truly nothing to do).
+                        if (existing.isEmpty() && body.isEmpty()) return@invokeLater
+
+                        ProgressManager.getInstance().run(
+                            object : Task.Backgroundable(project, "Saving sitatame review comment", false) {
+                                override fun run(indicator: ProgressIndicator) {
+                                    try {
+                                        // Store as review_comment (top-level scalar), not in
+                                        // comments[]. Mirrors Go: m.Review.ReviewComment = body.
+                                        val result = store.setReviewComment(repo.repoRoot, repo.branch, body)
+                                        if (result.succeeded) {
+                                            ApplicationManager.getApplication().messageBus
+                                                .syncPublisher(ReviewChangedTopic.TOPIC)
+                                                .reviewChanged()
+                                            ApplicationManager.getApplication().invokeLater {
+                                                notify(
+                                                    project,
+                                                    "sitatame: saved review comment to ${result.path}",
+                                                    NotificationType.INFORMATION,
+                                                )
+                                            }
+                                        } else {
+                                            val rescuePath = result.error?.rescuePath ?: ""
+                                            log.warn("AddReviewCommentAction: encode failed; rescue at $rescuePath")
+                                            ApplicationManager.getApplication().invokeLater {
+                                                notify(
+                                                    project,
+                                                    "sitatame: failed to save review comment — encode error" +
+                                                        (if (rescuePath.isNotEmpty()) "; rescue written to $rescuePath" else ""),
+                                                    NotificationType.ERROR,
+                                                )
+                                            }
+                                        }
+                                    } catch (ex: Exception) {
+                                        log.warn("AddReviewCommentAction: failed to persist", ex)
+                                        ApplicationManager.getApplication().invokeLater {
+                                            notify(
+                                                project,
+                                                "sitatame: failed to save review comment — ${ex.message}",
+                                                NotificationType.ERROR,
+                                            )
+                                        }
+                                    }
+                                }
                             }
-                        } else {
-                            val rescuePath = result.error?.rescuePath ?: ""
-                            log.warn("AddReviewCommentAction: encode failed; rescue at $rescuePath")
-                            ApplicationManager.getApplication().invokeLater {
-                                notify(
-                                    project,
-                                    "sitatame: failed to save review comment — encode error" +
-                                        (if (rescuePath.isNotEmpty()) "; rescue written to $rescuePath" else ""),
-                                    NotificationType.ERROR,
-                                )
-                            }
-                        }
-                    } catch (ex: Exception) {
-                        log.warn("AddReviewCommentAction: failed to persist", ex)
-                        ApplicationManager.getApplication().invokeLater {
-                            notify(
-                                project,
-                                "sitatame: failed to save review comment — ${ex.message}",
-                                NotificationType.ERROR,
-                            )
-                        }
+                        )
                     }
                 }
             }
