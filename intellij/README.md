@@ -58,12 +58,33 @@ emitter immediately fails one or both routes.
 
 | Action                        | Where                            | Shortcut             |
 | ----------------------------- | -------------------------------- | -------------------- |
-| Add comment                   | Editor right-click               | Cmd+Shift+C / Ctrl+Shift+C |
+| Add comment (line / range)    | Editor right-click               | Cmd+Shift+C / Ctrl+Shift+C |
+| Add file-level comment        | Editor right-click               | —                    |
+| Add review-level comment      | Right-click / Find Action        | —                    |
 | Toggle resolved/open          | Editor right-click               | Cmd+Shift+R / Ctrl+Shift+R |
+| Go to next / prev comment     | Editor right-click               | Cmd+Shift+. / , (Ctrl on Win/Linux) |
 | List comments + jump to line  | Tool window "sitatame review"    | —                    |
 | Copy AI prompt                | Tool window toolbar              | —                    |
 | Save review                   | Tool window toolbar              | —                    |
 | Configure `SITATAME_HOME`     | Settings → Tools → sitatame review | —                  |
+
+The line / range / file / review comment scopes match the Go TUI's `c`
+(line/range), file-header `c` (file), and `Shift+R` (review-level) bindings.
+"Go to next / prev comment" mirrors the TUI's keyboard-driven stepping through
+commented lines so you can review without leaving the editor.
+
+**Storage layout per comment kind** (matches Go TUI, Go CLI, and Web UI):
+
+| Kind   | Stored in review.md                | Go equivalent                       |
+| ------ | ---------------------------------- | ----------------------------------- |
+| LINE   | `comments[]` entry, kind: line     | `comments[]`                        |
+| RANGE  | `comments[]` entry, kind: range    | `comments[]`                        |
+| FILE   | `comments[]` entry, kind: file     | `comments[]`                        |
+| REVIEW | top-level `review_comment` scalar  | `Review.ReviewComment` (not appended to `comments[]`) |
+
+The REVIEW kind overwrites the previous value (single top-level scalar, not a
+list). This matches Go TUI's Shift+R in-place edit semantics
+(`confirmModal` in modal.go sets `m.Review.ReviewComment = body`).
 
 ## Storage
 
@@ -95,6 +116,12 @@ over the environment variable; leave it blank to honour the shell.
 - Plugin Verifier is configured but only runs against the primary target
   (IntelliJ 2024.3). Android Studio support is unverified — try it and
   file an issue.
+- **File-level comments on deleted files are always shown as stale in Go/TUI.**
+  `AddFileCommentAction` writes `side=BASE, blob=""` for deleted files; Go's
+  `validateAnchor` requires a non-empty base blob SHA and marks the anchor stale
+  when it is absent. Resolving the base blob (via `git diff --raw <baseRef>..HEAD`)
+  is not yet implemented. Affected comments remain visible in the IntelliJ tool
+  window but will appear stale when opened in the Go CLI or TUI.
 
 ## Phase 2 backlog
 

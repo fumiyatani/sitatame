@@ -97,6 +97,28 @@
             <keyboard-shortcut keymap="$default" first-keystroke="control shift C" replace-all="false"/>
         </action>
 
+        <!--
+            File-level comment. Mirrors the Go TUI's `c` on a file header:
+            the comment is scoped to the whole file (FILE anchor), not a line.
+            No default shortcut to avoid collisions; reachable from the editor
+            popup menu and Keymap.
+        -->
+        <action id="sitatame.AddFileComment"
+                class="dev.sitatame.intellij.actions.AddFileCommentAction"
+                text="sitatame: Add File Comment"
+                description="Add a sitatame review comment scoped to the whole current file">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+        </action>
+
+        <!--
+            Review-level comment. Mirrors the Go TUI's `Shift+R`: a remark about
+            the whole change (REVIEW anchor), not tied to any file or line.
+        -->
+        <action id="sitatame.AddReviewComment"
+                class="dev.sitatame.intellij.actions.AddReviewCommentAction"
+                text="sitatame: Add Review Comment"
+                description="Add a sitatame review-level comment about the whole change"/>
+
         <action id="sitatame.ResolveComment"
                 class="dev.sitatame.intellij.actions.ResolveCommentAction"
                 text="sitatame: Toggle Resolved"
@@ -104,6 +126,29 @@
             <add-to-group group-id="EditorPopupMenu" anchor="last"/>
             <keyboard-shortcut keymap="$default" first-keystroke="meta shift R"/>
             <keyboard-shortcut keymap="$default" first-keystroke="control shift R" replace-all="false"/>
+        </action>
+
+        <!--
+            In-editor comment traversal. Mirrors the Go TUI's keyboard-driven
+            stepping through commented lines so a reviewer can stay in the editor
+            instead of round-tripping through the tool window.
+        -->
+        <action id="sitatame.GoToNextComment"
+                class="dev.sitatame.intellij.actions.GoToNextCommentAction"
+                text="sitatame: Go to Next Comment"
+                description="Move the caret to the next sitatame-commented line in this file">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift PERIOD" replace-all="false"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift PERIOD" replace-all="false"/>
+        </action>
+
+        <action id="sitatame.GoToPrevComment"
+                class="dev.sitatame.intellij.actions.GoToPrevCommentAction"
+                text="sitatame: Go to Previous Comment"
+                description="Move the caret to the previous sitatame-commented line in this file">
+            <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="meta shift COMMA" replace-all="false"/>
+            <keyboard-shortcut keymap="$default" first-keystroke="control shift COMMA" replace-all="false"/>
         </action>
 
         <action id="sitatame.CopyAIPrompt"

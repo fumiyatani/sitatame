@@ -1,6 +1,7 @@
 package dev.sitatame.intellij.storage
 
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Assert.fail
@@ -31,6 +32,9 @@ class CodecTest {
 
     @Test
     fun roundtripArrayOrder() = assertRoundtrip("array-order.yaml")
+
+    @Test
+    fun roundtripReviewLevelComment() = assertRoundtrip("review-level-comment.yaml")
 
     @Test
     fun decodeMinimalProducesTypedReview() {
@@ -98,6 +102,61 @@ class CodecTest {
         assertEquals(AnchorSide.HEAD, c.anchor.side)
         assertEquals("src/foo.go", c.anchor.path)
         assertEquals(5, c.anchor.line)
+    }
+
+    /**
+     * Regression for P0/P1: review_comment is a top-level scalar, distinct
+     * from comments[]. Verify decode populates reviewComment and encode
+     * writes review_comment back without polluting comments[].
+     *
+     * Verified against:
+     * - storage/Codec.kt:169 (decode key "review_comment")
+     * - storage/Codec.kt:272-273 (encode review_comment when non-empty)
+     * - internal/tui/modal.go:219-223 (Go confirmModal sets ReviewComment, not comments[])
+     */
+    @Test
+    fun decodeReviewLevelCommentPopulatesReviewComment() {
+        val bytes = Files.readAllBytes(resolveFixtureDir().resolve("review-level-comment.yaml"))
+        val review = Codec.decode(bytes)
+        assertTrue(
+            "reviewComment must be non-empty for the review-level-comment fixture",
+            review.reviewComment.isNotEmpty(),
+        )
+        assertTrue(
+            "reviewComment must contain expected text",
+            review.reviewComment.contains("overall direction is fine"),
+        )
+        // The fixture has no inline comments[], only review_comment.
+        assertEquals(
+            "comments[] must be empty — review_comment is a separate top-level field",
+            0,
+            review.comments.size,
+        )
+    }
+
+    @Test
+    fun encodeReviewCommentRoundtripsAsTopLevelScalar() {
+        val original = dev.sitatame.intellij.storage.Review(
+            schema = 1,
+            id = "test-review-comment",
+            createdAt = "2026-06-01T00:00:00Z",
+            branch = "feature/review",
+            base = dev.sitatame.intellij.storage.Ref("origin/main", "aaa"),
+            head = dev.sitatame.intellij.storage.Ref("HEAD", "bbb"),
+        ).apply {
+            reviewComment = "LGTM with minor nits"
+        }
+        val bytes = Codec.encode(original)
+        val yaml = bytes.toString(Charsets.UTF_8)
+        // Must appear as the top-level review_comment key.
+        assertTrue("encoded YAML must contain 'review_comment:'", yaml.contains("review_comment:"))
+        // Must NOT appear as a comments[] entry of any kind.
+        assertFalse("encoded YAML must not have a 'kind: review' entry in comments[]", yaml.contains("kind: review"))
+
+        // Decode must recover the value intact in reviewComment, not in comments[].
+        val decoded = Codec.decode(bytes)
+        assertEquals("reviewComment must round-trip", "LGTM with minor nits", decoded.reviewComment)
+        assertEquals("comments[] must remain empty", 0, decoded.comments.size)
     }
 
     @Test

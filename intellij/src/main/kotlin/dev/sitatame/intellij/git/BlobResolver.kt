@@ -45,6 +45,66 @@ object BlobResolver {
      * `FileMeta.blobHead` / `FileMeta.blobBase` by the Go CLI, keeping the
      * stale-detection comparison consistent.
      */
+    /**
+     * Return true if [relPath] has been deleted from the git index (i.e. the
+     * file is no longer tracked at HEAD or in the staging area). Uses
+     * `git ls-files -s -- <relPath>`: an empty result means the file is absent
+     * from the index, which is the reliable proxy for "deleted" in the context
+     * of file-scope FILE comments.
+     *
+     * This mirrors Go's `fileScopeSide`: deleted files (Status == StatusDeleted)
+     * have no head blob, so the FILE anchor must use SideBase to avoid an
+     * immediately-stale anchor (Go's validateAnchor stales anchors whose blob
+     * no longer matches). See modal.go:136-141.
+     *
+     * Returns false when [repoRoot] or [relPath] is blank, or on any error.
+     */
+    fun isDeletedFromIndex(repoRoot: String, relPath: String): Boolean {
+        if (repoRoot.isEmpty() || relPath.isEmpty()) return false
+        return try {
+            val proc = ProcessBuilder("git", "ls-files", "-s", "--", relPath)
+                .directory(java.io.File(repoRoot))
+                .redirectErrorStream(true)
+                .start()
+            val out = proc.inputStream.bufferedReader().readText()
+            if (!proc.waitFor(5, TimeUnit.SECONDS)) {
+                proc.destroyForcibly()
+                return false
+            }
+            if (proc.exitValue() != 0) return false
+            // Empty output → file absent from index → deleted.
+            out.isBlank()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
+    /**
+     * Return the abbreviated (7-char) blob SHA of [relPath] from the
+     * **git index** (not HEAD commit, not working tree) in [repoRoot], or an
+     * empty string if the file is not tracked, git is unavailable, or any
+     * error occurs.
+     *
+     * Uses `git ls-files -s -- <relPath>` which outputs one line per index
+     * stage in the format `<mode> <40-char-sha> <stage>\t<path>`.
+     *
+     * **Index vs HEAD vs working tree**: `git ls-files -s` reads the index,
+     * not the HEAD commit and not the working tree. A file that has been
+     * edited but not yet staged (`git add`) returns the previously-staged
+     * blob SHA. This is intentional: stale detection compares against the
+     * blob that was current when the comment was authored (which was also
+     * sourced from the index at save time), so using the index consistently
+     * avoids false-positive stale marks for in-flight edits.
+     *
+     * **Conflicted index**: during a merge conflict `git ls-files -s` emits
+     * three lines (stages 1/2/3). We prefer stage 0 (normal) or stage 2
+     * (ours / HEAD side of the merge). If neither is present we fall back to
+     * the first available line.
+     *
+     * The abbreviated form (first 7 chars) matches the blob SHAs stored in
+     * `FileMeta.blobHead` / `FileMeta.blobBase` by the Go CLI, keeping the
+     * stale-detection comparison consistent.
+     */
     fun headBlobSha(repoRoot: String, relPath: String): String {
         if (repoRoot.isEmpty() || relPath.isEmpty()) return ""
         return try {

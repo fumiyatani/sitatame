@@ -259,6 +259,58 @@ class ReviewStore {
     }
 
     /**
+     * Set (overwrite) the top-level `review_comment` field for the branch and
+     * persist atomically. Mirrors Go TUI's `confirmModal` for `KindReview`:
+     * `m.Review.ReviewComment = body` (single scalar, not appended to
+     * `comments[]`). The previous value is overwritten, not appended.
+     *
+     * Callers should pass a non-blank [body]; passing a blank string clears the
+     * field (allowed — Go allows clearing the review comment).
+     *
+     * Returns a [SaveResult] on success or on encode failure (rescue path). On
+     * I/O error, the in-memory cache is rolled back and the exception is
+     * re-thrown.
+     *
+     * Threading: must be called on a background thread (same rule as
+     * [addComment]).
+     */
+    fun setReviewComment(repoRoot: String, branch: String, body: String): SaveResult {
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        val result = keyLock(key).withLock {
+            val review = loadOrInit(repoRoot, branch)
+            val previous = review.reviewComment
+            review.reviewComment = body
+            val saveResult = try {
+                saveReview(p, review)
+            } catch (e: Exception) {
+                // Rollback: restore the previous value so cache stays in sync.
+                review.reviewComment = previous
+                throw e
+            }
+            // Rollback on non-throwing failure (e.g. encode error → rescue).
+            if (!saveResult.succeeded) {
+                review.reviewComment = previous
+            }
+            saveResult
+        }
+        if (result.succeeded) publishChanged(repoRoot, branch)
+        return result
+    }
+
+    /**
+     * Return the current `review_comment` field for the branch (may be blank if
+     * not yet set). Does not trigger disk I/O if the review is already cached.
+     */
+    fun getReviewComment(repoRoot: String, branch: String): String {
+        val p = paths(repoRoot, branch)
+        val key = cacheKey(p)
+        return keyLock(key).withLock {
+            loadOrInit(repoRoot, branch).reviewComment
+        }
+    }
+
+    /**
      * Atomically persist [review] to `<branchDir>/review.md`.
      *
      * - Empty review (no comments, blank review_comment) is a no-op; returns a

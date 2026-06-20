@@ -9,6 +9,7 @@ import com.intellij.ui.JBColor
 import com.intellij.ui.components.JBList
 import com.intellij.ui.components.JBScrollPane
 import dev.sitatame.intellij.git.RepoContext
+import dev.sitatame.intellij.storage.Anchor
 import dev.sitatame.intellij.storage.AnchorKind
 import dev.sitatame.intellij.storage.Comment
 import dev.sitatame.intellij.storage.REVIEW_CHANGED_TOPIC
@@ -244,6 +245,26 @@ class CommentListPane(
             return SitatameToolWindowContent.filterComments(fileFiltered, filter)
         }
 
+        /**
+         * Human-readable locator for a comment's [anchor], shown as the bold
+         * prefix of each list row and in the detail pane. Covers all four anchor
+         * kinds so REVIEW / FILE comments (added for TUI parity) are not rendered
+         * as a bare/empty path.
+         *
+         * Pure function — testable without the IntelliJ Platform.
+         */
+        fun locatorFor(anchor: Anchor): String = when (anchor.kind) {
+            AnchorKind.RANGE -> "${anchor.path}:${anchor.lineStart}-${anchor.lineEnd}"
+            AnchorKind.LINE -> "${anchor.path}:${anchor.line}"
+            AnchorKind.FILE -> "${anchor.path} (file)"
+            AnchorKind.REVIEW -> "(review)"
+            // Defensive fallback for unknown kind strings (e.g. from a
+            // future Go CLI version or a corrupt YAML). AnchorKind covers
+            // all four values in the current schema (LINE/RANGE/FILE/REVIEW),
+            // so this branch is unreachable under normal operation.
+            else -> anchor.path
+        }
+
         // Icon size constants shared with CommentCellRenderer
         internal const val STATE_ICON_SIZE = 12
         internal const val TRASH_CLICK_WIDTH = STATE_ICON_SIZE + 8
@@ -334,11 +355,7 @@ class CommentListPane(
             }
 
             label.icon = stateIcon(value.state)
-            val locator = when (value.anchor.kind) {
-                AnchorKind.RANGE -> "${value.anchor.path}:${value.anchor.lineStart}-${value.anchor.lineEnd}"
-                AnchorKind.LINE -> "${value.anchor.path}:${value.anchor.line}"
-                else -> value.anchor.path
-            }
+            val locator = locatorFor(value.anchor)
             val firstLine = value.body.lineSequence().firstOrNull().orEmpty().take(80)
             label.text = "<html><b>$locator</b> &mdash; ${escapeHtml(firstLine)}</html>"
 
