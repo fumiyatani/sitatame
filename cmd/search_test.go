@@ -390,6 +390,121 @@ func TestRunSearch_UnknownFlag(t *testing.T) {
 	}
 }
 
+// TestRunSearch_BranchFilter_PlainPath verifies that --branch is applied even
+// when neither --json nor --state is set (plain text search path).
+// Regression test for the P0 bug found by codex review where opts.Branch was
+// silently ignored on the multi-project walk.
+func TestRunSearch_BranchFilter_PlainPath(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SITATAME_HOME", root)
+
+	projectSlug := "myproject"
+	branch1 := "feature--auth"
+	branch2 := "feature--search"
+
+	// Write a plain text file (not a review.md) so the Go walk finds it.
+	writeTextFile := func(dir, name, body string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeTextFile(filepath.Join(root, projectSlug, branch1), "review.md", "NEEDLE in branch one\n")
+	writeTextFile(filepath.Join(root, projectSlug, branch2), "review.md", "NEEDLE in branch two\n")
+
+	env, stdout, _ := searchEnv()
+	// Only branch1 should match.
+	code := RunSearch(env, []string{"--branch", branch1, "NEEDLE"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%q", code, stdout.String())
+	}
+	out := stdout.String()
+	if strings.Contains(out, branch2) {
+		t.Errorf("output contains branch2 %q which should be excluded: %s", branch2, out)
+	}
+	if !strings.Contains(out, branch1) {
+		t.Errorf("output missing branch1 %q: %s", branch1, out)
+	}
+}
+
+// TestRunSearch_DashDash verifies that "--" terminates flag parsing so a
+// pattern starting with "-" can be searched without being interpreted as a flag.
+func TestRunSearch_DashDash(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SITATAME_HOME", root)
+
+	projectSlug := "proj-dash"
+	branchSlug := "feature--x"
+	writeFile := func(dir, name, body string) {
+		t.Helper()
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	writeFile(filepath.Join(root, projectSlug, branchSlug), "review.md", "-DTRACE enabled here\n")
+
+	env, stdout, _ := searchEnv()
+	code := RunSearch(env, []string{"--", "-DTRACE"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%q", code, stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "-DTRACE") {
+		t.Errorf("output missing -DTRACE hit: %q", stdout.String())
+	}
+}
+
+// TestRunSearch_JSON_RangeAnchorFields verifies that range comments (kind=range)
+// have line_start and line_end populated in JSON output, not just line.
+func TestRunSearch_JSON_RangeAnchorFields(t *testing.T) {
+	root := t.TempDir()
+	t.Setenv("SITATAME_HOME", root)
+
+	projectSlug := "proj-range"
+	branchSlug := "feature--range"
+	reviewMD := "---\n" +
+		"schema: 1\nbranch: feature/range\n" +
+		"comments:\n" +
+		"  - anchor_id: r1\n" +
+		"    kind: range\n" +
+		"    path: src/main.go\n" +
+		"    line_start: 10\n" +
+		"    line_end: 20\n" +
+		"    state: open\n" +
+		"    body: |\n" +
+		"      RANGEFIND this range\n" +
+		"---\n"
+	seedBranchReview(t, filepath.Join(root, projectSlug), branchSlug, reviewMD)
+
+	env, stdout, _ := searchEnv()
+	code := RunSearch(env, []string{"--json", "RANGEFIND"})
+	if code != 0 {
+		t.Fatalf("exit = %d, want 0; out=%q", code, stdout.String())
+	}
+	var results []SearchResult
+	if err := json.Unmarshal(stdout.Bytes(), &results); err != nil {
+		t.Fatalf("parse json: %v; output: %q", err, stdout.String())
+	}
+	if len(results) != 1 {
+		t.Fatalf("results = %d, want 1; %+v", len(results), results)
+	}
+	a := results[0].Anchor
+	if a.Kind != "range" {
+		t.Errorf("kind = %q, want range", a.Kind)
+	}
+	if a.LineStart != 10 {
+		t.Errorf("line_start = %d, want 10", a.LineStart)
+	}
+	if a.LineEnd != 20 {
+		t.Errorf("line_end = %d, want 20", a.LineEnd)
+	}
+}
+
 // TestRunSearch_HumanOutput_StateFilter verifies human-readable output when
 // --state is set but --json is not.
 func TestRunSearch_HumanOutput_StateFilter(t *testing.T) {
