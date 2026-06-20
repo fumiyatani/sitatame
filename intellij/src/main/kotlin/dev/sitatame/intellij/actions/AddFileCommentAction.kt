@@ -2,6 +2,7 @@ package dev.sitatame.intellij.actions
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -47,6 +48,10 @@ class AddFileCommentAction : AnAction() {
 
     private val log = Logger.getInstance(AddFileCommentAction::class.java)
 
+    // update() reads only project and VIRTUAL_FILE from DataContext — no Swing
+    // hierarchy access → safe on BGT.
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
+
     override fun update(e: AnActionEvent) {
         val project = e.project
         val file = e.getData(CommonDataKeys.VIRTUAL_FILE)
@@ -87,11 +92,14 @@ class AddFileCommentAction : AnAction() {
                     val isDeleted = BlobResolver.isDeletedFromIndex(repo.repoRoot, relPath)
                     val side = if (isDeleted) AnchorSide.BASE else AnchorSide.HEAD
                     val blob = if (isDeleted) {
-                        // Base blob for a deleted file: resolve from HEAD~1 via
-                        // git ls-tree. headBlobSha reads the index (empty for
-                        // deleted files), so we fall back to empty string and let
-                        // Go's validate treat it as stale if needed. Future work
-                        // can wire up a baseBlobSha() here.
+                        // Known limitation: deleted-file FILE comments are always
+                        // stale in Go/TUI. Go's validateAnchor (internal/review/
+                        // validate.go:216-250) requires SideBase + non-empty blob for
+                        // a deleted-file FILE anchor. Resolving the base blob SHA
+                        // (git diff --raw <baseRef>..HEAD to obtain the source SHA)
+                        // is not yet implemented; this empty string causes Go to mark
+                        // the anchor stale on every load. Tracked as a known gap —
+                        // base blob resolution is future work.
                         ""
                     } else {
                         if (relPath.isNotEmpty()) BlobResolver.headBlobSha(repo.repoRoot, relPath) else ""

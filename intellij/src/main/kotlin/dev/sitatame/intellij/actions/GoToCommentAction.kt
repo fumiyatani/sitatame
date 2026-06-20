@@ -2,6 +2,7 @@ package dev.sitatame.intellij.actions
 
 import com.intellij.notification.NotificationGroupManager
 import com.intellij.notification.NotificationType
+import com.intellij.openapi.actionSystem.ActionUpdateThread
 import com.intellij.openapi.actionSystem.AnAction
 import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.CommonDataKeys
@@ -40,6 +41,11 @@ class GoToNextCommentAction : GoToCommentAction(forward = true)
 class GoToPrevCommentAction : GoToCommentAction(forward = false)
 
 abstract class GoToCommentAction(private val forward: Boolean) : AnAction() {
+
+    // update() reads only project and EDITOR from DataContext — no Swing hierarchy
+    // access → safe on BGT. CommonDataKeys.EDITOR resolves via DataContext without
+    // touching the Swing component tree directly.
+    override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.BGT
 
     override fun update(e: AnActionEvent) {
         val project = e.project
