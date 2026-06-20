@@ -116,6 +116,12 @@ over the environment variable; leave it blank to honour the shell.
 - Plugin Verifier is configured but only runs against the primary target
   (IntelliJ 2024.3). Android Studio support is unverified — try it and
   file an issue.
+- **File-level comments on deleted files are always shown as stale in Go/TUI.**
+  `AddFileCommentAction` writes `side=BASE, blob=""` for deleted files; Go's
+  `validateAnchor` requires a non-empty base blob SHA and marks the anchor stale
+  when it is absent. Resolving the base blob (via `git diff --raw <baseRef>..HEAD`)
+  is not yet implemented. Affected comments remain visible in the IntelliJ tool
+  window but will appear stale when opened in the Go CLI or TUI.
 
 ## Phase 2 backlog
 
