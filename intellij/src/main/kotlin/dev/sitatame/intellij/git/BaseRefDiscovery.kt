@@ -99,9 +99,9 @@ object BaseRefDiscovery {
     /**
      * Pure grouping / ordering of raw git output into selector entries.
      *
-     * - Remote branches: the `*/HEAD` symbolic pointers (e.g. `origin/HEAD`) are
-     *   dropped — they are not real branches and would shadow the branch they
-     *   point at.
+     * - Remote branches: the per-remote symbolic `HEAD` pointers (e.g.
+     *   `origin/HEAD`) are dropped — they are not real branches and would shadow
+     *   the branch they point at.
      * - Local branches: [currentBranch] is excluded; diffing a branch against
      *   itself yields nothing and is never a useful base.
      * - Within each group, [PRIORITY] branches (main/master/develop) come first,
