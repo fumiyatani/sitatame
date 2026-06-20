@@ -10,6 +10,7 @@ import dev.sitatame.intellij.storage.Comment
 import dev.sitatame.intellij.storage.ReviewState
 import dev.sitatame.intellij.storage.ReviewStore
 import dev.sitatame.intellij.toolwindow.SitatameToolWindowContent
+import com.intellij.util.ui.JBUI
 import java.awt.BorderLayout
 import java.awt.FlowLayout
 import javax.swing.JButton
@@ -37,6 +38,8 @@ class CommentDetailPane(
         isEditable = false
         lineWrap = true
         wrapStyleWord = true
+        // Breathing room so wrapped text doesn't hug the pane edges (esp. the right).
+        border = JBUI.Borders.empty(8, 10)
     }
 
     private val resolveButton = JButton("Resolve")
