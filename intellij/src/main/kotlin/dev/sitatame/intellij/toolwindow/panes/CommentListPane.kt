@@ -127,7 +127,7 @@ class CommentListPane(
         val toggleItem = JMenuItem(toggleLabel)
         toggleItem.addActionListener { toggleSelected() }
         menu.add(toggleItem)
-        val deleteItem = JMenuItem("Delete", AllIcons.General.Remove)
+        val deleteItem = JMenuItem("Delete", AllIcons.Actions.GC)
         deleteItem.addActionListener { deleteSelected() }
         menu.add(deleteItem)
         return menu
@@ -302,7 +302,7 @@ class CommentListPane(
     ) : ListCellRenderer<Comment> {
 
         private val label = JLabel()
-        private val trashLabel = JLabel(AllIcons.General.Remove)
+        private val trashLabel = JLabel(AllIcons.Actions.GC)
         private val row = JPanel(BorderLayout(4, 0)).apply {
             add(label, BorderLayout.CENTER)
             add(trashLabel, BorderLayout.EAST)
