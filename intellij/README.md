@@ -73,6 +73,19 @@ The line / range / file / review comment scopes match the Go TUI's `c`
 "Go to next / prev comment" mirrors the TUI's keyboard-driven stepping through
 commented lines so you can review without leaving the editor.
 
+**Storage layout per comment kind** (matches Go TUI, Go CLI, and Web UI):
+
+| Kind   | Stored in review.md                | Go equivalent                       |
+| ------ | ---------------------------------- | ----------------------------------- |
+| LINE   | `comments[]` entry, kind: line     | `comments[]`                        |
+| RANGE  | `comments[]` entry, kind: range    | `comments[]`                        |
+| FILE   | `comments[]` entry, kind: file     | `comments[]`                        |
+| REVIEW | top-level `review_comment` scalar  | `Review.ReviewComment` (not appended to `comments[]`) |
+
+The REVIEW kind overwrites the previous value (single top-level scalar, not a
+list). This matches Go TUI's Shift+R in-place edit semantics
+(`confirmModal` in modal.go sets `m.Review.ReviewComment = body`).
+
 ## Storage
 
 The plugin reads and writes:
