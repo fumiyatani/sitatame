@@ -591,6 +591,78 @@ class ReviewStoreTest {
     }
 
     // -----------------------------------------------------------------------
+    // setReviewComment / getReviewComment (P0/P1 regression)
+    // -----------------------------------------------------------------------
+
+    /**
+     * Regression for P0/P1: setReviewComment must persist the body in
+     * review.reviewComment (the top-level review_comment YAML scalar), not
+     * in comments[]. Mirrors Go TUI confirmModal for KindReview (modal.go:219-223).
+     */
+    @Test
+    fun setReviewComment_persistsInReviewCommentField_notInComments() {
+        val result = store.setReviewComment("", "", "Overall LGTM, minor nits below.")
+        assertTrue("setReviewComment should succeed", result.succeeded)
+
+        val readBack = Codec.decode(Files.readAllBytes(java.nio.file.Paths.get(paths.reviewFile())))
+        assertEquals(
+            "reviewComment must be persisted as top-level review_comment",
+            "Overall LGTM, minor nits below.",
+            readBack.reviewComment,
+        )
+        assertEquals("comments[] must remain empty — not polluted by REVIEW kind", 0, readBack.comments.size)
+    }
+
+    @Test
+    fun setReviewComment_overwrites_previousValue() {
+        store.setReviewComment("", "", "first draft")
+        val result = store.setReviewComment("", "", "second draft — LGTM")
+        assertTrue("second setReviewComment should succeed", result.succeeded)
+
+        val readBack = Codec.decode(Files.readAllBytes(java.nio.file.Paths.get(paths.reviewFile())))
+        assertEquals(
+            "reviewComment must reflect the latest overwrite (Go in-place semantics)",
+            "second draft — LGTM",
+            readBack.reviewComment,
+        )
+    }
+
+    @Test
+    fun setReviewComment_doesNotTouchExistingComments() {
+        store.addComment("", "") { _ -> sampleComment("src/app.kt", 5, "rename this") }
+
+        store.setReviewComment("", "", "overall comment")
+
+        val readBack = Codec.decode(Files.readAllBytes(java.nio.file.Paths.get(paths.reviewFile())))
+        assertEquals("reviewComment must be set", "overall comment", readBack.reviewComment)
+        assertEquals("existing LINE comment must be preserved in comments[]", 1, readBack.comments.size)
+        assertEquals("src/app.kt", readBack.comments[0].anchor.path)
+    }
+
+    @Test
+    fun getReviewComment_returnsEmptyWhenNotSet() {
+        // Fresh store: loadOrInit creates an empty review, reviewComment defaults to "".
+        assertEquals("", store.getReviewComment("", ""))
+    }
+
+    @Test
+    fun getReviewComment_returnsSetValue() {
+        store.setReviewComment("", "", "hello review")
+        assertEquals("hello review", store.getReviewComment("", ""))
+    }
+
+    @Test
+    fun setReviewComment_emptyString_doesNotCreateFile() {
+        // An empty reviewComment + no comments = empty review → file must not be created.
+        val result = store.setReviewComment("", "", "")
+        assertFalse("empty reviewComment should not create a file", result.succeeded)
+        assertFalse(
+            "review.md must not be created for a blank-only review",
+            Files.exists(java.nio.file.Paths.get(paths.reviewFile())),
+        )
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 

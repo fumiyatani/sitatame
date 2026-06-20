@@ -99,6 +99,79 @@ class GoToCommentNavigationTest {
     }
 
     // -----------------------------------------------------------------------
+    // clampLine: 1-based target → 0-based document row with boundary handling
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun clampLine_normalCase_subtractsOne() {
+        // line 5 of a 10-line document → row 4
+        assertEquals(4, GoToCommentAction.clampLine(5, lineCount = 10))
+    }
+
+    @Test
+    fun clampLine_lastLine_clampsToLastRow() {
+        // line 99 of a 10-line document → row 9 (last valid)
+        assertEquals(9, GoToCommentAction.clampLine(99, lineCount = 10))
+    }
+
+    @Test
+    fun clampLine_firstLine_returnsZero() {
+        assertEquals(0, GoToCommentAction.clampLine(1, lineCount = 10))
+    }
+
+    @Test
+    fun clampLine_zeroOrNegativeLine_clampsToZero() {
+        // 0-based arithmetic: (0 - 1) = -1, coerced to 0
+        assertEquals(0, GoToCommentAction.clampLine(0, lineCount = 10))
+        assertEquals(0, GoToCommentAction.clampLine(-5, lineCount = 10))
+    }
+
+    @Test
+    fun clampLine_emptyDocument_returnsZero() {
+        // lineCount == 0 → coerceAtLeast(0) makes the max 0, so result is 0
+        assertEquals(0, GoToCommentAction.clampLine(1, lineCount = 0))
+        assertEquals(0, GoToCommentAction.clampLine(99, lineCount = 0))
+    }
+
+    @Test
+    fun clampLine_singleLineDocument_returnsZero() {
+        assertEquals(0, GoToCommentAction.clampLine(1, lineCount = 1))
+    }
+
+    // -----------------------------------------------------------------------
+    // commentedLines: REVIEW/FILE anchors are excluded from navigation targets
+    // (regression guard for P0: REVIEW comments must not appear in comments[])
+    // -----------------------------------------------------------------------
+
+    @Test
+    fun commentedLines_reviewKindIsNeverNavigable() {
+        // REVIEW comments have no caret target and must be excluded even if
+        // they share a path (which they shouldn't, but defensive).
+        val comments = listOf(
+            comment(path = "src/A.kt", kind = AnchorKind.REVIEW),
+            comment(path = "", kind = AnchorKind.REVIEW),
+        )
+        assertEquals(
+            "REVIEW-kind comments must not produce navigable lines",
+            emptyList<Int>(),
+            GoToCommentAction.commentedLines(comments, "src/A.kt"),
+        )
+    }
+
+    @Test
+    fun commentedLines_fileKindIsNeverNavigable() {
+        val comments = listOf(
+            comment(path = "src/A.kt", kind = AnchorKind.FILE),
+            comment(path = "src/A.kt", kind = AnchorKind.LINE, line = 7),
+        )
+        assertEquals(
+            "FILE-kind comments must not produce navigable lines",
+            listOf(7),
+            GoToCommentAction.commentedLines(comments, "src/A.kt"),
+        )
+    }
+
+    // -----------------------------------------------------------------------
     // Helpers
     // -----------------------------------------------------------------------
 

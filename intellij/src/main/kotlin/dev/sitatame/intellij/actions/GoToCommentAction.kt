@@ -89,7 +89,7 @@ abstract class GoToCommentAction(private val forward: Boolean) : AnAction() {
     }
 
     private fun moveCaretTo(editor: Editor, line1Based: Int) {
-        val zeroBased = (line1Based - 1).coerceIn(0, (editor.document.lineCount - 1).coerceAtLeast(0))
+        val zeroBased = clampLine(line1Based, editor.document.lineCount)
         editor.caretModel.moveToLogicalPosition(LogicalPosition(zeroBased, 0))
         editor.scrollingModel.scrollToCaret(ScrollType.CENTER)
     }
@@ -144,5 +144,18 @@ abstract class GoToCommentAction(private val forward: Boolean) : AnAction() {
             } else {
                 lines.lastOrNull { it < caretLine }
             }
+
+        /**
+         * Clamp a 1-based target [line] into a valid 0-based document row index.
+         *
+         * The IntelliJ [Editor.document.lineCount] is 0 when the document is empty
+         * (lineCount == 0 → the only valid row is 0 via coerceAtLeast). For a
+         * normal document the valid range is 0..(lineCount - 1).
+         *
+         * Pure function — testable without the IntelliJ Platform. [moveCaretTo]
+         * applies this then hands the result to [LogicalPosition].
+         */
+        fun clampLine(line1Based: Int, lineCount: Int): Int =
+            (line1Based - 1).coerceIn(0, (lineCount - 1).coerceAtLeast(0))
     }
 }
