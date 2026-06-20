@@ -70,6 +70,15 @@ class SitatameToolWindowContent(
     /** Session-level base ref override. Null means "use Settings / auto-detect". */
     private var sessionBaseRef: String? = null
 
+    /**
+     * Guards [baseRefCombo] against re-entrant events while the model/selection
+     * is rebuilt programmatically. Without this, assigning the model and
+     * selected item in [refreshBaseRefCombo] re-fires the item listener, which
+     * calls [refresh] again, which rebuilds the combo again — an unbounded
+     * recursion on the EDT that freezes the IDE.
+     */
+    private var suppressBaseRefEvents = false
+
     private val changedFilesPane = ChangedFilesPane(
         project = project,
         onFileSelected = { sel -> onFileSelected(sel) },
@@ -193,6 +202,7 @@ class SitatameToolWindowContent(
         panel.add(setDefaultBtn)
 
         baseRefCombo.addItemListener { e ->
+            if (suppressBaseRefEvents) return@addItemListener
             if (e.stateChange == ItemEvent.SELECTED) {
                 val raw = baseRefCombo.selectedItem?.toString().orEmpty()
                 // Strip the "(default — Settings)" annotation if present
@@ -245,7 +255,8 @@ class SitatameToolWindowContent(
 
         val effectiveBaseRef = sessionBaseRef ?: repo.baseRef
 
-        // Rebuild base ref candidates (fast, no git I/O yet)
+        // Rebuild base ref candidates. Listener events are suppressed during the
+        // rebuild so the programmatic model/selection swap can't re-enter refresh().
         refreshBaseRefCombo(repo)
 
         ApplicationManager.getApplication().executeOnPooledThread {
@@ -273,15 +284,22 @@ class SitatameToolWindowContent(
         val currentSession = sessionBaseRef
         val effectiveRef = (currentSession ?: repo.baseRef)
 
-        // Suppress item listener while rebuilding.
-        val model = DefaultComboBoxModel(candidates.toTypedArray())
-        baseRefCombo.model = model
-
         // Select the entry matching the effective ref (prefer annotated entry for settings default)
+        val model = DefaultComboBoxModel(candidates.toTypedArray())
         val toSelect = candidates.firstOrNull { it == effectiveRef }
             ?: candidates.firstOrNull { it.startsWith(effectiveRef) }
             ?: candidates.firstOrNull()
-        if (toSelect != null) baseRefCombo.selectedItem = toSelect
+
+        // Suppress the item listener while swapping the model and selection.
+        // Both mutations fire SELECTED events synchronously on the EDT; without
+        // this guard they re-enter refresh() and recurse until the IDE hangs.
+        suppressBaseRefEvents = true
+        try {
+            baseRefCombo.model = model
+            if (toSelect != null) baseRefCombo.selectedItem = toSelect
+        } finally {
+            suppressBaseRefEvents = false
+        }
     }
 
     // -----------------------------------------------------------------------
