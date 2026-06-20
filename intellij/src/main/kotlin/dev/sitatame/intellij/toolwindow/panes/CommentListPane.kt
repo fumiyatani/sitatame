@@ -258,6 +258,10 @@ class CommentListPane(
             AnchorKind.LINE -> "${anchor.path}:${anchor.line}"
             AnchorKind.FILE -> "${anchor.path} (file)"
             AnchorKind.REVIEW -> "(review)"
+            // Defensive fallback for unknown kind strings (e.g. from a
+            // future Go CLI version or a corrupt YAML). AnchorKind covers
+            // all four values in the current schema (LINE/RANGE/FILE/REVIEW),
+            // so this branch is unreachable under normal operation.
             else -> anchor.path
         }
 
